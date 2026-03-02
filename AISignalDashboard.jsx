@@ -849,145 +849,78 @@ function AlertFeed({alerts,onPin}){
   </Card>);
 }
 
-// ── CONFIG PANEL ─────────────────────────────────────────────────────────────
+// ── INLINE SETTINGS ──────────────────────────────────────────────────────────
 
-function ConfigPanel({config,setConfig,onClose}){
-  const[tab,setTab]=useState("verticals");
-  const tabs=[{id:"verticals",label:"Verticals"},{id:"sources",label:"Signal Sources"},{id:"classifier",label:"Classifier"},{id:"scoring",label:"Scoring"},{id:"apikeys",label:"API Keys"},{id:"data",label:"Data"}];
+function InlineSettings({config,setConfig}){
+  const[section,setSection]=useState(null);
   const update=fn=>setConfig(prev=>{const next=fn(prev);sv("config",next);return next;});
 
-  return(
-    <div style={{position:"fixed",top:0,right:0,bottom:0,width:580,maxWidth:"95vw",background:C.white,borderLeft:`1px solid ${C.border}`,boxShadow:"-4px 0 24px rgba(0,0,0,.08)",zIndex:200,display:"flex",flexDirection:"column",...font.sans}} className="fade-in">
-      <div style={{padding:"14px 20px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:8}}><IcoC name="settings" size={18} color={C.text}/><span style={{fontSize:16,fontWeight:700}}>Configuration</span></div><Btn variant="ghost" onClick={onClose} style={{fontSize:18,padding:4}}>✕</Btn></div>
-      <TabBar tabs={tabs} active={tab} onChange={setTab}/>
-      <div style={{flex:1,overflowY:"auto",padding:"0 20px 20px"}}>
-
-        {tab==="verticals"&&(<div>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-            <h4 style={{fontSize:14,fontWeight:600}}>Verticals / Keyword Groups</h4>
-            <Btn variant="primary" onClick={()=>update(c=>({...c,verticals:[...c.verticals,{id:`v_${Date.now()}`,name:"New Group",color:PALETTE[c.verticals.length%PALETTE.length],description:"",keywords:{theirstack:{titleKeywords:[],descriptionKeywords:[]},google_trends:{keywords:[]},github_repos:{keywords:[]},claude_attrib:{keywords:[]}}}]}))} style={{fontSize:11}}>+ Add Group</Btn>
-          </div>
-          <div style={{fontSize:12,color:C.textMuted,marginBottom:12}}>Each group is an independent keyword set tracked across all signal sources. Create groups for different verticals, technologies, or competitors you want to monitor separately.</div>
-          {config.verticals.map((v,vi)=>(<Card key={v.id} style={{marginBottom:10,padding:14,background:C.nested}}>
-            <div style={{display:"flex",gap:8,marginBottom:10,alignItems:"center"}}>
-              <input value={v.name} onChange={e=>update(c=>{const vs=[...c.verticals];vs[vi]={...vs[vi],name:e.target.value};return{...c,verticals:vs};})} style={{flex:1,fontWeight:600}}/>
-              <input type="color" value={v.color||"#0284c7"} onChange={e=>update(c=>{const vs=[...c.verticals];vs[vi]={...vs[vi],color:e.target.value};return{...c,verticals:vs};})} style={{width:36,height:32,padding:2,cursor:"pointer"}}/>
-              <Btn variant="danger" onClick={()=>{if(confirm(`Remove "${v.name}"?`))update(c=>({...c,verticals:c.verticals.filter((_,i)=>i!==vi)}));}} style={{fontSize:11,padding:"4px 8px"}}>✕</Btn>
-            </div>
-            {config.sources.map(src=>{const kw=v.keywords?.[src.id]||{};return(<div key={src.id} style={{marginBottom:8,paddingLeft:8,borderLeft:`2px solid ${C.border}`}}><div style={{fontSize:11,fontWeight:600,color:C.textMuted,textTransform:"uppercase",marginBottom:4}}>{src.name}</div>{Object.entries(kw).map(([field,vals])=>(<div key={field} style={{marginBottom:4}}><div style={{fontSize:10,color:C.textMuted,marginBottom:2}}>{field}</div><ChipEditor items={Array.isArray(vals)?vals:[vals]} onChange={nv=>update(c=>{const vs=[...c.verticals];const vv={...vs[vi]};vv.keywords={...vv.keywords,[src.id]:{...vv.keywords[src.id],[field]:nv}};vs[vi]=vv;return{...c,verticals:vs};})} color={C.cyan}/></div>))}</div>);})}
-          </Card>))}
-        </div>)}
-
-        {tab==="sources"&&(<div>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}><h4 style={{fontSize:14,fontWeight:600}}>Signal Sources</h4><Btn variant="primary" onClick={()=>update(c=>({...c,sources:[...c.sources,{id:`src_${Date.now()}`,name:"New Source",type:"count",weight:0.1,cadence:"weekly",enabled:true,apiConfig:{endpoint:"",method:"GET",authType:"bearer",authHeader:"",proxyPrefix:"",bodyTemplate:""},responsePaths:{countPath:"",itemsPath:"",titleField:"",bodyField:""}}]}))} style={{fontSize:11}}>+ Add Source</Btn></div>
-          {config.sources.map((src,si)=>(<Card key={src.id} style={{marginBottom:10,padding:14,background:C.nested}}>
-            <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap",alignItems:"center"}}>
-              <input value={src.name} onChange={e=>update(c=>{const ss=[...c.sources];ss[si]={...ss[si],name:e.target.value};return{...c,sources:ss};})} style={{flex:1,fontWeight:600}}/>
-              <select value={src.type} onChange={e=>update(c=>{const ss=[...c.sources];ss[si]={...ss[si],type:e.target.value};return{...c,sources:ss};})} style={{width:130}}>{["count","classified_text","index"].map(t=><option key={t} value={t}>{t}</option>)}</select>
-              <select value={src.cadence} onChange={e=>update(c=>{const ss=[...c.sources];ss[si]={...ss[si],cadence:e.target.value};return{...c,sources:ss};})} style={{width:100}}>{["realtime","daily","weekly"].map(c2=><option key={c2} value={c2}>{c2}</option>)}</select>
-              <label style={{display:"flex",alignItems:"center",gap:4,fontSize:12,cursor:"pointer"}}><input type="checkbox" checked={src.enabled} onChange={e=>update(c=>{const ss=[...c.sources];ss[si]={...ss[si],enabled:e.target.checked};return{...c,sources:ss};})}/>Enabled</label>
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:8}}>
-              <div><label style={{fontSize:10,color:C.textMuted}}>Weight</label><input type="number" step="0.05" min="0" max="1" value={src.weight} onChange={e=>update(c=>{const ss=[...c.sources];ss[si]={...ss[si],weight:parseFloat(e.target.value)||0};return{...c,sources:ss};})} style={{width:"100%"}}/></div>
-              <div><label style={{fontSize:10,color:C.textMuted}}>Method</label><select value={src.apiConfig.method} onChange={e=>update(c=>{const ss=[...c.sources];ss[si]={...ss[si],apiConfig:{...ss[si].apiConfig,method:e.target.value}};return{...c,sources:ss};})} style={{width:"100%"}}><option>GET</option><option>POST</option></select></div>
-            </div>
-            <div style={{marginBottom:6}}><label style={{fontSize:10,color:C.textMuted}}>Endpoint</label><input value={src.apiConfig.endpoint} onChange={e=>update(c=>{const ss=[...c.sources];ss[si]={...ss[si],apiConfig:{...ss[si].apiConfig,endpoint:e.target.value}};return{...c,sources:ss};})} style={{width:"100%"}}/></div>
-            <div style={{marginBottom:6}}><label style={{fontSize:10,color:C.textMuted}}>Body / Query Template</label><textarea rows={4} value={src.apiConfig.bodyTemplate} onChange={e=>update(c=>{const ss=[...c.sources];ss[si]={...ss[si],apiConfig:{...ss[si].apiConfig,bodyTemplate:e.target.value}};return{...c,sources:ss};})} style={{width:"100%"}}/></div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>{["countPath","itemsPath","titleField","bodyField"].map(f=>(<div key={f}><label style={{fontSize:10,color:C.textMuted}}>{f}</label><input value={src.responsePaths[f]||""} onChange={e=>update(c=>{const ss=[...c.sources];ss[si]={...ss[si],responsePaths:{...ss[si].responsePaths,[f]:e.target.value}};return{...c,sources:ss};})} style={{width:"100%"}}/></div>))}</div>
-            <div style={{marginTop:8}}><Btn variant="danger" onClick={()=>update(c=>({...c,sources:c.sources.filter((_,i)=>i!==si)}))} style={{fontSize:11}}>Remove Source</Btn></div>
-          </Card>))}
-        </div>)}
-
-        {tab==="classifier"&&(<div>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}><h4 style={{fontSize:14,fontWeight:600}}>Classification Stages</h4><Btn variant="primary" onClick={()=>update(c=>({...c,stages:[...c.stages,{id:`stg_${Date.now()}`,name:"New Stage",color:C.purple,weight:c.stages.length+1,titlePatterns:[],descriptionPatterns:[]}]}))} style={{fontSize:11}}>+ Add Stage</Btn></div>
-          {config.stages.map((stg,si)=>(<Card key={stg.id} style={{marginBottom:10,padding:14,background:C.nested}}>
-            <div style={{display:"flex",gap:8,marginBottom:8,alignItems:"center"}}><input value={stg.name} onChange={e=>update(c=>{const ss=[...c.stages];ss[si]={...ss[si],name:e.target.value};return{...c,stages:ss};})} style={{flex:1,fontWeight:600}}/><input type="color" value={stg.color} onChange={e=>update(c=>{const ss=[...c.stages];ss[si]={...ss[si],color:e.target.value};return{...c,stages:ss};})} style={{width:36,height:32,padding:2}}/><input type="number" value={stg.weight} onChange={e=>update(c=>{const ss=[...c.stages];ss[si]={...ss[si],weight:parseFloat(e.target.value)||0};return{...c,stages:ss};})} style={{width:60}} title="Weight"/><Btn variant="danger" onClick={()=>update(c=>({...c,stages:c.stages.filter((_,i)=>i!==si)}))} style={{fontSize:11,padding:"4px 8px"}}>✕</Btn></div>
-            <div style={{marginBottom:6}}><div style={{fontSize:10,color:C.textMuted,marginBottom:2}}>Title Patterns</div><ChipEditor items={stg.titlePatterns} onChange={v=>update(c=>{const ss=[...c.stages];ss[si]={...ss[si],titlePatterns:v};return{...c,stages:ss};})}/></div>
-            <div><div style={{fontSize:10,color:C.textMuted,marginBottom:2}}>Description Patterns</div><ChipEditor items={stg.descriptionPatterns} onChange={v=>update(c=>{const ss=[...c.stages];ss[si]={...ss[si],descriptionPatterns:v};return{...c,stages:ss};})}/></div>
-          </Card>))}
-        </div>)}
-
-        {tab==="scoring"&&(<div>
-          <h4 style={{fontSize:14,fontWeight:600,marginBottom:12}}>Stage Taxonomy</h4>
-          {config.stageTaxonomy.map((t,ti)=>(<div key={ti} style={{display:"flex",gap:8,marginBottom:8,alignItems:"center"}}><input type="number" value={t.min} onChange={e=>update(c=>{const st=[...c.stageTaxonomy];st[ti]={...st[ti],min:parseInt(e.target.value)||0};return{...c,stageTaxonomy:st};})} style={{width:50}}/><span style={{color:C.textMuted}}>–</span><input type="number" value={t.max} onChange={e=>update(c=>{const st=[...c.stageTaxonomy];st[ti]={...st[ti],max:parseInt(e.target.value)||0};return{...c,stageTaxonomy:st};})} style={{width:50}}/><input value={t.name} onChange={e=>update(c=>{const st=[...c.stageTaxonomy];st[ti]={...st[ti],name:e.target.value};return{...c,stageTaxonomy:st};})} style={{flex:1}}/><input type="color" value={t.color} onChange={e=>update(c=>{const st=[...c.stageTaxonomy];st[ti]={...st[ti],color:e.target.value};return{...c,stageTaxonomy:st};})} style={{width:36,height:32,padding:2}}/></div>))}
-          <h4 style={{fontSize:14,fontWeight:600,margin:"20px 0 12px"}}>Stage Multipliers</h4>
-          {config.stages.map(stg=>(<div key={stg.id} style={{display:"flex",gap:8,marginBottom:6,alignItems:"center"}}><span style={{fontSize:12,color:C.textSec,width:100}}>{stg.name}</span><input type="number" step="0.1" value={config.stageMultipliers[stg.id]||1} onChange={e=>update(c=>({...c,stageMultipliers:{...c.stageMultipliers,[stg.id]:parseFloat(e.target.value)||1}}))} style={{width:70}}/></div>))}
-        </div>)}
-
-        {tab==="apikeys"&&(<div>
-          <h4 style={{fontSize:14,fontWeight:600,marginBottom:4}}>API Keys</h4>
-          <div style={{fontSize:12,color:C.textMuted,marginBottom:14}}>Keys loaded from <code style={{...font.mono,background:C.nested,padding:"1px 4px",borderRadius:3}}>.env</code> automatically.</div>
-          {config.sources.map(src=>{const kid=src.apiConfig.authType==="bearer"&&src.apiConfig.endpoint.includes("github")?"github":src.id;const ek=ENV_KEYS[kid]||ENV_KEYS[src.id]||"";const he=!!ek;const ho=!!(config.apiKeys[kid]);
-            return(<div key={src.id} style={{marginBottom:14}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}><label style={{fontSize:13,fontWeight:500}}>{src.name}</label><div style={{display:"flex",gap:6}}>{he&&<Badge color={C.green} bg={C.greenBg}>.env loaded</Badge>}{ho&&<Badge color={C.amber} bg={C.amberBg}>Override</Badge>}{!he&&!ho&&<Badge color={C.red} bg={C.redBg}>No key</Badge>}</div></div><input type="password" value={config.apiKeys[kid]||""} onChange={e=>update(c=>({...c,apiKeys:{...c.apiKeys,[kid]:e.target.value}}))} style={{width:"100%"}} placeholder={he?"Using .env — paste to override":"Paste key…"}/></div>);
-          })}
-        </div>)}
-
-        {tab==="data"&&(<div>
-          <h4 style={{fontSize:14,fontWeight:600,marginBottom:12}}>Data Management</h4>
-          <div style={{fontSize:13,color:C.textSec,marginBottom:12}}>{getCacheStats().count} entries · {getCacheStats().sizeKB} KB</div>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            <Btn onClick={()=>{const b=new Blob([JSON.stringify(config,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="signal-dash-config.json";a.click();}}>Export Config</Btn>
-            <Btn onClick={()=>{const all={};for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k?.startsWith(PFX))all[k]=localStorage.getItem(k);}const b=new Blob([JSON.stringify(all,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="signal-dash-data.json";a.click();}}>Export Data</Btn>
-            <Btn onClick={()=>{const inp=document.createElement("input");inp.type="file";inp.accept=".json";inp.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{const c=JSON.parse(ev.target.result);setConfig(c);sv("config",c);alert("Imported.");}catch{alert("Invalid JSON.");}};r.readAsText(f);};inp.click();}}>Import Config</Btn>
-            <Btn variant="danger" onClick={()=>{if(confirm("Clear all cached data?")){const keys=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k?.startsWith(PFX)&&k!==PFX+"config")keys.push(k);}keys.forEach(k=>localStorage.removeItem(k));alert("Cleared.");}}}>Clear Cache</Btn>
-          </div>
-        </div>)}
-      </div>
-    </div>
-  );
-}
-
-// ── QUICK ADD GROUP (main UI) ────────────────────────────────────────────────
-
-function QuickAddGroup({ onAdd }) {
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-  const ref = useRef(null);
-  useEffect(() => { if (open && ref.current) ref.current.focus(); }, [open]);
-
-  if (!open) return <Btn variant="accent" size="sm" onClick={() => setOpen(true)}>+ New Signal Group</Btn>;
-  return (
-    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-      <input ref={ref} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Healthcare AI, Enterprise LLMs…" style={{ width: 260 }}
-        onKeyDown={e => { if (e.key === "Enter" && name.trim()) { onAdd(name.trim()); setName(""); setOpen(false); } if (e.key === "Escape") { setOpen(false); setName(""); } }} />
-      <Btn variant="primary" size="sm" onClick={() => { if (name.trim()) { onAdd(name.trim()); setName(""); setOpen(false); } }}>Create</Btn>
-      <Btn variant="ghost" size="sm" onClick={() => { setOpen(false); setName(""); }}>Cancel</Btn>
-    </div>
-  );
-}
-
-// ── ONBOARDING BANNER ────────────────────────────────────────────────────────
-
-function OnboardingBanner({hasData,hasKeys,onConfig}){
-  if(hasData)return null;
-  return(
-    <Card className="fade-in-slow" style={{marginBottom:24,border:`1px solid ${C.border}`,borderLeft:`4px solid ${C.cyan}`}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
-        <div>
-          <h2 style={{...font.sans,fontSize:20,fontWeight:700,marginBottom:4,letterSpacing:"-0.02em",color:C.text}}>Getting Started</h2>
-          <p style={{...font.sans,fontSize:13,color:C.textSec,lineHeight:1.6,maxWidth:600,margin:0}}>
-            Track AI demand signals across job postings, search trends, GitHub activity, and open-source model downloads.
-          </p>
+  const apiKeysContent=(<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(250px,1fr))",gap:12}}>
+    {config.sources.map(src=>{
+      const kid=src.apiConfig.authType==="bearer"&&src.apiConfig.endpoint.includes("github")?"github":src.id;
+      const ek=ENV_KEYS[kid]||ENV_KEYS[src.id]||"";const he=!!ek;const ho=!!(config.apiKeys[kid]);
+      return(<div key={src.id}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+          <label style={{...font.sans,fontSize:12,fontWeight:600,color:C.text}}>{src.name}</label>
+          {he&&<Badge color={C.green} bg={C.greenBg} size="sm">Connected</Badge>}
+          {!he&&!ho&&<Badge color={C.textMuted} size="sm">Not set</Badge>}
         </div>
-        {!hasKeys&&<Btn onClick={onConfig} variant="primary" size="sm"><IcoC name="settings" size={13} color="#fff"/> Configure API Keys</Btn>}
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12}}>
-        {[
-          {n:"1",t:"Create Signal Groups",d:"Define keyword groups for industries or technologies you want to monitor."},
-          {n:"2",t:"Data Flows In",d:"Signals auto-refresh on schedule. Each refresh adds a data point to your growth charts."},
-          {n:"3",t:"Compare & Analyze",d:"Select signals for overlay comparison. Converging trends indicate strong multi-factor demand."},
-        ].map(s=>(
-          <div key={s.n} style={{display:"flex",gap:12,padding:"12px 14px",background:C.nested,borderRadius:10}}>
-            <span style={{...font.mono,fontSize:14,fontWeight:800,color:C.cyan,flexShrink:0,width:20}}>{s.n}</span>
-            <div>
-              <div style={{...font.sans,fontSize:13,fontWeight:700,color:C.text,marginBottom:2}}>{s.t}</div>
-              <div style={{...font.sans,fontSize:11.5,color:C.textMuted,lineHeight:1.4}}>{s.d}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </Card>
-  );
+        <input type="password" value={config.apiKeys[kid]||""} onChange={e=>update(c=>({...c,apiKeys:{...c.apiKeys,[kid]:e.target.value}}))} style={{width:"100%",fontSize:12}} placeholder={he?"Using .env":"Paste key…"}/>
+      </div>);
+    })}
+  </div>);
+
+  const groupsContent=(<div>
+    {config.verticals.map((v,vi)=>(<div key={v.id} style={{display:"flex",gap:8,marginBottom:8,alignItems:"center"}}>
+      <input type="color" value={v.color||"#0284c7"} onChange={e=>update(c=>{const vs=[...c.verticals];vs[vi]={...vs[vi],color:e.target.value};return{...c,verticals:vs};})} style={{width:28,height:28,padding:1,border:`1px solid ${C.border}`,borderRadius:6,cursor:"pointer"}}/>
+      <input value={v.name} onChange={e=>update(c=>{const vs=[...c.verticals];vs[vi]={...vs[vi],name:e.target.value};return{...c,verticals:vs};})} style={{flex:1,fontSize:13,fontWeight:600}}/>
+      <Btn variant="ghost" size="sm" onClick={()=>{if(confirm(`Remove "${v.name}"?`))update(c=>({...c,verticals:c.verticals.filter((_,i)=>i!==vi)}));}}>✕</Btn>
+    </div>))}
+    <Btn variant="default" size="sm" onClick={()=>update(c=>({...c,verticals:[...c.verticals,{id:`v_${Date.now()}`,name:"New Group",color:PALETTE[c.verticals.length%PALETTE.length],description:"",keywords:{theirstack:{titleKeywords:[],descriptionKeywords:[]},google_trends:{keywords:[]},github_repos:{keywords:[]},claude_attrib:{keywords:[]}}}]}))}>+ Add group</Btn>
+  </div>);
+
+  const dataContent=(<div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+    <span style={{...font.sans,fontSize:12,color:C.textMuted}}>{getCacheStats().count} entries / {getCacheStats().sizeKB} KB</span>
+    <Btn size="sm" onClick={()=>{const b=new Blob([JSON.stringify(config,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="config.json";a.click();}}>Export</Btn>
+    <Btn size="sm" onClick={()=>{const inp=document.createElement("input");inp.type="file";inp.accept=".json";inp.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{const c=JSON.parse(ev.target.result);setConfig(c);sv("config",c);}catch{}};r.readAsText(f);};inp.click();}}>Import</Btn>
+    <Btn size="sm" variant="danger" onClick={()=>{if(confirm("Clear all cached signal data?")){const keys=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k?.startsWith(PFX)&&k!==PFX+"config")keys.push(k);}keys.forEach(k=>localStorage.removeItem(k));}}}>Clear cache</Btn>
+  </div>);
+
+  const advancedContent=(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
+    <div>
+      <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:8}}>Classification Stages</div>
+      {config.stages.map((stg,si)=>(<div key={stg.id} style={{display:"flex",gap:6,marginBottom:6,alignItems:"center"}}>
+        <input type="color" value={stg.color} onChange={e=>update(c=>{const ss=[...c.stages];ss[si]={...ss[si],color:e.target.value};return{...c,stages:ss};})} style={{width:24,height:24,padding:1,border:`1px solid ${C.border}`,borderRadius:4}}/>
+        <input value={stg.name} onChange={e=>update(c=>{const ss=[...c.stages];ss[si]={...ss[si],name:e.target.value};return{...c,stages:ss};})} style={{flex:1,fontSize:12}}/>
+        <input type="number" value={stg.weight} onChange={e=>update(c=>{const ss=[...c.stages];ss[si]={...ss[si],weight:parseFloat(e.target.value)||0};return{...c,stages:ss};})} style={{width:44,fontSize:12}} title="Weight"/>
+      </div>))}
+    </div>
+    <div>
+      <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:8}}>Score Thresholds</div>
+      {config.stageTaxonomy.map((t,ti)=>(<div key={ti} style={{display:"flex",gap:6,marginBottom:6,alignItems:"center"}}>
+        <input type="number" value={t.min} onChange={e=>update(c=>{const st=[...c.stageTaxonomy];st[ti]={...st[ti],min:parseInt(e.target.value)||0};return{...c,stageTaxonomy:st};})} style={{width:40,fontSize:12}}/>
+        <span style={{color:C.textMuted,fontSize:11}}>–</span>
+        <input type="number" value={t.max} onChange={e=>update(c=>{const st=[...c.stageTaxonomy];st[ti]={...st[ti],max:parseInt(e.target.value)||0};return{...c,stageTaxonomy:st};})} style={{width:40,fontSize:12}}/>
+        <input value={t.name} onChange={e=>update(c=>{const st=[...c.stageTaxonomy];st[ti]={...st[ti],name:e.target.value};return{...c,stageTaxonomy:st};})} style={{flex:1,fontSize:12}}/>
+      </div>))}
+    </div>
+  </div>);
+
+  const items=[
+    {id:"keys",label:"API Keys",content:apiKeysContent},
+    {id:"groups",label:"Signal Groups",content:groupsContent},
+    {id:"advanced",label:"Scoring & Classification",content:advancedContent},
+    {id:"data",label:"Data",content:dataContent},
+  ];
+
+  return(<Card style={{padding:0,overflow:"hidden"}}>
+    <div style={{display:"flex",borderBottom:`1px solid ${C.border}`}}>
+      {items.map(it=>(<button key={it.id} onClick={()=>setSection(section===it.id?null:it.id)} style={{...font.sans,flex:1,fontSize:12,fontWeight:600,padding:"10px 12px",cursor:"pointer",background:section===it.id?C.white:C.nested,border:"none",borderBottom:section===it.id?`2px solid ${C.cyan}`:"2px solid transparent",color:section===it.id?C.text:C.textMuted,transition:"all .15s"}}>{it.label}</button>))}
+    </div>
+    {section&&(<div className="fade-in" style={{padding:"16px 20px"}}>
+      {items.find(i=>i.id===section)?.content}
+    </div>)}
+  </Card>);
 }
 
 // ── APP ROOT ─────────────────────────────────────────────────────────────────
@@ -1000,16 +933,19 @@ export default function App() {
   const [loading,setLoading]=useState({});
   const [errors,setErrors]=useState({});
   const [alerts,setAlerts]=useState([]);
-  const [showConfig,setShowConfig]=useState(false);
   const [nextRefresh,setNextRefresh]=useState({});
   const [schedulerActive,setSchedulerActive]=useState(true);
   const [overlaySelected,setOverlaySelected]=useState([]);
   const [allHistories,setAllHistories]=useState({});
+  const [addingGroup,setAddingGroup]=useState(false);
+  const [newGroupName,setNewGroupName]=useState("");
+  const addRef=useRef(null);
   const configRef=useRef(config);const srRef=useRef(signalResults);const ldRef=useRef(loading);
   useEffect(()=>{configRef.current=config;},[config]);
   useEffect(()=>{srRef.current=signalResults;},[signalResults]);
   useEffect(()=>{ldRef.current=loading;},[loading]);
   useEffect(()=>{sv("config",config);},[config]);
+  useEffect(()=>{if(addingGroup&&addRef.current)addRef.current.focus();},[addingGroup]);
 
   const hasKeys=useMemo(()=>config.sources.some(src=>resolveKey(src,config.apiKeys)),[config]);
   const [cloudStatus,setCloudStatus]=useState("idle");
@@ -1121,118 +1057,98 @@ export default function App() {
     <div style={{background:"#f0f2f5",minHeight:"100vh",...font.sans}}>
       <style>{CSS}</style>
 
-      {/* ─── Top Navigation ─── */}
-      <div style={{position:"sticky",top:0,zIndex:100,background:"rgba(255,255,255,.92)",backdropFilter:"blur(12px)",borderBottom:`1px solid ${C.border}`,padding:"10px 28px"}}>
+      {/* ─── Control strip ─── */}
+      <div style={{position:"sticky",top:0,zIndex:100,background:"rgba(255,255,255,.95)",backdropFilter:"blur(12px)",borderBottom:`1px solid ${C.border}`,padding:"8px 28px"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",maxWidth:1400,margin:"0 auto"}}>
-          <div style={{display:"flex",alignItems:"center",gap:14}}>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <IcoC name="crosshair" size={20} color={C.cyan}/>
-              <h1 style={{...font.sans,fontSize:18,fontWeight:800,margin:0,letterSpacing:"-0.03em",color:C.text}}>Signal Intelligence</h1>
-            </div>
-            {anyLoading&&<Spinner size={16}/>}
-            <div style={{display:"flex",gap:4}}>
-              {hasKeys&&<Badge color={C.green} bg={C.greenBg} size="sm">Live</Badge>}
-              {schedulerActive&&hasKeys&&<Badge color={C.cyan} bg={C.cyanBg} size="sm">Auto</Badge>}
-              {cloudStatus==="synced"&&<Badge color={C.green} bg={C.greenBg} size="sm">Synced</Badge>}
-              {cloudStatus==="error"&&<Badge color={C.red} bg={C.redBg} size="sm">Sync Error</Badge>}
-            </div>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            {anyLoading&&<Spinner size={14}/>}
+            {hasKeys&&<Badge color={C.green} bg={C.greenBg} size="sm">Live</Badge>}
+            {schedulerActive&&hasKeys&&<Badge color={C.cyan} bg={C.cyanBg} size="sm">Auto-refresh</Badge>}
+            {cloudStatus==="synced"&&<Badge color={C.green} bg={C.greenBg} size="sm">Saved</Badge>}
+            {cloudStatus==="error"&&<Badge color={C.red} bg={C.redBg} size="sm">Sync error</Badge>}
+            {config.sources.filter(s=>s.enabled).map(src=>{const nxt=nextRefresh[src.id];const rem=nxt?Math.max(0,nxt-Date.now()):0;return rem>0?<span key={src.id} style={{...font.sans,fontSize:10,color:C.textMuted}}>{src.name.split(" ")[0]} {humanInterval(rem)}</span>:null;})}
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <div style={{display:"flex",alignItems:"center",gap:5}}>
             <Btn variant={schedulerActive?"ghost":"default"} size="sm" onClick={()=>setSchedulerActive(p=>!p)} className="nav-btn">
-              <IcoC name={schedulerActive?"pause":"play"} size={12}/>{schedulerActive?"Pause":"Resume"}
+              <IcoC name={schedulerActive?"pause":"play"} size={11}/>{schedulerActive?"Pause":"Resume"}
             </Btn>
             <Btn variant="primary" size="sm" onClick={refreshAll} disabled={anyLoading||!hasKeys}>
-              {anyLoading?<><Spinner size={12} color="#fff"/> Refreshing</>:<><IcoC name="refresh" size={13} color="#fff"/> Refresh All</>}
+              {anyLoading?<><Spinner size={11} color="#fff"/> Refreshing</>:<><IcoC name="refresh" size={12} color="#fff"/> Refresh</>}
             </Btn>
-            <div style={{width:1,height:20,background:C.border,margin:"0 4px"}}/>
             <Btn variant="ghost" size="sm" onClick={()=>doCloudSync("up")} disabled={cloudStatus.endsWith("…")} title="Save to cloud" className="nav-btn">
-              {cloudStatus==="saving…"?<Spinner size={12}/>:<IcoC name="cloudUp" size={14}/>}
+              {cloudStatus==="saving…"?<Spinner size={11}/>:<IcoC name="cloudUp" size={13}/>}
             </Btn>
             <Btn variant="ghost" size="sm" onClick={()=>doCloudSync("down")} disabled={cloudStatus.endsWith("…")} title="Load from cloud" className="nav-btn">
-              {cloudStatus==="loading…"?<Spinner size={12}/>:<IcoC name="cloudDown" size={14}/>}
+              {cloudStatus==="loading…"?<Spinner size={11}/>:<IcoC name="cloudDown" size={13}/>}
             </Btn>
-            <div style={{width:1,height:20,background:C.border,margin:"0 4px"}}/>
-            <Btn variant="ghost" size="sm" onClick={()=>setShowConfig(true)} className="nav-btn"><IcoC name="settings" size={14}/> Settings</Btn>
           </div>
         </div>
       </div>
 
-      {/* ─── Main Content ─── */}
-      <div style={{padding:"24px 28px 40px",maxWidth:1400,margin:"0 auto"}}>
+      <div style={{padding:"20px 28px 40px",maxWidth:1400,margin:"0 auto"}}>
 
-        {/* Onboarding */}
-        <OnboardingBanner hasData={hasData} hasKeys={hasKeys} onConfig={()=>setShowConfig(true)}/>
+        {/* ─── Settings (always visible, collapsed by default) ─── */}
+        <div style={{marginBottom:20}}>
+          <InlineSettings config={config} setConfig={setConfig}/>
+        </div>
 
-        {/* Summary metric cards */}
+        {/* ─── Summary metrics ─── */}
         {hasData&&(
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:14,marginBottom:28}} className="fade-in">
-            <MetricCard icon={<IcoC name="briefcase" size={14} color={C.cyan}/>} label="Job Postings" value={summaryMetrics.jobs.toLocaleString()} sublabel="Matching positions (30d)" color={C.cyan}/>
-            <MetricCard icon={<IcoC name="trendUp" size={14} color={C.blue}/>} label="Search Interest" value={summaryMetrics.trends} unit="/100" sublabel="Google Trends index" color={C.blue}/>
-            <MetricCard icon={<IcoC name="code" size={14} color={C.green}/>} label="Active Repos" value={summaryMetrics.repos.toLocaleString()} sublabel="GitHub repos (30d push)" color={C.green}/>
-            <MetricCard icon={<IcoC name="bot" size={14} color={C.purple}/>} label="AI Commits" value={summaryMetrics.claude.toLocaleString()} sublabel="Claude-attributed (7d)" color={C.purple}/>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12,marginBottom:24}} className="fade-in">
+            <MetricCard icon={<IcoC name="briefcase" size={13} color={C.cyan}/>} label="Job Postings" value={summaryMetrics.jobs.toLocaleString()} sublabel="Matching positions (30d)" color={C.cyan}/>
+            <MetricCard icon={<IcoC name="trendUp" size={13} color={C.blue}/>} label="Search Interest" value={summaryMetrics.trends} unit="/100" sublabel="Google Trends index" color={C.blue}/>
+            <MetricCard icon={<IcoC name="code" size={13} color={C.green}/>} label="Active Repos" value={summaryMetrics.repos.toLocaleString()} sublabel="GitHub repos (30d push)" color={C.green}/>
+            <MetricCard icon={<IcoC name="bot" size={13} color={C.purple}/>} label="AI Commits" value={summaryMetrics.claude.toLocaleString()} sublabel="Claude-attributed (7d)" color={C.purple}/>
           </div>
         )}
 
-        {/* Signal groups toolbar */}
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <QuickAddGroup onAdd={addGroup}/>
-            <div style={{display:"flex",gap:4}}>
-              {config.verticals.map(v=>(<Badge key={v.id} color={v.color||C.cyan} bg={(v.color||C.cyan)+"14"} size="sm">{v.name}</Badge>))}
-            </div>
+        {/* ─── Group bar ─── */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            {config.verticals.map(v=>(<Badge key={v.id} color={v.color||C.cyan} bg={(v.color||C.cyan)+"14"} size="sm">{v.name}</Badge>))}
+            {addingGroup?(
+              <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                <input ref={addRef} value={newGroupName} onChange={e=>setNewGroupName(e.target.value)} placeholder="Group name" style={{width:160,fontSize:12,padding:"4px 8px"}}
+                  onKeyDown={e=>{if(e.key==="Enter"&&newGroupName.trim()){addGroup(newGroupName.trim());setNewGroupName("");setAddingGroup(false);}if(e.key==="Escape"){setAddingGroup(false);setNewGroupName("");}}}/>
+                <Btn variant="primary" size="sm" onClick={()=>{if(newGroupName.trim()){addGroup(newGroupName.trim());setNewGroupName("");setAddingGroup(false);}}}>Add</Btn>
+              </div>
+            ):<Btn variant="ghost" size="sm" onClick={()=>setAddingGroup(true)}>+ Add group</Btn>}
           </div>
           {overlaySelected.length>0&&(
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <Badge color={C.purple} bg={C.purpleBg} size="lg">{overlaySelected.length} selected for overlay</Badge>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <span style={{...font.sans,fontSize:11,color:C.textMuted}}>{overlaySelected.length} selected for overlay</span>
               <Btn variant="ghost" size="sm" onClick={()=>setOverlaySelected([])}>Clear</Btn>
             </div>
           )}
         </div>
 
-        {/* Overlay comparison chart */}
+        {/* Overlay chart */}
         {overlaySelected.length>=2 && <OverlayChart selectedKeys={overlaySelected} allHistories={allHistories} sources={config.sources} verticals={config.verticals}/>}
 
         {/* ─── Signal Sources ─── */}
-        <div style={{marginBottom:32}}>
-          <SectionHeader icon={<IcoC name="activity" size={18} color={C.cyan}/>} title="Signal Sources" subtitle="Live data feeds tracking AI demand across job markets, search trends, and developer activity. Click any row to see keywords and results." badge={
-            <div style={{display:"flex",gap:4}}>{config.sources.filter(s=>s.enabled).map(src=>{const nxt=nextRefresh[src.id];const rem=nxt?Math.max(0,nxt-Date.now()):0;return <Badge key={src.id} color={C.green} bg={C.greenBg} size="sm">{src.name.split(" ")[0]} {rem>0?humanInterval(rem):"…"}</Badge>;})}</div>
-          }/>
-          <div style={{display:"flex",flexDirection:"column",gap:18}}>
+        <div style={{marginBottom:28}}>
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
             {config.sources.filter(s=>s.enabled).map(src=>(<SignalPanel key={src.id} source={src} verticals={config.verticals} signalResults={signalResults} loading={loading} errors={errors} onFetch={fetchSource} onUpdateKeywords={updateKeywords} overlaySelected={overlaySelected} onToggleOverlay={toggleOverlay}/>))}
           </div>
         </div>
 
         {/* ─── Hugging Face ─── */}
-        <div style={{marginBottom:32}}>
+        <div style={{marginBottom:28}}>
           <HuggingFaceLeaderboard/>
         </div>
 
         {/* ─── Pipeline Pressure ─── */}
-        <div style={{marginBottom:32}}>
-          <SectionHeader icon={<IcoC name="crosshair" size={18} color={C.green}/>} title="Pipeline Pressure Scores" subtitle="Composite scores combining all signal sources. Higher scores indicate stronger near-term AI budget commitment. Stages indicate estimated timeline to procurement."/>
+        <div style={{marginBottom:28}}>
           <CompositeCards verticals={config.verticals} composites={composites} stageTaxonomy={config.stageTaxonomy}/>
         </div>
 
         {/* ─── Alerts ─── */}
         {alerts.length>0&&(
-          <div style={{marginBottom:32}}>
+          <div style={{marginBottom:28}}>
             <AlertFeed alerts={alerts} onPin={id=>setAlerts(p=>p.map(a=>a.id===id?{...a,pinned:!a.pinned}:a))}/>
           </div>
         )}
-
-        {/* No keys prompt */}
-        {!hasKeys&&(
-          <Card style={{textAlign:"center",padding:"40px 32px",background:C.nested,border:`1.5px solid ${C.border}`}} className="fade-in-slow">
-            <div style={{marginBottom:12}}><IcoC name="zap" size={32} color={C.blue}/></div>
-            <div style={{...font.sans,fontSize:18,fontWeight:700,marginBottom:6,color:C.text}}>Connect Your Data Sources</div>
-            <div style={{...font.sans,fontSize:14,color:C.textSec,marginBottom:16,maxWidth:400,margin:"0 auto 16px"}}>API keys are loaded from <code style={{...font.mono,background:C.nested,padding:"2px 6px",borderRadius:4}}>.env</code> automatically, or configure them in Settings.</div>
-            <Btn variant="primary" onClick={()=>setShowConfig(true)}><IcoC name="settings" size={14} color="#fff"/> Open Settings</Btn>
-          </Card>
-        )}
       </div>
-
-      {/* Config panel + backdrop */}
-      {showConfig&&<><div onClick={()=>setShowConfig(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.2)",backdropFilter:"blur(2px)",zIndex:199}} className="fade-in"/><ConfigPanel config={config} setConfig={setConfig} onClose={()=>setShowConfig(false)}/></>}
     </div>
   );
 }
