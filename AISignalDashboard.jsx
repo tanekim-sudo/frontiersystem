@@ -296,52 +296,112 @@ function evalAlerts(verticals, sr, rules) {
 // ── CSS ──────────────────────────────────────────────────────────────────────
 
 const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
-*{box-sizing:border-box;margin:0;padding:0}body{background:${C.bg};color:${C.text}}
-@keyframes fadeIn{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}body{background:#f0f2f5;color:${C.text}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes fadeInSlow{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @keyframes spin{to{transform:rotate(360deg)}}
-@keyframes glow{0%,100%{box-shadow:0 0 0 0 rgba(15,123,85,0)}50%{box-shadow:0 0 0 4px rgba(15,123,85,.12)}}
-.fade-in{animation:fadeIn .2s ease}.glow{animation:glow 2s ease-in-out infinite}
-::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-thumb{background:${C.border};border-radius:3px}
-input,textarea,select{background:${C.white};border:1px solid ${C.border};color:${C.text};font-family:'Inter',sans-serif;font-size:13px;padding:7px 10px;border-radius:6px;outline:none;transition:border-color .15s}
-input:focus,textarea:focus{border-color:${C.cyan};box-shadow:0 0 0 3px ${C.cyanBg}}
-textarea{font-family:'JetBrains Mono',monospace;font-size:12px;resize:vertical}table{border-collapse:collapse;width:100%}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+@keyframes glow{0%,100%{box-shadow:0 0 0 0 rgba(2,132,199,0)}50%{box-shadow:0 0 0 6px rgba(2,132,199,.1)}}
+@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+.fade-in{animation:fadeIn .25s ease}.fade-in-slow{animation:fadeInSlow .4s ease}
+.glow{animation:glow 2.5s ease-in-out infinite}
+.shimmer{background:linear-gradient(90deg,${C.nested} 25%,${C.white} 50%,${C.nested} 75%);background-size:200% 100%;animation:shimmer 1.5s infinite}
+::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-thumb{background:#c4c9d4;border-radius:3px}::-webkit-scrollbar-thumb:hover{background:#a0a8b8}
+input,textarea,select{background:${C.white};border:1.5px solid ${C.border};color:${C.text};font-family:'Inter',sans-serif;font-size:13px;padding:8px 12px;border-radius:8px;outline:none;transition:all .2s}
+input:focus,textarea:focus,select:focus{border-color:${C.cyan};box-shadow:0 0 0 3px ${C.cyanBg}}
+textarea{font-family:'JetBrains Mono',monospace;font-size:12px;resize:vertical}
+table{border-collapse:separate;border-spacing:0;width:100%}
 .recharts-cartesian-grid-horizontal line,.recharts-cartesian-grid-vertical line{stroke:${C.borderLight}}
+.metric-card{transition:transform .15s,box-shadow .15s}.metric-card:hover{transform:translateY(-2px);box-shadow:0 8px 25px rgba(0,0,0,.08)}
+.signal-section{transition:all .2s}
+.nav-btn{transition:all .15s;border:1.5px solid transparent}.nav-btn:hover{border-color:${C.border};background:${C.nested}}
 `;
 
 // ── UI PRIMITIVES ────────────────────────────────────────────────────────────
 
-function Btn({children,onClick,disabled,variant="default",style:sx,...r}){
-  const base={...font.sans,fontSize:13,fontWeight:500,padding:"7px 14px",borderRadius:7,cursor:disabled?"not-allowed":"pointer",border:"1px solid",transition:"all .15s",display:"inline-flex",alignItems:"center",gap:6,opacity:disabled?.45:1};
-  const vs={default:{background:C.white,borderColor:C.border,color:C.text},primary:{background:C.cyan,borderColor:C.cyan,color:"#fff"},ghost:{background:"transparent",borderColor:"transparent",color:C.textSec},danger:{background:C.white,borderColor:"#fca5a5",color:C.red}};
+const ICONS = {
+  theirstack: "💼", google_trends: "📊", github_repos: "🔧", claude_attrib: "🤖",
+  cloud: "☁", sync: "↻", chart: "📈", config: "⚙", add: "+", check: "✓",
+  alert: "⚡", fire: "🔥", target: "🎯", rocket: "🚀", eye: "👁",
+};
+
+function Btn({children,onClick,disabled,variant="default",size="md",style:sx,...r}){
+  const sizes={sm:{fontSize:11,padding:"5px 10px",borderRadius:6},md:{fontSize:13,padding:"8px 16px",borderRadius:8},lg:{fontSize:14,padding:"10px 20px",borderRadius:10}};
+  const base={...font.sans,fontWeight:600,cursor:disabled?"not-allowed":"pointer",border:"1.5px solid",transition:"all .15s",display:"inline-flex",alignItems:"center",gap:6,opacity:disabled?.4:1,letterSpacing:"-0.01em",...sizes[size]};
+  const vs={
+    default:{background:C.white,borderColor:C.border,color:C.text},
+    primary:{background:"linear-gradient(135deg,#0284c7,#0369a1)",borderColor:"transparent",color:"#fff",boxShadow:"0 2px 8px rgba(2,132,199,.3)"},
+    ghost:{background:"transparent",borderColor:"transparent",color:C.textSec},
+    danger:{background:"#fff5f5",borderColor:"#fca5a5",color:C.red},
+    success:{background:C.greenBg,borderColor:"#86efac",color:C.green},
+    accent:{background:"linear-gradient(135deg,#6d28d9,#7c3aed)",borderColor:"transparent",color:"#fff",boxShadow:"0 2px 8px rgba(109,40,217,.25)"},
+  };
   return <button onClick={onClick} disabled={disabled} style={{...base,...vs[variant],...sx}} {...r}>{children}</button>;
 }
-function Badge({children,color=C.textSec,bg}){ return <span style={{display:"inline-flex",alignItems:"center",gap:3,padding:"2px 9px",borderRadius:999,fontSize:11,fontWeight:600,...font.sans,background:bg||color+"14",color,whiteSpace:"nowrap"}}>{children}</span>; }
-function Spinner({size=14,color:cl=C.cyan}){ return <svg width={size} height={size} viewBox="0 0 24 24" style={{animation:"spin .7s linear infinite"}}><circle cx="12" cy="12" r="10" fill="none" stroke={C.border} strokeWidth="3"/><path d="M12 2 a10 10 0 0 1 10 10" fill="none" stroke={cl} strokeWidth="3" strokeLinecap="round"/></svg>; }
-function Card({children,style:sx,className}){ return <div className={className} style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:10,padding:18,...sx}}>{children}</div>; }
+function Badge({children,color=C.textSec,bg,size="sm"}){
+  const sz=size==="lg"?{padding:"4px 12px",fontSize:12}:{padding:"3px 9px",fontSize:10.5};
+  return <span style={{display:"inline-flex",alignItems:"center",gap:4,...sz,borderRadius:999,fontWeight:700,...font.sans,background:bg||color+"14",color,whiteSpace:"nowrap",letterSpacing:"0.02em",textTransform:"uppercase"}}>{children}</span>;
+}
+function Spinner({size=14,color:cl=C.cyan}){ return <svg width={size} height={size} viewBox="0 0 24 24" style={{animation:"spin .7s linear infinite",flexShrink:0}}><circle cx="12" cy="12" r="10" fill="none" stroke={C.border} strokeWidth="3"/><path d="M12 2 a10 10 0 0 1 10 10" fill="none" stroke={cl} strokeWidth="3" strokeLinecap="round"/></svg>; }
+function Card({children,style:sx,className,hover}){ return <div className={className} style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:14,padding:20,boxShadow:"0 1px 3px rgba(0,0,0,.04)",...sx}}>{children}</div>; }
 
-function GaugeSVG({value,size=80,color}){
-  const cx=size/2,cy=size/2+5,r=size/2-8,s=Math.PI*.8,e=Math.PI*.2,tot=2*Math.PI-(s-e),va=s-(value/100)*tot;
+function SectionHeader({icon,title,subtitle,right,badge}){
+  return(<div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,flexWrap:"wrap",gap:8}}>
+    <div>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:subtitle?4:0}}>
+        {icon&&<span style={{fontSize:20}}>{icon}</span>}
+        <h2 style={{...font.sans,fontSize:18,fontWeight:700,letterSpacing:"-0.02em",color:C.text,margin:0}}>{title}</h2>
+        {badge}
+      </div>
+      {subtitle&&<p style={{...font.sans,fontSize:13,color:C.textMuted,lineHeight:1.5,maxWidth:600,margin:0}}>{subtitle}</p>}
+    </div>
+    {right&&<div style={{display:"flex",alignItems:"center",gap:8}}>{right}</div>}
+  </div>);
+}
+
+function MetricCard({icon,label,value,unit,sublabel,color,trend,onClick}){
+  return(<div className="metric-card" onClick={onClick} style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:14,padding:"16px 20px",cursor:onClick?"pointer":"default",borderLeft:`4px solid ${color||C.cyan}`,boxShadow:"0 1px 3px rgba(0,0,0,.04)"}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+      <span style={{fontSize:11,fontWeight:600,color:C.textMuted,textTransform:"uppercase",letterSpacing:"0.05em",...font.sans}}>{icon&&<span style={{marginRight:4}}>{icon}</span>}{label}</span>
+      {trend!=null&&<Badge color={trend>=0?C.green:C.red} bg={trend>=0?C.greenBg:C.redBg} size="sm">{trend>=0?"+":""}{trend}%</Badge>}
+    </div>
+    <div style={{...font.mono,fontSize:28,fontWeight:800,color:color||C.text,letterSpacing:"-0.03em",lineHeight:1}}>{value}{unit&&<span style={{fontSize:14,fontWeight:500,color:C.textMuted,marginLeft:4}}>{unit}</span>}</div>
+    {sublabel&&<div style={{...font.sans,fontSize:11,color:C.textMuted,marginTop:6}}>{sublabel}</div>}
+  </div>);
+}
+
+function GaugeSVG({value,size=90,color}){
+  const cx=size/2,cy=size/2+5,r=size/2-10,s=Math.PI*.8,e=Math.PI*.2,tot=2*Math.PI-(s-e),va=s-(value/100)*tot;
   const arc=(a,b)=>{const x1=cx+r*Math.cos(a),y1=cy-r*Math.sin(a),x2=cx+r*Math.cos(b),y2=cy-r*Math.sin(b);return`M ${x1} ${y1} A ${r} ${r} 0 ${Math.abs(a-b)>Math.PI?1:0} ${a>b?1:0} ${x2} ${y2}`;};
-  return <svg width={size} height={size-4} viewBox={`0 0 ${size} ${size-4}`}><path d={arc(s,e)} fill="none" stroke={C.border} strokeWidth={5} strokeLinecap="round"/><path d={arc(s,va)} fill="none" stroke={color||C.cyan} strokeWidth={5} strokeLinecap="round"/><text x={cx} y={cy-1} textAnchor="middle" fill={C.text} style={{...font.mono,fontSize:18,fontWeight:700}}>{value}</text><text x={cx} y={cy+12} textAnchor="middle" fill={C.textMuted} style={{...font.sans,fontSize:7.5,fontWeight:600}}>SCORE</text></svg>;
+  return <svg width={size} height={size-4} viewBox={`0 0 ${size} ${size-4}`}><path d={arc(s,e)} fill="none" stroke={C.border} strokeWidth={6} strokeLinecap="round"/><path d={arc(s,va)} fill="none" stroke={color||C.cyan} strokeWidth={6} strokeLinecap="round"/><text x={cx} y={cy-2} textAnchor="middle" fill={C.text} style={{...font.mono,fontSize:22,fontWeight:800}}>{value}</text><text x={cx} y={cy+13} textAnchor="middle" fill={C.textMuted} style={{...font.sans,fontSize:8,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em"}}>SCORE</text></svg>;
 }
 
 function ChipEditor({items,onChange,color=C.textMuted,placeholder="Add…"}){
   const[adding,setAdding]=useState(false);const[text,setText]=useState("");const ref=useRef(null);
   useEffect(()=>{if(adding&&ref.current)ref.current.focus();},[adding]);
-  return(<div style={{display:"flex",flexWrap:"wrap",gap:4,alignItems:"center"}}>
+  return(<div style={{display:"flex",flexWrap:"wrap",gap:5,alignItems:"center"}}>
     {items.map((item,i)=>(<EditableChip key={`${item}-${i}`} value={item} onEdit={v=>{const n=[...items];n[i]=v;onChange(n);}} onRemove={()=>onChange(items.filter((_,j)=>j!==i))}/>))}
-    {adding?(<input ref={ref} value={text} onChange={e=>setText(e.target.value)} placeholder={placeholder} onKeyDown={e=>{if(e.key==="Enter"&&text.trim()){onChange([...items,text.trim()]);setText("");setAdding(false);}if(e.key==="Escape"){setAdding(false);setText("");}}} onBlur={()=>{setAdding(false);setText("");}} style={{width:120,fontSize:12,padding:"3px 8px"}}/>):(<Btn variant="ghost" onClick={()=>setAdding(true)} style={{fontSize:11,padding:"2px 8px",color}}>+</Btn>)}
+    {adding?(<input ref={ref} value={text} onChange={e=>setText(e.target.value)} placeholder={placeholder} onKeyDown={e=>{if(e.key==="Enter"&&text.trim()){onChange([...items,text.trim()]);setText("");setAdding(false);}if(e.key==="Escape"){setAdding(false);setText("");}}} onBlur={()=>{setAdding(false);setText("");}} style={{width:130,fontSize:12,padding:"4px 10px"}}/>):(<button onClick={()=>setAdding(true)} style={{...font.sans,fontSize:11,fontWeight:600,padding:"4px 10px",borderRadius:6,cursor:"pointer",background:C.cyanBg,color:C.cyan,border:`1px dashed ${C.cyan}44`,transition:"all .15s"}}>+ add</button>)}
   </div>);
 }
 function EditableChip({value,onEdit,onRemove}){
   const[editing,setEditing]=useState(false);const[text,setText]=useState(value);const ref=useRef(null);
   useEffect(()=>{if(editing&&ref.current)ref.current.focus();},[editing]);
-  if(editing)return <input ref={ref} value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&text.trim()){onEdit(text.trim());setEditing(false);}if(e.key==="Escape"){setText(value);setEditing(false);}}} onBlur={()=>{setText(value);setEditing(false);}} style={{width:Math.max(60,text.length*7+16),fontSize:12,padding:"3px 8px"}}/>;
-  return(<span style={{display:"inline-flex",alignItems:"center",gap:3,background:C.nested,border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 6px 3px 10px",fontSize:12,color:C.textSec,cursor:"pointer",...font.sans}}><span onClick={()=>setEditing(true)}>{value}</span><span onClick={e=>{e.stopPropagation();onRemove();}} style={{cursor:"pointer",color:C.textMuted,fontSize:14,lineHeight:1}}>×</span></span>);
+  if(editing)return <input ref={ref} value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&text.trim()){onEdit(text.trim());setEditing(false);}if(e.key==="Escape"){setText(value);setEditing(false);}}} onBlur={()=>{setText(value);setEditing(false);}} style={{width:Math.max(70,text.length*7+20),fontSize:12,padding:"4px 10px"}}/>;
+  return(<span style={{display:"inline-flex",alignItems:"center",gap:4,background:C.white,border:`1.5px solid ${C.border}`,borderRadius:8,padding:"4px 8px 4px 12px",fontSize:12,fontWeight:500,color:C.text,cursor:"pointer",...font.sans,transition:"all .15s"}}><span onClick={()=>setEditing(true)} style={{maxWidth:150,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{value}</span><span onClick={e=>{e.stopPropagation();onRemove();}} style={{cursor:"pointer",color:C.textMuted,fontSize:15,lineHeight:1,marginLeft:2,transition:"color .15s"}}>×</span></span>);
 }
 function TabBar({tabs,active,onChange}){
-  return(<div style={{display:"flex",gap:0,borderBottom:`1px solid ${C.border}`,marginBottom:16}}>{tabs.map(t=>(<button key={t.id} onClick={()=>onChange(t.id)} style={{...font.sans,fontSize:12,fontWeight:500,padding:"10px 16px",cursor:"pointer",background:"transparent",border:"none",borderBottom:active===t.id?`2px solid ${C.cyan}`:"2px solid transparent",color:active===t.id?C.cyan:C.textSec,transition:"all .15s"}}>{t.label}</button>))}</div>);
+  return(<div style={{display:"flex",gap:2,background:C.nested,borderRadius:10,padding:3,marginBottom:16}}>{tabs.map(t=>(<button key={t.id} onClick={()=>onChange(t.id)} style={{...font.sans,fontSize:12,fontWeight:600,padding:"8px 16px",cursor:"pointer",background:active===t.id?C.white:"transparent",border:"none",borderRadius:8,color:active===t.id?C.text:C.textMuted,transition:"all .15s",boxShadow:active===t.id?"0 1px 3px rgba(0,0,0,.08)":"none"}}>{t.label}</button>))}</div>);
+}
+function Expandable({title,children,defaultOpen=false}){
+  const[open,setOpen]=useState(defaultOpen);
+  return(<div style={{borderTop:`1px solid ${C.borderLight}`,marginTop:8}}>
+    <button onClick={()=>setOpen(!open)} style={{...font.sans,width:"100%",textAlign:"left",background:"none",border:"none",padding:"10px 0",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",color:C.textSec,fontSize:12,fontWeight:600}}>
+      <span>{title}</span><span style={{fontSize:14,transition:"transform .2s",transform:open?"rotate(180deg)":"rotate(0)"}}>{open?"▾":"▸"}</span>
+    </button>
+    {open&&<div className="fade-in" style={{paddingBottom:12}}>{children}</div>}
+  </div>);
 }
 
 // ── SOURCE DESCRIPTIONS WITH INVESTMENT IMPLICATIONS ─────────────────────────
@@ -373,15 +433,15 @@ const SOURCE_INFO = {
 
 function SignalHistoryChart({ signalKey, color, label }) {
   const data = getSignalHistory(signalKey);
-  if (data.length < 2) return <div style={{...font.sans,fontSize:11,color:C.textMuted,padding:"8px 0"}}>Chart appears after 2+ data points. Refresh to collect data.</div>;
+  if (data.length < 2) return <div style={{...font.sans,fontSize:12,color:C.textMuted,padding:"12px 0",textAlign:"center"}}>Chart appears after 2+ refreshes. Refresh signals to start collecting data points.</div>;
   return (
-    <div style={{ width: "100%", height: 120 }}>
+    <div style={{ width: "100%", height: 140 }}>
       <ResponsiveContainer>
-        <LineChart data={data} margin={{ top:5,right:10,bottom:5,left:10 }}>
-          <XAxis dataKey="date" tick={{fontSize:9,fill:C.textMuted}} interval="preserveStartEnd" />
-          <YAxis tick={{fontSize:9,fill:C.textMuted}} width={45} />
-          <Tooltip contentStyle={{...font.sans,fontSize:11,background:C.white,border:`1px solid ${C.border}`,borderRadius:6}} labelStyle={{fontWeight:600}} />
-          <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2} dot={{r:2,fill:color}} name={label} />
+        <LineChart data={data} margin={{ top:8,right:16,bottom:8,left:8 }}>
+          <XAxis dataKey="date" tick={{fontSize:10,fill:C.textMuted,...font.sans}} interval="preserveStartEnd" />
+          <YAxis tick={{fontSize:10,fill:C.textMuted,...font.mono}} width={50} />
+          <Tooltip contentStyle={{...font.sans,fontSize:12,background:C.white,border:`1px solid ${C.border}`,borderRadius:10,boxShadow:"0 4px 12px rgba(0,0,0,.08)"}} labelStyle={{fontWeight:700}} />
+          <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2.5} dot={{r:3,fill:C.white,stroke:color,strokeWidth:2}} activeDot={{r:5,fill:color}} name={label} />
         </LineChart>
       </ResponsiveContainer>
     </div>
@@ -392,49 +452,29 @@ function SignalHistoryChart({ signalKey, color, label }) {
 
 function OverlayChart({ selectedKeys, allHistories, sources, verticals }) {
   if (selectedKeys.length === 0) return null;
-
   const merged = {};
-  selectedKeys.forEach((sk, idx) => {
+  selectedKeys.forEach((sk) => {
     const hist = allHistories[sk] || [];
-    hist.forEach(h => {
-      const d = h.date;
-      if (!merged[d]) merged[d] = { date: d };
-      merged[d][sk] = h.value;
-    });
+    hist.forEach(h => { const d = h.date; if (!merged[d]) merged[d] = { date: d }; merged[d][sk] = h.value; });
   });
-  const data = Object.values(merged).sort((a,b) => Object.keys(merged).indexOf(Object.keys(merged).find(k => merged[k] === a)) - Object.keys(merged).indexOf(Object.keys(merged).find(k => merged[k] === b)));
-
+  const data = Object.values(merged);
   const maxPerKey = {};
-  selectedKeys.forEach(sk => {
-    const hist = allHistories[sk] || [];
-    maxPerKey[sk] = Math.max(1, ...hist.map(h => h.value));
-  });
-  const normalized = data.map(d => {
-    const n = { date: d.date };
-    selectedKeys.forEach(sk => { if (d[sk] != null) n[sk] = Math.round((d[sk] / maxPerKey[sk]) * 100); });
-    return n;
-  });
-
-  const labelFor = (sk) => {
-    const [vId, sId] = sk.split("_");
-    const v = verticals.find(x => x.id === vId);
-    const s = sources.find(x => x.id === sId);
-    return `${v?.name||vId} · ${s?.name||sId}`;
-  };
+  selectedKeys.forEach(sk => { const hist = allHistories[sk] || []; maxPerKey[sk] = Math.max(1, ...hist.map(h => h.value)); });
+  const normalized = data.map(d => { const n = { date: d.date }; selectedKeys.forEach(sk => { if (d[sk] != null) n[sk] = Math.round((d[sk] / maxPerKey[sk]) * 100); }); return n; });
+  const labelFor = (sk) => { const [vId, sId] = sk.split("_"); const v = verticals.find(x => x.id === vId); const s = sources.find(x => x.id === sId); return `${v?.name||vId} · ${s?.name||sId}`; };
 
   return (
-    <Card style={{ marginBottom: 16 }}>
-      <div style={{...font.sans,fontSize:14,fontWeight:600,marginBottom:4}}>Signal Overlay Comparison</div>
-      <div style={{fontSize:11,color:C.textMuted,marginBottom:8}}>All signals normalized to 0–100 scale for comparison. Rising together = convergence (strong signal). Diverging = mixed demand picture.</div>
-      <div style={{ width: "100%", height: 200 }}>
+    <Card style={{ marginBottom: 20, borderLeft:`4px solid ${C.purple}` }}>
+      <SectionHeader icon="📊" title="Signal Overlay" subtitle="All signals normalized to 0–100 for comparison. Converging lines = strong multi-factor demand signal." badge={<Badge color={C.purple} bg={C.purpleBg}>{selectedKeys.length} signals</Badge>}/>
+      <div style={{ width: "100%", height: 220 }}>
         <ResponsiveContainer>
-          <LineChart data={normalized} margin={{ top:5,right:10,bottom:5,left:10 }}>
-            <XAxis dataKey="date" tick={{fontSize:9,fill:C.textMuted}} interval="preserveStartEnd" />
-            <YAxis tick={{fontSize:9,fill:C.textMuted}} width={30} domain={[0,100]} />
-            <Tooltip contentStyle={{...font.sans,fontSize:11,background:C.white,border:`1px solid ${C.border}`,borderRadius:6}} />
-            <Legend wrapperStyle={{fontSize:10}} />
+          <LineChart data={normalized} margin={{ top:8,right:16,bottom:8,left:8 }}>
+            <XAxis dataKey="date" tick={{fontSize:10,fill:C.textMuted}} interval="preserveStartEnd" />
+            <YAxis tick={{fontSize:10,fill:C.textMuted}} width={35} domain={[0,100]} />
+            <Tooltip contentStyle={{...font.sans,fontSize:12,background:C.white,border:`1px solid ${C.border}`,borderRadius:10,boxShadow:"0 4px 12px rgba(0,0,0,.08)"}} />
+            <Legend wrapperStyle={{fontSize:11,...font.sans}} />
             {selectedKeys.map((sk, i) => (
-              <Line key={sk} type="monotone" dataKey={sk} stroke={PALETTE[i % PALETTE.length]} strokeWidth={2} dot={{r:2}} name={labelFor(sk)} connectNulls />
+              <Line key={sk} type="monotone" dataKey={sk} stroke={PALETTE[i % PALETTE.length]} strokeWidth={2.5} dot={{r:3}} name={labelFor(sk)} connectNulls />
             ))}
           </LineChart>
         </ResponsiveContainer>
@@ -443,93 +483,168 @@ function OverlayChart({ selectedKeys, allHistories, sources, verticals }) {
   );
 }
 
-// ── SIGNAL PANEL ─────────────────────────────────────────────────────────────
+// ── SIGNAL PANEL (redesigned) ────────────────────────────────────────────────
 
 function SignalPanel({ source, verticals, signalResults, loading, errors, onFetch, onUpdateKeywords, overlaySelected, onToggleOverlay }) {
-  const [expanded, setExpanded] = useState(null);
+  const [expandedVert, setExpandedVert] = useState(null);
   const [showChart, setShowChart] = useState(null);
-  const kwLabel = { titleKeywords:"Title", descriptionKeywords:"Desc", keywords:"Query" };
+  const [showInfo, setShowInfo] = useState(false);
+  const kwLabel = { titleKeywords:"Title keywords", descriptionKeywords:"Description keywords", keywords:"Search query" };
   const info = SOURCE_INFO[source.id];
+  const icon = ICONS[source.id] || "📡";
+
+  const totalCount = verticals.reduce((sum, v) => {
+    const res = signalResults[`${v.id}_${source.id}`];
+    return sum + (res?.count || 0);
+  }, 0);
 
   return (
-    <Card style={{ padding:0, overflow:"hidden" }}>
-      <div style={{ padding:"12px 16px", borderBottom:`1px solid ${C.border}`, background:C.nested }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-            <span style={{...font.sans,fontSize:14,fontWeight:600,color:C.text}}>{source.name}</span>
-            <Badge color={source.enabled?C.green:C.textMuted} bg={source.enabled?C.greenBg:C.nested}>{source.enabled?"Enabled":"Disabled"}</Badge>
-            <Badge color={C.textMuted}>{source.cadence}</Badge>
-          </div>
-          <Btn variant="primary" onClick={()=>onFetch(source.id)} disabled={!source.enabled||Object.values(loading).some(Boolean)} style={{fontSize:11,padding:"5px 10px"}}>
-            {loading[source.id]?<><Spinner size={11} color="#fff"/> Fetching…</>:"Fetch All"}
-          </Btn>
-        </div>
-        {info && (
-          <div style={{ marginTop:8, padding:"8px 10px", background:C.white, borderRadius:6, border:`1px solid ${C.borderLight}` }}>
-            <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:2}}>{info.metric}</div>
-            <div style={{fontSize:11,color:C.textMuted,lineHeight:1.5,marginBottom:4}}>{info.how}</div>
-            <div style={{fontSize:11,color:C.amber,lineHeight:1.5,borderTop:`1px solid ${C.borderLight}`,paddingTop:4,marginTop:2}}>
-              <span style={{fontWeight:600}}>Investment implication: </span>{info.investment}
+    <Card style={{ padding:0, overflow:"hidden" }} className="signal-section fade-in-slow">
+      {/* Header */}
+      <div style={{ padding:"18px 22px 14px", background:`linear-gradient(135deg, ${C.white}, ${C.nested})` }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            <span style={{fontSize:24}}>{icon}</span>
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <h3 style={{...font.sans,fontSize:16,fontWeight:700,color:C.text,margin:0,letterSpacing:"-0.02em"}}>{source.name}</h3>
+                <Badge color={source.enabled?C.green:C.textMuted} bg={source.enabled?C.greenBg:C.nested} size="sm">{source.enabled?"Live":"Off"}</Badge>
+                <Badge color={C.textMuted} size="sm">{source.cadence}</Badge>
+              </div>
+              {info&&<div style={{fontSize:12,color:C.textMuted,marginTop:3,maxWidth:500}}>{info.metric}</div>}
             </div>
           </div>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            {totalCount>0&&<span style={{...font.mono,fontSize:22,fontWeight:800,color:C.cyan}}>{totalCount.toLocaleString()}</span>}
+            <Btn variant="primary" size="sm" onClick={()=>onFetch(source.id)} disabled={!source.enabled||Object.values(loading).some(Boolean)}>
+              {loading[source.id]?<><Spinner size={12} color="#fff"/> Fetching</>:"Refresh"}
+            </Btn>
+          </div>
+        </div>
+
+        {info&&(
+          <Expandable title={showInfo?"Hide methodology & investment implications":"Show methodology & investment implications"}>
+            <div style={{padding:"10px 14px",background:C.white,borderRadius:10,border:`1px solid ${C.borderLight}`}}>
+              <div style={{fontSize:12,color:C.textSec,lineHeight:1.6,marginBottom:8}}>{info.how}</div>
+              <div style={{fontSize:12,color:C.amber,lineHeight:1.6,padding:"10px 12px",background:C.amberBg,borderRadius:8,border:`1px solid ${C.amber}22`}}>
+                <span style={{fontWeight:700,display:"block",marginBottom:2}}>Investment Implication</span>{info.investment}
+              </div>
+            </div>
+          </Expandable>
         )}
       </div>
-      <table><thead><tr style={{background:C.white}}>
-        {["","Vertical","Keywords","Value","Stage","Status",""].map((h,i)=>(
-          <th key={i} style={{...font.sans,fontSize:10,fontWeight:600,color:C.textMuted,textTransform:"uppercase",letterSpacing:.5,padding:"8px 12px",textAlign:i>=3&&i<=5?"center":"left",borderBottom:`1px solid ${C.border}`,width:i===0?28:undefined}}>{h}</th>
-        ))}
-      </tr></thead>
-      <tbody>
-        {verticals.map(v => {
+
+      {/* Vertical rows */}
+      <div>
+        {verticals.map((v, vi) => {
           const key=`${v.id}_${source.id}`, res=signalResults[key], err=errors[key], isL=loading[key], kw=v.keywords?.[source.id]||{};
-          const isExp=expanded===v.id, isChart=showChart===v.id;
+          const isExp=expandedVert===v.id, isChart=showChart===v.id;
           const isOverlay = overlaySelected.includes(key);
+          const hist = getSignalHistory(key);
+          const prevVal = hist.length >= 2 ? hist[hist.length-2].value : null;
+          const trend = prevVal && res?.count ? Math.round(((res.count - prevVal)/Math.max(prevVal,1))*100) : null;
+
           return (
-            <React.Fragment key={v.id}>
-              <tr style={{borderBottom:`1px solid ${C.borderLight}`}} onMouseEnter={e=>e.currentTarget.style.background=C.nested} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                <td style={{padding:"10px 6px 10px 12px",verticalAlign:"top"}}>
-                  <input type="checkbox" checked={isOverlay} onChange={()=>onToggleOverlay(key)} title="Add to overlay comparison" style={{cursor:"pointer",accentColor:C.cyan}} />
-                </td>
-                <td style={{padding:"10px 6px",fontSize:13,fontWeight:500,color:C.text,verticalAlign:"top",width:120,cursor:"pointer"}} onClick={()=>setExpanded(isExp?null:v.id)}>
-                  <span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:v.color||C.cyan,marginRight:8,verticalAlign:"middle"}}/>{v.name}
-                </td>
-                <td style={{padding:"8px 6px",verticalAlign:"top"}}>
-                  {Object.entries(kw).map(([field,vals])=>{const arr=Array.isArray(vals)?vals:[vals]; return(<div key={field} style={{marginBottom:4}}><span style={{fontSize:9,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:.5,marginRight:6}}>{kwLabel[field]||field}</span><ChipEditor items={arr} onChange={nv=>onUpdateKeywords(v.id,source.id,field,nv)} color={C.cyan} placeholder="Add keyword…"/></div>);})}
-                </td>
-                <td style={{padding:"10px 6px",textAlign:"center",verticalAlign:"top"}}>
-                  {isL?<Spinner size={14}/>:err?<Badge color={C.red} bg={C.redBg}>{err}</Badge>:res?<span style={{...font.mono,fontSize:15,fontWeight:700}}>{(res.count||0).toLocaleString()}</span>:<span style={{color:C.textMuted}}>—</span>}
-                </td>
-                <td style={{padding:"10px 6px",textAlign:"center",verticalAlign:"top"}}>
-                  {res?.classification?.dominantStage?(<div><Badge color={res.classification.dominantStage.color}>{res.classification.dominantStage.name}</Badge>{res.classification.confidence!=null&&<div style={{...font.mono,fontSize:10,color:res.classification.confidence>=40?C.green:C.amber,marginTop:2}}>{res.classification.confidence}%</div>}</div>):<span style={{color:C.textMuted}}>—</span>}
-                </td>
-                <td style={{padding:"10px 6px",textAlign:"center",verticalAlign:"top"}}>
-                  <div style={{display:"flex",gap:4,justifyContent:"center",alignItems:"center"}}>
-                    <Btn variant="ghost" onClick={e=>{e.stopPropagation();setShowChart(isChart?null:v.id);}} style={{fontSize:10,padding:"2px 6px"}} title="Toggle growth chart">{isChart?"▼":"📈"}</Btn>
-                    <Btn variant="ghost" onClick={e=>{e.stopPropagation();onFetch(source.id,v.id);}} disabled={isL} style={{fontSize:10,padding:"2px 6px"}}>{isL?<Spinner size={10}/>:"↻"}</Btn>
+            <div key={v.id} style={{borderTop: vi===0?`1px solid ${C.border}`:`1px solid ${C.borderLight}`}}>
+              {/* Main row */}
+              <div style={{padding:"14px 22px",display:"flex",alignItems:"center",gap:16,transition:"background .15s",cursor:"pointer"}}
+                onMouseEnter={e=>e.currentTarget.style.background=C.nested} onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+                onClick={()=>setExpandedVert(isExp?null:v.id)}>
+
+                {/* Checkbox */}
+                <input type="checkbox" checked={isOverlay} onChange={e=>{e.stopPropagation();onToggleOverlay(key);}} title="Compare in overlay" style={{cursor:"pointer",accentColor:C.cyan,width:16,height:16}} />
+
+                {/* Vertical name */}
+                <div style={{width:140,flexShrink:0}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:v.color||C.cyan,flexShrink:0}}/>
+                    <span style={{...font.sans,fontSize:14,fontWeight:600,color:C.text}}>{v.name}</span>
                   </div>
-                </td>
-                <td/>
-              </tr>
-              {isChart && (
-                <tr className="fade-in"><td colSpan={7} style={{padding:"6px 12px 12px",background:C.nested}}>
-                  <div style={{...font.sans,fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4}}>Growth Trend — {source.name} × {v.name}</div>
+                </div>
+
+                {/* Big metric value */}
+                <div style={{width:120,textAlign:"center",flexShrink:0}}>
+                  {isL ? <Spinner size={18}/> :
+                   err ? <Badge color={C.red} bg={C.redBg} size="sm">{err.slice(0,15)}</Badge> :
+                   res ? <div>
+                     <div style={{...font.mono,fontSize:22,fontWeight:800,color:C.text,letterSpacing:"-0.03em"}}>{(res.count||0).toLocaleString()}</div>
+                     {trend!=null&&<Badge color={trend>=0?C.green:C.red} bg={trend>=0?C.greenBg:C.redBg} size="sm">{trend>=0?"+":""}{trend}%</Badge>}
+                   </div> :
+                   <span style={{color:C.textMuted,fontSize:13}}>No data</span>}
+                </div>
+
+                {/* Classification stage */}
+                <div style={{width:100,textAlign:"center",flexShrink:0}}>
+                  {res?.classification?.dominantStage ? (
+                    <Badge color={res.classification.dominantStage.color} bg={res.classification.dominantStage.color+"18"} size="lg">{res.classification.dominantStage.name}</Badge>
+                  ) : <span style={{color:C.textMuted,fontSize:12}}>—</span>}
+                </div>
+
+                {/* Sparkline mini */}
+                <div style={{flex:1,minWidth:80,maxWidth:200}}>
+                  {hist.length>=2 ? (
+                    <div style={{height:36}}>
+                      <ResponsiveContainer><LineChart data={hist.slice(-10)} margin={{top:2,right:2,bottom:2,left:2}}>
+                        <Line type="monotone" dataKey="value" stroke={v.color||C.cyan} strokeWidth={2} dot={false}/>
+                      </LineChart></ResponsiveContainer>
+                    </div>
+                  ) : <div style={{height:36,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{fontSize:10,color:C.textMuted}}>No history</span></div>}
+                </div>
+
+                {/* Actions */}
+                <div style={{display:"flex",gap:4,flexShrink:0}} onClick={e=>e.stopPropagation()}>
+                  <Btn variant={isChart?"primary":"ghost"} size="sm" onClick={()=>setShowChart(isChart?null:v.id)} title="Growth chart">{ICONS.chart}</Btn>
+                  <Btn variant="ghost" size="sm" onClick={()=>onFetch(source.id,v.id)} disabled={isL} title="Refresh this group">{isL?<Spinner size={11}/>:ICONS.sync}</Btn>
+                </div>
+
+                {/* Expand indicator */}
+                <span style={{fontSize:12,color:C.textMuted,transition:"transform .2s",transform:isExp?"rotate(180deg)":"rotate(0)"}}>▾</span>
+              </div>
+
+              {/* Expanded: chart */}
+              {isChart&&(
+                <div className="fade-in" style={{padding:"8px 22px 16px",background:C.nested,borderTop:`1px solid ${C.borderLight}`}}>
+                  <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:6}}>Growth Trend — {v.name}</div>
                   <SignalHistoryChart signalKey={key} color={v.color||C.cyan} label={source.name} />
-                </td></tr>
+                </div>
               )}
-              {isExp && res?.items && (
-                <tr className="fade-in"><td colSpan={7} style={{padding:"0 12px 12px",background:C.nested}}>
-                  <div style={{maxHeight:200,overflowY:"auto",fontSize:12}}>
-                    {res.items.map((item,i)=>(<div key={i} style={{padding:"6px 0",borderBottom:`1px solid ${C.borderLight}`,display:"flex",alignItems:"flex-start",gap:8}}>
-                      {item.classification&&<span style={{display:"inline-block",width:6,height:6,borderRadius:"50%",background:DEFAULT_STAGES.find(s=>s.name===item.classification.stageName)?.color||C.textMuted,marginTop:5,flexShrink:0}}/>}
-                      <div><div style={{fontWeight:500,color:C.text}}>{item.title}</div>{item.body&&<div style={{color:C.textMuted,fontSize:11,marginTop:1}}>{item.body.slice(0,150)}</div>}</div>
-                    </div>))}
+
+              {/* Expanded: keywords + items */}
+              {isExp && (
+                <div className="fade-in" style={{padding:"12px 22px 16px",background:C.nested,borderTop:`1px solid ${C.borderLight}`}}>
+                  {/* Keywords */}
+                  <div style={{marginBottom:12}}>
+                    <div style={{...font.sans,fontSize:11,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>Active Keywords</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                      {Object.entries(kw).map(([field,vals])=>{
+                        const arr=Array.isArray(vals)?vals:[vals];
+                        return(<div key={field} style={{display:"flex",alignItems:"flex-start",gap:12}}>
+                          <span style={{...font.sans,fontSize:11,fontWeight:700,color:C.textSec,minWidth:130,paddingTop:5}}>{kwLabel[field]||field}</span>
+                          <ChipEditor items={arr} onChange={nv=>onUpdateKeywords(v.id,source.id,field,nv)} color={C.cyan} placeholder="Add keyword…"/>
+                        </div>);
+                      })}
+                    </div>
                   </div>
-                </td></tr>
+
+                  {/* Items list */}
+                  {res?.items?.length>0 && (
+                    <div>
+                      <div style={{...font.sans,fontSize:11,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>Latest Results ({res.items.length})</div>
+                      <div style={{maxHeight:220,overflowY:"auto",borderRadius:10,border:`1px solid ${C.borderLight}`,background:C.white}}>
+                        {res.items.map((item,i)=>(<div key={i} style={{padding:"10px 14px",borderBottom:i<res.items.length-1?`1px solid ${C.borderLight}`:"none",display:"flex",alignItems:"flex-start",gap:10}}>
+                          {item.classification&&<span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:DEFAULT_STAGES.find(s=>s.name===item.classification.stageName)?.color||C.textMuted,marginTop:5,flexShrink:0}}/>}
+                          <div style={{flex:1,minWidth:0}}><div style={{...font.sans,fontSize:13,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.title}</div>{item.body&&<div style={{...font.sans,color:C.textMuted,fontSize:12,marginTop:2,lineHeight:1.4}}>{item.body.slice(0,180)}</div>}</div>
+                          {item.classification?.matched&&<Badge color={DEFAULT_STAGES.find(s=>s.name===item.classification.stageName)?.color||C.textMuted} size="sm">{item.classification.stageName}</Badge>}
+                        </div>))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
-            </React.Fragment>
+            </div>
           );
         })}
-      </tbody></table>
+      </div>
     </Card>
   );
 }
@@ -572,101 +687,148 @@ function HuggingFaceLeaderboard() {
   useEffect(()=>{if(!data||!data.timestamp||(Date.now()-data.timestamp)>6*3600000)doFetch();},[]);
 
   const orgs=data?.orgs||[]; const maxDl=orgs.length>0?Math.max(...orgs.map(o=>o.totalDownloads)):1;
+  const top3=orgs.slice(0,3);
 
   return (
-    <Card style={{padding:0,overflow:"hidden",marginBottom:20}}>
-      <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,background:C.nested}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <span style={{fontSize:18}}>🤗</span>
-            <span style={{...font.sans,fontSize:14,fontWeight:600,color:C.text}}>Hugging Face Model Downloads</span>
-            <Badge color={C.green} bg={C.greenBg}>Public API</Badge>
+    <Card style={{padding:0,overflow:"hidden"}} className="fade-in-slow">
+      <div style={{padding:"18px 22px 14px",background:`linear-gradient(135deg, ${C.white}, #f0f4ff)`}}>
+        <SectionHeader icon="🤗" title="Hugging Face Leaderboard" subtitle="Open-source model adoption across major AI companies. Download volume = developer ecosystem gravity."
+          badge={<Badge color={C.green} bg={C.greenBg} size="sm">Public API</Badge>}
+          right={<>
+            {data?.timestamp&&<span style={{...font.sans,fontSize:11,color:C.textMuted}}>{timeAgo(data.timestamp)}</span>}
+            <Btn variant={showHist?"primary":"ghost"} size="sm" onClick={()=>setShowHist(!showHist)}>{ICONS.chart} Trend</Btn>
+            <Btn variant="primary" size="sm" onClick={doFetch} disabled={isL}>{isL?<><Spinner size={12} color="#fff"/> Fetching</>:"Refresh"}</Btn>
+          </>}
+        />
+
+        {/* Top 3 podium */}
+        {top3.length>=3&&(
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:4}}>
+            {[1,0,2].map(idx=>{
+              const org=top3[idx]; const meta=HF_ORGS.find(o=>o.id===org.orgId)||{name:org.orgId,color:C.textMuted};
+              const medals=["🥇","🥈","🥉"];
+              return(<div key={org.orgId} style={{textAlign:"center",padding:idx===0?"16px 12px 12px":"12px",background:C.white,borderRadius:12,border:idx===0?`2px solid ${meta.color}`:`1px solid ${C.border}`,transform:idx===0?"scale(1.02)":"none",boxShadow:idx===0?"0 4px 16px rgba(0,0,0,.08)":"0 1px 3px rgba(0,0,0,.04)"}}>
+                <div style={{fontSize:idx===0?28:22,marginBottom:4}}>{medals[idx]}</div>
+                <div style={{...font.sans,fontSize:idx===0?14:12,fontWeight:700,color:meta.color,marginBottom:2}}>{meta.name}</div>
+                <div style={{...font.mono,fontSize:idx===0?22:18,fontWeight:800,color:C.text}}>{fmtDL(org.totalDownloads)}</div>
+                <div style={{...font.sans,fontSize:10,color:C.textMuted,marginTop:2}}>{org.topModels[0]?.id.split("/").pop()||""}</div>
+              </div>);
+            })}
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            {data?.timestamp&&<span style={{fontSize:11,color:C.textMuted}}>{timeAgo(data.timestamp)}</span>}
-            <Btn variant="ghost" onClick={()=>setShowHist(!showHist)} style={{fontSize:11,padding:"4px 8px"}}>{showHist?"Hide Chart":"📈 Chart"}</Btn>
-            <Btn variant="primary" onClick={doFetch} disabled={isL} style={{fontSize:11,padding:"5px 10px"}}>{isL?<><Spinner size={11} color="#fff"/> Fetching…</>:"Refresh"}</Btn>
+        )}
+
+        <Expandable title="Investment implications">
+          <div style={{fontSize:12,color:C.amber,lineHeight:1.6,padding:"10px 14px",background:C.amberBg,borderRadius:10,border:`1px solid ${C.amber}22`}}>
+            <span style={{fontWeight:700,display:"block",marginBottom:2}}>Investment Implication</span>
+            Download ratios reveal competitive moat strength in the open-source AI layer. A company downloaded 5x less has weaker developer lock-in — weaker inference revenue, less fine-tuning, lower switching costs. Watch for rank changes: rapid climbers signal a model breakout that reshapes vendor selection within quarters.
           </div>
-        </div>
-        <div style={{marginTop:8,padding:"8px 10px",background:C.white,borderRadius:6,border:`1px solid ${C.borderLight}`}}>
-          <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:2}}>Cumulative model downloads (top 10 models per org) from Hugging Face</div>
-          <div style={{fontSize:11,color:C.textMuted,lineHeight:1.5,marginBottom:4}}>Hugging Face is the de facto platform for publishing and downloading open-source AI models. Download volume reflects real enterprise and developer adoption of each company's model ecosystem.</div>
-          <div style={{fontSize:11,color:C.amber,lineHeight:1.5,borderTop:`1px solid ${C.borderLight}`,paddingTop:4}}>
-            <span style={{fontWeight:600}}>Investment implication: </span>Download ratios between orgs reveal competitive moat strength in the open-source AI layer. A company whose models are downloaded 5x less than competitors has weaker developer lock-in and ecosystem gravity — this translates to weaker inference revenue, less fine-tuning activity on their architecture, and lower switching costs for enterprises. Watch for rank changes: an org climbing rapidly signals a model breakout (e.g. Llama moment) that can reshape vendor selection across entire verticals within quarters.
-          </div>
-        </div>
+        </Expandable>
       </div>
 
       {showHist && hfHist.length >= 2 && (
-        <div style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`}}>
-          <div style={{...font.sans,fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4}}>Download Growth Over Time</div>
-          <div style={{width:"100%",height:180}}>
+        <div className="fade-in" style={{padding:"14px 22px",borderBottom:`1px solid ${C.border}`}}>
+          <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:8}}>Download Growth Over Time</div>
+          <div style={{width:"100%",height:200}}>
             <ResponsiveContainer>
-              <LineChart data={hfHist} margin={{top:5,right:10,bottom:5,left:10}}>
-                <XAxis dataKey="date" tick={{fontSize:9,fill:C.textMuted}} interval="preserveStartEnd"/>
-                <YAxis tick={{fontSize:9,fill:C.textMuted}} width={50} tickFormatter={fmtDL}/>
-                <Tooltip contentStyle={{...font.sans,fontSize:11,background:C.white,border:`1px solid ${C.border}`,borderRadius:6}} formatter={v=>fmtDL(v)}/>
-                <Legend wrapperStyle={{fontSize:9}}/>
-                {HF_ORGS.map(org=>(<Line key={org.id} type="monotone" dataKey={org.id} stroke={org.color} strokeWidth={1.5} dot={false} name={org.name} connectNulls/>))}
+              <LineChart data={hfHist} margin={{top:8,right:16,bottom:8,left:8}}>
+                <XAxis dataKey="date" tick={{fontSize:10,fill:C.textMuted}} interval="preserveStartEnd"/>
+                <YAxis tick={{fontSize:10,fill:C.textMuted,...font.mono}} width={55} tickFormatter={fmtDL}/>
+                <Tooltip contentStyle={{...font.sans,fontSize:12,background:C.white,border:`1px solid ${C.border}`,borderRadius:10,boxShadow:"0 4px 12px rgba(0,0,0,.08)"}} formatter={v=>fmtDL(v)}/>
+                <Legend wrapperStyle={{fontSize:10,...font.sans}}/>
+                {HF_ORGS.map(org=>(<Line key={org.id} type="monotone" dataKey={org.id} stroke={org.color} strokeWidth={2} dot={false} name={org.name} connectNulls/>))}
               </LineChart>
             </ResponsiveContainer>
           </div>
         </div>
       )}
 
-      {err&&<div style={{padding:"10px 16px",background:C.redBg,color:C.red,fontSize:12}}>{err}</div>}
-      <table><thead><tr style={{background:C.white}}>
-        {["#","Organization","Downloads (top 10 models)","Top Model",""].map((h,i)=>(
-          <th key={i} style={{...font.sans,fontSize:10,fontWeight:600,color:C.textMuted,textTransform:"uppercase",letterSpacing:.5,padding:"8px 12px",textAlign:i===0?"center":"left",borderBottom:`1px solid ${C.border}`,whiteSpace:"nowrap"}}>{h}</th>
-        ))}
-      </tr></thead>
-      <tbody>
-        {orgs.map((org,rank)=>{
-          const meta=HF_ORGS.find(o=>o.id===org.orgId)||{name:org.orgId,color:C.textMuted};
-          const pct=maxDl>0?(org.totalDownloads/maxDl)*100:0;
-          const isExp=expanded===org.orgId;
-          const rv=rank>0&&orgs[0].totalDownloads>0?(orgs[0].totalDownloads/Math.max(org.totalDownloads,1)).toFixed(1):null;
-          return(<React.Fragment key={org.orgId}>
-            <tr style={{borderBottom:`1px solid ${C.borderLight}`,cursor:"pointer"}} onClick={()=>setExpanded(isExp?null:org.orgId)} onMouseEnter={e=>e.currentTarget.style.background=C.nested} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-              <td style={{padding:"10px 12px",textAlign:"center",...font.mono,fontSize:13,fontWeight:700,color:rank<3?meta.color:C.textMuted,width:36}}>{rank+1}</td>
-              <td style={{padding:"10px 12px",fontSize:13,fontWeight:600,color:C.text,whiteSpace:"nowrap"}}><span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:meta.color,marginRight:8,verticalAlign:"middle"}}/>{meta.name}{rv&&<span style={{fontSize:10,color:C.textMuted,marginLeft:6}}>({rv}x less than #1)</span>}</td>
-              <td style={{padding:"10px 12px",minWidth:250}}><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{flex:1,height:18,background:C.nested,borderRadius:4,overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:meta.color,borderRadius:4,transition:"width .5s ease"}}/></div><span style={{...font.mono,fontSize:13,fontWeight:700,color:C.text,minWidth:55,textAlign:"right"}}>{fmtDL(org.totalDownloads)}</span></div></td>
-              <td style={{padding:"10px 12px",fontSize:11,color:C.textSec,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{org.topModels[0]?<>{org.topModels[0].id.split("/").pop()} <span style={{color:C.textMuted}}>({fmtDL(org.topModels[0].downloads)})</span></>:"—"}</td>
-              <td style={{padding:"10px 8px",textAlign:"center",fontSize:11,color:C.textMuted}}>{isExp?"▲":"▼"}</td>
-            </tr>
-            {isExp&&(<tr className="fade-in"><td colSpan={5} style={{padding:"0 12px 12px",background:C.nested}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,maxWidth:700}}>{org.topModels.map((m,i)=>(<div key={m.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",background:C.white,borderRadius:6,border:`1px solid ${C.borderLight}`}}><span style={{...font.mono,fontSize:10,color:C.textMuted,width:16}}>{i+1}</span><div style={{flex:1,minWidth:0}}><div style={{fontSize:12,fontWeight:500,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.id}</div><div style={{fontSize:10,color:C.textMuted}}>{m.pipeline||"—"}</div></div><span style={{...font.mono,fontSize:11,fontWeight:600,color:meta.color,whiteSpace:"nowrap"}}>{fmtDL(m.downloads)}</span></div>))}</div></td></tr>)}
-          </React.Fragment>);
-        })}
-        {orgs.length===0&&!isL&&<tr><td colSpan={5} style={{padding:20,textAlign:"center",color:C.textMuted,fontSize:13}}>Click Refresh to fetch from Hugging Face.</td></tr>}
-        {isL&&orgs.length===0&&<tr><td colSpan={5} style={{padding:20,textAlign:"center"}}><Spinner size={16}/><span style={{marginLeft:8,fontSize:13,color:C.textMuted}}>Fetching…</span></td></tr>}
-      </tbody></table>
+      {err&&<div style={{padding:"12px 22px",background:C.redBg,color:C.red,fontSize:13,fontWeight:600}}>{err}</div>}
+
+      {/* Full table */}
+      <div style={{padding:"0 6px 6px"}}>
+        <table><thead><tr>
+          {["#","Organization","Downloads (top 10)","Top Model",""].map((h,i)=>(
+            <th key={i} style={{...font.sans,fontSize:10,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 14px",textAlign:i===0?"center":"left",borderBottom:`2px solid ${C.border}`,whiteSpace:"nowrap"}}>{h}</th>
+          ))}
+        </tr></thead>
+        <tbody>
+          {orgs.map((org,rank)=>{
+            const meta=HF_ORGS.find(o=>o.id===org.orgId)||{name:org.orgId,color:C.textMuted};
+            const pct=maxDl>0?(org.totalDownloads/maxDl)*100:0;
+            const isExp=expanded===org.orgId;
+            const rv=rank>0&&orgs[0].totalDownloads>0?(orgs[0].totalDownloads/Math.max(org.totalDownloads,1)).toFixed(1):null;
+            return(<React.Fragment key={org.orgId}>
+              <tr style={{cursor:"pointer",transition:"background .15s"}} onClick={()=>setExpanded(isExp?null:org.orgId)} onMouseEnter={e=>e.currentTarget.style.background=C.nested} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                <td style={{padding:"12px 14px",textAlign:"center",...font.mono,fontSize:14,fontWeight:800,color:rank<3?meta.color:C.textMuted,width:40}}>{rank+1}</td>
+                <td style={{padding:"12px 14px",fontSize:13,fontWeight:600,color:C.text,whiteSpace:"nowrap"}}>
+                  <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:meta.color,marginRight:10,verticalAlign:"middle"}}/>{meta.name}
+                  {rv&&<span style={{fontSize:10,color:C.textMuted,marginLeft:8}}>({rv}x less)</span>}
+                </td>
+                <td style={{padding:"12px 14px",minWidth:250}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <div style={{flex:1,height:22,background:C.nested,borderRadius:6,overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:`linear-gradient(90deg,${meta.color}cc,${meta.color})`,borderRadius:6,transition:"width .6s ease"}}/></div>
+                    <span style={{...font.mono,fontSize:14,fontWeight:800,color:C.text,minWidth:60,textAlign:"right"}}>{fmtDL(org.totalDownloads)}</span>
+                  </div>
+                </td>
+                <td style={{padding:"12px 14px",fontSize:12,color:C.textSec,maxWidth:220,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{org.topModels[0]?<><span style={{fontWeight:600}}>{org.topModels[0].id.split("/").pop()}</span> <span style={{color:C.textMuted}}>({fmtDL(org.topModels[0].downloads)})</span></>:"—"}</td>
+                <td style={{padding:"12px 10px",textAlign:"center",fontSize:12,color:C.textMuted,transition:"transform .2s",transform:isExp?"rotate(180deg)":"rotate(0)"}}>▾</td>
+              </tr>
+              {isExp&&(<tr className="fade-in"><td colSpan={5} style={{padding:"4px 14px 14px",background:C.nested}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,maxWidth:700}}>{org.topModels.map((m,i)=>(<div key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:C.white,borderRadius:10,border:`1px solid ${C.borderLight}`}}><span style={{...font.mono,fontSize:11,fontWeight:700,color:C.textMuted,width:18}}>{i+1}</span><div style={{flex:1,minWidth:0}}><div style={{fontSize:12,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.id}</div><div style={{fontSize:10,color:C.textMuted}}>{m.pipeline||"—"}</div></div><span style={{...font.mono,fontSize:12,fontWeight:700,color:meta.color,whiteSpace:"nowrap"}}>{fmtDL(m.downloads)}</span></div>))}</div></td></tr>)}
+            </React.Fragment>);
+          })}
+          {orgs.length===0&&!isL&&<tr><td colSpan={5} style={{padding:30,textAlign:"center",color:C.textMuted,fontSize:13}}>Click Refresh to load Hugging Face data.</td></tr>}
+          {isL&&orgs.length===0&&<tr><td colSpan={5} style={{padding:30,textAlign:"center"}}><Spinner size={18}/><span style={{...font.sans,marginLeft:10,fontSize:13,color:C.textMuted}}>Fetching from Hugging Face…</span></td></tr>}
+        </tbody></table>
+      </div>
     </Card>
   );
 }
 
-// ── COMPOSITE CARDS ──────────────────────────────────────────────────────────
+// ── COMPOSITE CARDS (redesigned) ─────────────────────────────────────────────
 
 function CompositeCards({verticals,composites,stageTaxonomy}){
-  return(<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:14}}>
+  return(<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:16}}>
     {verticals.map(v=>{
       const comp=composites[v.id]||{score:0,breakdown:{}};const stage=resolveStage(comp.score,stageTaxonomy);
-      return(<Card key={v.id} className={stage.index>=stageTaxonomy.length-1?"glow":""} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:8,border:stage.index>=stageTaxonomy.length-1?`2px solid ${stage.color}`:undefined}}>
-        <div style={{display:"flex",justifyContent:"space-between",width:"100%",alignItems:"center"}}><span style={{...font.sans,fontSize:14,fontWeight:600,color:C.text}}>{v.name}</span><Badge color={stage.color}>{stage.name}</Badge></div>
-        <GaugeSVG value={comp.score} size={80} color={v.color||C.cyan}/>
-        <div style={{...font.sans,fontSize:11,color:C.textMuted,textAlign:"center"}}>{stage.description}</div>
-        <div style={{width:"100%"}}>{Object.entries(comp.breakdown).map(([sid,b])=>(<div key={sid} style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}><span style={{...font.sans,fontSize:10,color:C.textMuted,width:80,textAlign:"right",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{b.source.name}</span><div style={{flex:1,height:4,background:C.nested,borderRadius:2,overflow:"hidden"}}><div style={{width:`${b.score}%`,height:"100%",background:v.color||C.cyan,borderRadius:2}}/></div><span style={{...font.mono,fontSize:10,color:C.textMuted,width:24,textAlign:"right"}}>{b.score}</span></div>))}</div>
+      const isHot=stage.index>=stageTaxonomy.length-1;
+      return(<Card key={v.id} className={`metric-card ${isHot?"glow":""}`} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10,borderTop:`4px solid ${v.color||C.cyan}`,borderColor:isHot?stage.color:undefined}}>
+        <div style={{display:"flex",justifyContent:"space-between",width:"100%",alignItems:"center"}}>
+          <span style={{...font.sans,fontSize:15,fontWeight:700,color:C.text}}>{v.name}</span>
+          <Badge color={stage.color} bg={stage.color+"18"} size="lg">{stage.name}</Badge>
+        </div>
+        <GaugeSVG value={comp.score} size={90} color={v.color||C.cyan}/>
+        <div style={{...font.sans,fontSize:12,color:C.textMuted,textAlign:"center",lineHeight:1.4}}>{stage.description}</div>
+        <div style={{width:"100%",marginTop:4}}>{Object.entries(comp.breakdown).map(([sid,b])=>(<div key={sid} style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
+          <span style={{...font.sans,fontSize:11,fontWeight:600,color:C.textMuted,width:90,textAlign:"right",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{b.source.name}</span>
+          <div style={{flex:1,height:6,background:C.nested,borderRadius:3,overflow:"hidden"}}><div style={{width:`${b.score}%`,height:"100%",background:`linear-gradient(90deg,${(v.color||C.cyan)}88,${v.color||C.cyan})`,borderRadius:3,transition:"width .4s ease"}}/></div>
+          <span style={{...font.mono,fontSize:11,fontWeight:700,color:C.text,width:28,textAlign:"right"}}>{b.score}</span>
+        </div>))}</div>
       </Card>);
     })}
   </div>);
 }
 
-// ── ALERT FEED ───────────────────────────────────────────────────────────────
+// ── ALERT FEED (redesigned) ──────────────────────────────────────────────────
 
 function AlertFeed({alerts,onPin}){
   const sorted=[...alerts.filter(a=>a.pinned),...alerts.filter(a=>!a.pinned)].slice(0,20);
   const sevC={amber:C.amber,red:C.red,cyan:C.cyan,green:C.green};
-  if(sorted.length===0)return <Card><div style={{...font.sans,fontSize:13,color:C.textMuted,textAlign:"center",padding:16}}>No alerts. Fetch data to generate divergence analysis.</div></Card>;
-  return(<Card><div style={{...font.sans,fontSize:14,fontWeight:600,color:C.text,marginBottom:10}}>Divergence Alerts</div><div style={{maxHeight:200,overflowY:"auto"}}>{sorted.map(a=>(<div key={a.id} className="fade-in" style={{display:"flex",alignItems:"flex-start",gap:8,padding:"8px 0",borderBottom:`1px solid ${C.borderLight}`}}><div style={{width:7,height:7,borderRadius:"50%",background:sevC[a.severity]||C.textMuted,marginTop:5,flexShrink:0}}/><div style={{flex:1}}><div style={{display:"flex",gap:6,alignItems:"center",marginBottom:2}}><span style={{fontSize:11,color:C.textMuted}}>{new Date(a.ts).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span><Badge color={sevC[a.severity]||C.textMuted}>{a.vertical}</Badge></div><div style={{fontSize:13,color:C.text}}>{a.text}</div></div><button onClick={()=>onPin(a.id)} style={{background:"none",border:"none",cursor:"pointer",color:a.pinned?C.amber:C.textMuted,fontSize:13}}>📌</button></div>))}</div></Card>);
+  const sevIcon={amber:"⚠",red:"🔴",green:"🟢",cyan:"🔵"};
+  if(sorted.length===0)return null;
+  return(<Card>
+    <SectionHeader icon={ICONS.alert} title="Divergence Alerts" subtitle="Automated signals when metrics diverge from expected patterns." badge={<Badge color={C.amber} bg={C.amberBg} size="sm">{sorted.length} active</Badge>}/>
+    <div style={{maxHeight:240,overflowY:"auto"}}>{sorted.map(a=>(<div key={a.id} className="fade-in" style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",marginBottom:6,borderRadius:10,background:sevC[a.severity]?sevC[a.severity]+"08":"transparent",border:`1px solid ${sevC[a.severity]?sevC[a.severity]+"22":C.borderLight}`}}>
+      <span style={{fontSize:14,flexShrink:0,marginTop:1}}>{sevIcon[a.severity]||"●"}</span>
+      <div style={{flex:1}}>
+        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:3}}>
+          <Badge color={sevC[a.severity]||C.textMuted} size="sm">{a.vertical}</Badge>
+          <span style={{...font.sans,fontSize:11,color:C.textMuted}}>{new Date(a.ts).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>
+        </div>
+        <div style={{...font.sans,fontSize:13,color:C.text,lineHeight:1.4}}>{a.text}</div>
+      </div>
+      <button onClick={()=>onPin(a.id)} style={{background:"none",border:"none",cursor:"pointer",color:a.pinned?C.amber:C.textMuted,fontSize:14,padding:4}} title={a.pinned?"Unpin":"Pin"}>📌</button>
+    </div>))}</div>
+  </Card>);
 }
 
 // ── CONFIG PANEL ─────────────────────────────────────────────────────────────
@@ -765,13 +927,47 @@ function QuickAddGroup({ onAdd }) {
   const ref = useRef(null);
   useEffect(() => { if (open && ref.current) ref.current.focus(); }, [open]);
 
-  if (!open) return <Btn onClick={() => setOpen(true)} style={{ fontSize: 12 }}>+ New Signal Group</Btn>;
+  if (!open) return <Btn variant="accent" size="sm" onClick={() => setOpen(true)}>+ New Signal Group</Btn>;
   return (
-    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-      <input ref={ref} value={name} onChange={e => setName(e.target.value)} placeholder="Group name (e.g. Healthcare AI)" style={{ width: 200 }}
+    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <input ref={ref} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Healthcare AI, Enterprise LLMs…" style={{ width: 260 }}
         onKeyDown={e => { if (e.key === "Enter" && name.trim()) { onAdd(name.trim()); setName(""); setOpen(false); } if (e.key === "Escape") { setOpen(false); setName(""); } }} />
-      <Btn variant="primary" onClick={() => { if (name.trim()) { onAdd(name.trim()); setName(""); setOpen(false); } }} style={{ fontSize: 11 }}>Create</Btn>
-      <Btn variant="ghost" onClick={() => { setOpen(false); setName(""); }} style={{ fontSize: 11 }}>Cancel</Btn>
+      <Btn variant="primary" size="sm" onClick={() => { if (name.trim()) { onAdd(name.trim()); setName(""); setOpen(false); } }}>Create</Btn>
+      <Btn variant="ghost" size="sm" onClick={() => { setOpen(false); setName(""); }}>Cancel</Btn>
+    </div>
+  );
+}
+
+// ── ONBOARDING BANNER ────────────────────────────────────────────────────────
+
+function OnboardingBanner({hasData,hasKeys,onConfig}){
+  if(hasData)return null;
+  return(
+    <div className="fade-in-slow" style={{background:"linear-gradient(135deg,#0284c7,#6d28d9)",borderRadius:16,padding:"32px 36px",color:"#fff",marginBottom:24,position:"relative",overflow:"hidden"}}>
+      <div style={{position:"absolute",top:"-30%",right:"-5%",width:200,height:200,borderRadius:"50%",background:"rgba(255,255,255,.05)"}}/>
+      <div style={{position:"absolute",bottom:"-20%",left:"10%",width:150,height:150,borderRadius:"50%",background:"rgba(255,255,255,.03)"}}/>
+      <div style={{position:"relative",zIndex:1}}>
+        <h2 style={{...font.sans,fontSize:24,fontWeight:800,marginBottom:8,letterSpacing:"-0.03em"}}>Welcome to Signal Intelligence</h2>
+        <p style={{...font.sans,fontSize:14,opacity:.9,lineHeight:1.6,maxWidth:600,marginBottom:20}}>
+          Track AI adoption signals across job postings, search trends, GitHub activity, and open-source model downloads.
+          Each signal refreshes automatically and builds a historical trend over time.
+        </p>
+        <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+          <div style={{background:"rgba(255,255,255,.15)",backdropFilter:"blur(8px)",borderRadius:12,padding:"14px 18px",flex:"1 1 200px",maxWidth:280}}>
+            <div style={{fontSize:16,marginBottom:4}}>1. Create Signal Groups</div>
+            <div style={{fontSize:12,opacity:.8}}>Add keyword groups for industries or technologies you want to monitor (e.g. "Healthcare AI").</div>
+          </div>
+          <div style={{background:"rgba(255,255,255,.15)",backdropFilter:"blur(8px)",borderRadius:12,padding:"14px 18px",flex:"1 1 200px",maxWidth:280}}>
+            <div style={{fontSize:16,marginBottom:4}}>2. Data Flows In</div>
+            <div style={{fontSize:12,opacity:.8}}>Signals auto-refresh on schedule. Each refresh adds a data point to your growth charts.</div>
+          </div>
+          <div style={{background:"rgba(255,255,255,.15)",backdropFilter:"blur(8px)",borderRadius:12,padding:"14px 18px",flex:"1 1 200px",maxWidth:280}}>
+            <div style={{fontSize:16,marginBottom:4}}>3. Compare & Analyze</div>
+            <div style={{fontSize:12,opacity:.8}}>Check the overlay checkbox on any signals to compare them. Converging trends = strong demand signal.</div>
+          </div>
+        </div>
+        {!hasKeys&&<div style={{marginTop:16,display:"flex",gap:8,alignItems:"center"}}><Btn onClick={onConfig} style={{background:"rgba(255,255,255,.2)",borderColor:"rgba(255,255,255,.3)",color:"#fff"}} size="sm">Configure API Keys</Btn><span style={{fontSize:12,opacity:.7}}>API keys are loaded from .env automatically</span></div>}
+      </div>
     </div>
   );
 }
@@ -876,7 +1072,6 @@ export default function App() {
     });
   },[]);
 
-  // Auto-refresh scheduler
   useEffect(()=>{
     if(!schedulerActive||!hasKeys)return;
     const fetchIfStale=async source=>{if(ldRef.current[source.id])return;const cfg=configRef.current;for(const v of cfg.verticals){const h=getSignalHistory(`${v.id}_${source.id}`);const last=h.length>0?h[h.length-1].ts:0;if(!last||(Date.now()-last)>staleMs(source.cadence)){await fetchSource(source.id);return;}}};
@@ -891,58 +1086,135 @@ export default function App() {
 
   const composites=useMemo(()=>{const o={};config.verticals.forEach(v=>{o[v.id]=computeComposite(v.id,signalResults,config.sources,config.stageMultipliers);});return o;},[signalResults,config]);
   const anyLoading=Object.values(loading).some(Boolean);
+  const hasData=Object.keys(signalResults).length>0;
+
+  const summaryMetrics=useMemo(()=>{
+    const m={jobs:0,trends:0,repos:0,claude:0};
+    Object.entries(signalResults).forEach(([k,v])=>{
+      if(k.includes("theirstack"))m.jobs+=(v.count||0);
+      if(k.includes("google_trends"))m.trends=Math.max(m.trends,v.count||0);
+      if(k.includes("github_repos"))m.repos+=(v.count||0);
+      if(k.includes("claude_attrib"))m.claude+=(v.count||0);
+    });
+    return m;
+  },[signalResults]);
 
   return(
-    <div style={{background:C.bg,minHeight:"100vh",...font.sans}}>
+    <div style={{background:"#f0f2f5",minHeight:"100vh",...font.sans}}>
       <style>{CSS}</style>
-      <div style={{position:"sticky",top:0,zIndex:100,background:C.white,borderBottom:`1px solid ${C.border}`,padding:"12px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
-        <div style={{display:"flex",alignItems:"center",gap:12}}>
-          <h1 style={{fontSize:17,fontWeight:700,margin:0}}>Signal Intelligence Dashboard</h1>
-          {anyLoading&&<Spinner size={16}/>}
-          {hasKeys&&<Badge color={C.green} bg={C.greenBg}>● Live</Badge>}
-          {schedulerActive&&hasKeys&&<Badge color={C.cyan} bg={C.cyanBg}>Auto-refresh ON</Badge>}
-        </div>
-        <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <div style={{display:"flex",gap:4}}>{config.sources.filter(s=>s.enabled).map(src=>{const nxt=nextRefresh[src.id];const rem=nxt?Math.max(0,nxt-Date.now()):0;return <Badge key={src.id} color={C.green} bg={C.greenBg}>{src.name.split(" ")[0]} {rem>0?humanInterval(rem):"..."}</Badge>;})}</div>
-          <Btn variant={schedulerActive?"default":"primary"} onClick={()=>setSchedulerActive(p=>!p)} style={{fontSize:11}}>{schedulerActive?"Pause":"Resume"}</Btn>
-          <Btn variant="primary" onClick={refreshAll} disabled={anyLoading||!hasKeys}>{anyLoading?<><Spinner size={12} color="#fff"/> Refreshing…</>:"Refresh Now"}</Btn>
-          <Btn onClick={()=>doCloudSync("up")} style={{fontSize:11}} disabled={cloudStatus.endsWith("…")} title="Save all data to GitHub Gist">{cloudStatus==="saving…"?<><Spinner size={10}/> Saving</>:cloudStatus==="synced"?"Synced":"Cloud Save"}</Btn>
-          <Btn onClick={()=>doCloudSync("down")} style={{fontSize:11}} disabled={cloudStatus.endsWith("…")} title="Load data from GitHub Gist">{cloudStatus==="loading…"?<><Spinner size={10}/> Loading</>:"Cloud Load"}</Btn>
-          {cloudStatus==="error"&&<Badge color={C.red} bg={C.redBg}>Sync failed</Badge>}
-          <Btn onClick={()=>setShowConfig(true)}>⚙ Config</Btn>
+
+      {/* ─── Top Navigation ─── */}
+      <div style={{position:"sticky",top:0,zIndex:100,background:"rgba(255,255,255,.92)",backdropFilter:"blur(12px)",borderBottom:`1px solid ${C.border}`,padding:"10px 28px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",maxWidth:1400,margin:"0 auto"}}>
+          <div style={{display:"flex",alignItems:"center",gap:14}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:20}}>{ICONS.target}</span>
+              <h1 style={{...font.sans,fontSize:18,fontWeight:800,margin:0,letterSpacing:"-0.03em",background:"linear-gradient(135deg,#0284c7,#6d28d9)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Signal Intelligence</h1>
+            </div>
+            {anyLoading&&<Spinner size={16}/>}
+            <div style={{display:"flex",gap:4}}>
+              {hasKeys&&<Badge color={C.green} bg={C.greenBg} size="sm">Live</Badge>}
+              {schedulerActive&&hasKeys&&<Badge color={C.cyan} bg={C.cyanBg} size="sm">Auto</Badge>}
+              {cloudStatus==="synced"&&<Badge color={C.green} bg={C.greenBg} size="sm">{ICONS.check} Synced</Badge>}
+              {cloudStatus==="error"&&<Badge color={C.red} bg={C.redBg} size="sm">Sync Error</Badge>}
+            </div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <Btn variant={schedulerActive?"ghost":"default"} size="sm" onClick={()=>setSchedulerActive(p=>!p)} className="nav-btn">
+              {schedulerActive?"⏸ Pause":"▶ Resume"}
+            </Btn>
+            <Btn variant="primary" size="sm" onClick={refreshAll} disabled={anyLoading||!hasKeys}>
+              {anyLoading?<><Spinner size={12} color="#fff"/> Refreshing</>:<>{ICONS.sync} Refresh All</>}
+            </Btn>
+            <div style={{width:1,height:20,background:C.border,margin:"0 4px"}}/>
+            <Btn variant="ghost" size="sm" onClick={()=>doCloudSync("up")} disabled={cloudStatus.endsWith("…")} title="Save to cloud" className="nav-btn">
+              {cloudStatus==="saving…"?<Spinner size={12}/>:"☁↑"}
+            </Btn>
+            <Btn variant="ghost" size="sm" onClick={()=>doCloudSync("down")} disabled={cloudStatus.endsWith("…")} title="Load from cloud" className="nav-btn">
+              {cloudStatus==="loading…"?<Spinner size={12}/>:"☁↓"}
+            </Btn>
+            <div style={{width:1,height:20,background:C.border,margin:"0 4px"}}/>
+            <Btn variant="ghost" size="sm" onClick={()=>setShowConfig(true)} className="nav-btn">{ICONS.config} Settings</Btn>
+          </div>
         </div>
       </div>
 
-      <div style={{padding:"20px 24px",maxWidth:1400,margin:"0 auto"}}>
-        {/* Quick add + overlay toggle */}
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-          <QuickAddGroup onAdd={addGroup}/>
-          {overlaySelected.length>0&&<Badge color={C.purple} bg={C.purpleBg}>{overlaySelected.length} signals selected for overlay</Badge>}
+      {/* ─── Main Content ─── */}
+      <div style={{padding:"24px 28px 40px",maxWidth:1400,margin:"0 auto"}}>
+
+        {/* Onboarding */}
+        <OnboardingBanner hasData={hasData} hasKeys={hasKeys} onConfig={()=>setShowConfig(true)}/>
+
+        {/* Summary metric cards */}
+        {hasData&&(
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:14,marginBottom:28}} className="fade-in">
+            <MetricCard icon={ICONS.theirstack} label="Job Postings" value={summaryMetrics.jobs.toLocaleString()} sublabel="Matching positions (30d)" color={C.cyan}/>
+            <MetricCard icon={ICONS.google_trends} label="Search Interest" value={summaryMetrics.trends} unit="/100" sublabel="Google Trends index" color={C.blue}/>
+            <MetricCard icon={ICONS.github_repos} label="Active Repos" value={summaryMetrics.repos.toLocaleString()} sublabel="GitHub repos (30d push)" color={C.green}/>
+            <MetricCard icon={ICONS.claude_attrib} label="AI Commits" value={summaryMetrics.claude.toLocaleString()} sublabel="Claude-attributed (7d)" color={C.purple}/>
+          </div>
+        )}
+
+        {/* Signal groups toolbar */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <QuickAddGroup onAdd={addGroup}/>
+            <div style={{display:"flex",gap:4}}>
+              {config.verticals.map(v=>(<Badge key={v.id} color={v.color||C.cyan} bg={(v.color||C.cyan)+"14"} size="sm">{v.name}</Badge>))}
+            </div>
+          </div>
+          {overlaySelected.length>0&&(
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <Badge color={C.purple} bg={C.purpleBg} size="lg">{overlaySelected.length} selected for overlay</Badge>
+              <Btn variant="ghost" size="sm" onClick={()=>setOverlaySelected([])}>Clear</Btn>
+            </div>
+          )}
         </div>
 
         {/* Overlay comparison chart */}
         {overlaySelected.length>=2 && <OverlayChart selectedKeys={overlaySelected} allHistories={allHistories} sources={config.sources} verticals={config.verticals}/>}
 
-        {/* Signal Panels */}
-        <div style={{display:"flex",flexDirection:"column",gap:16,marginBottom:24}}>
-          {config.sources.filter(s=>s.enabled).map(src=>(<SignalPanel key={src.id} source={src} verticals={config.verticals} signalResults={signalResults} loading={loading} errors={errors} onFetch={fetchSource} onUpdateKeywords={updateKeywords} overlaySelected={overlaySelected} onToggleOverlay={toggleOverlay}/>))}
+        {/* ─── Signal Sources ─── */}
+        <div style={{marginBottom:32}}>
+          <SectionHeader icon={ICONS.fire} title="Signal Sources" subtitle="Live data feeds tracking AI demand across job markets, search trends, and developer activity. Click any row to see keywords and results." badge={
+            <div style={{display:"flex",gap:4}}>{config.sources.filter(s=>s.enabled).map(src=>{const nxt=nextRefresh[src.id];const rem=nxt?Math.max(0,nxt-Date.now()):0;return <Badge key={src.id} color={C.green} bg={C.greenBg} size="sm">{src.name.split(" ")[0]} {rem>0?humanInterval(rem):"…"}</Badge>;})}</div>
+          }/>
+          <div style={{display:"flex",flexDirection:"column",gap:18}}>
+            {config.sources.filter(s=>s.enabled).map(src=>(<SignalPanel key={src.id} source={src} verticals={config.verticals} signalResults={signalResults} loading={loading} errors={errors} onFetch={fetchSource} onUpdateKeywords={updateKeywords} overlaySelected={overlaySelected} onToggleOverlay={toggleOverlay}/>))}
+          </div>
         </div>
 
-        <HuggingFaceLeaderboard/>
+        {/* ─── Hugging Face ─── */}
+        <div style={{marginBottom:32}}>
+          <HuggingFaceLeaderboard/>
+        </div>
 
-        <div style={{marginBottom:20}}><div style={{fontSize:14,fontWeight:600,marginBottom:10}}>Pipeline Pressure Scores</div><CompositeCards verticals={config.verticals} composites={composites} stageTaxonomy={config.stageTaxonomy}/></div>
+        {/* ─── Pipeline Pressure ─── */}
+        <div style={{marginBottom:32}}>
+          <SectionHeader icon={ICONS.rocket} title="Pipeline Pressure Scores" subtitle="Composite scores combining all signal sources. Higher scores indicate stronger near-term AI budget commitment. Stages indicate estimated timeline to procurement."/>
+          <CompositeCards verticals={config.verticals} composites={composites} stageTaxonomy={config.stageTaxonomy}/>
+        </div>
 
-        <AlertFeed alerts={alerts} onPin={id=>setAlerts(p=>p.map(a=>a.id===id?{...a,pinned:!a.pinned}:a))}/>
+        {/* ─── Alerts ─── */}
+        {alerts.length>0&&(
+          <div style={{marginBottom:32}}>
+            <AlertFeed alerts={alerts} onPin={id=>setAlerts(p=>p.map(a=>a.id===id?{...a,pinned:!a.pinned}:a))}/>
+          </div>
+        )}
 
-        {!hasKeys&&(<Card style={{marginTop:16,textAlign:"center",padding:32,background:C.blueBg,border:"1px solid #bfdbfe"}}>
-          <div style={{fontSize:24,marginBottom:8}}>⚡</div>
-          <div style={{fontSize:15,fontWeight:600,marginBottom:4}}>Add API keys to .env to activate live data</div>
-          <pre style={{...font.mono,fontSize:12,textAlign:"left",display:"inline-block",background:C.nested,padding:14,borderRadius:8,color:C.textSec}}>{`VITE_THEIRSTACK_KEY=your_key\nVITE_SERPAPI_KEY=your_key\nVITE_GITHUB_PAT=your_pat`}</pre>
-        </Card>)}
+        {/* No keys prompt */}
+        {!hasKeys&&(
+          <Card style={{textAlign:"center",padding:"40px 32px",background:"linear-gradient(135deg,#eff6ff,#f3f0ff)",border:"1.5px solid #bfdbfe",borderRadius:16}} className="fade-in-slow">
+            <div style={{fontSize:32,marginBottom:12}}>{ICONS.alert}</div>
+            <div style={{...font.sans,fontSize:18,fontWeight:700,marginBottom:6,color:C.text}}>Connect Your Data Sources</div>
+            <div style={{...font.sans,fontSize:14,color:C.textSec,marginBottom:16,maxWidth:400,margin:"0 auto 16px"}}>API keys are loaded from <code style={{...font.mono,background:C.nested,padding:"2px 6px",borderRadius:4}}>.env</code> automatically, or configure them in Settings.</div>
+            <Btn variant="primary" onClick={()=>setShowConfig(true)}>{ICONS.config} Open Settings</Btn>
+          </Card>
+        )}
       </div>
 
-      {showConfig&&<ConfigPanel config={config} setConfig={setConfig} onClose={()=>setShowConfig(false)}/>}
-      {showConfig&&<div onClick={()=>setShowConfig(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.15)",zIndex:199}}/>}
+      {/* Config panel + backdrop */}
+      {showConfig&&<><div onClick={()=>setShowConfig(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.2)",backdropFilter:"blur(2px)",zIndex:199}} className="fade-in"/><ConfigPanel config={config} setConfig={setConfig} onClose={()=>setShowConfig(false)}/></>}
     </div>
   );
 }
