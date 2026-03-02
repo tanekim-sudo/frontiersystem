@@ -320,22 +320,39 @@ table{border-collapse:separate;border-spacing:0;width:100%}
 
 // ── UI PRIMITIVES ────────────────────────────────────────────────────────────
 
-const ICONS = {
-  theirstack: "💼", google_trends: "📊", github_repos: "🔧", claude_attrib: "🤖",
-  cloud: "☁", sync: "↻", chart: "📈", config: "⚙", add: "+", check: "✓",
-  alert: "⚡", fire: "🔥", target: "🎯", rocket: "🚀", eye: "👁",
+function Ico({d,size=16,color="currentColor",style:sx}){return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,...sx}}><path d={d}/></svg>;}
+const IC = {
+  briefcase:"M20 7H4a1 1 0 0 0-1 1v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a1 1 0 0 0-1-1ZM16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2",
+  trendUp:"M23 6l-9.5 9.5-5-5L1 18M17 6h6v6",
+  code:"M16 18l6-6-6-6M8 6l-6 6 6 6",
+  bot:"M12 8V4M18 12a6 6 0 0 1-12 0V10a6 6 0 0 1 12 0v2ZM9 16h0M15 16h0",
+  refresh:"M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15",
+  barChart:"M18 20V10M12 20V4M6 20v-6",
+  settings:"M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2ZM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z",
+  zap:"M13 2L3 14h9l-1 8 10-12h-9l1-8Z",
+  activity:"M22 12h-4l-3 9L9 3l-3 9H2",
+  cloudUp:"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242M12 12v9M16 16l-4-4-4 4",
+  cloudDown:"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242M12 21v-9M8 17l4 4 4-4",
+  layers:"M12 2 2 7l10 5 10-5-10-5ZM2 17l10 5 10-5M2 12l10 5 10-5",
+  pin:"M12 17v5M9 11l-6-2 9-6 9 6-6 2M9 11v4a3 3 0 0 0 6 0v-4",
+  crosshair:"M22 12h-4M6 12H2M12 6V2M12 22v-4M12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12Z",
+  gitBranch:"M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM18 9a9 9 0 0 1-9 9",
+  database:"M12 2C6.48 2 2 4.02 2 6.5V17.5C2 19.98 6.48 22 12 22S22 19.98 22 17.5V6.5C22 4.02 17.52 2 12 2ZM2 6.5C2 8.98 6.48 11 12 11S22 8.98 22 6.5M2 12c0 2.48 4.48 4.5 10 4.5S22 14.48 22 12",
+  pause:"M10 4H6v16h4V4ZM18 4h-4v16h4V4Z",
+  play:"M5 3l14 9-14 9V3Z",
 };
+function IcoC({name,size=16,color="currentColor",style:sx}){return IC[name]?<Ico d={IC[name]} size={size} color={color} style={sx}/>:null;}
 
 function Btn({children,onClick,disabled,variant="default",size="md",style:sx,...r}){
   const sizes={sm:{fontSize:11,padding:"5px 10px",borderRadius:6},md:{fontSize:13,padding:"8px 16px",borderRadius:8},lg:{fontSize:14,padding:"10px 20px",borderRadius:10}};
   const base={...font.sans,fontWeight:600,cursor:disabled?"not-allowed":"pointer",border:"1.5px solid",transition:"all .15s",display:"inline-flex",alignItems:"center",gap:6,opacity:disabled?.4:1,letterSpacing:"-0.01em",...sizes[size]};
   const vs={
     default:{background:C.white,borderColor:C.border,color:C.text},
-    primary:{background:"linear-gradient(135deg,#0284c7,#0369a1)",borderColor:"transparent",color:"#fff",boxShadow:"0 2px 8px rgba(2,132,199,.3)"},
+    primary:{background:C.cyan,borderColor:C.cyan,color:"#fff"},
     ghost:{background:"transparent",borderColor:"transparent",color:C.textSec},
     danger:{background:"#fff5f5",borderColor:"#fca5a5",color:C.red},
     success:{background:C.greenBg,borderColor:"#86efac",color:C.green},
-    accent:{background:"linear-gradient(135deg,#6d28d9,#7c3aed)",borderColor:"transparent",color:"#fff",boxShadow:"0 2px 8px rgba(109,40,217,.25)"},
+    accent:{background:C.text,borderColor:C.text,color:"#fff"},
   };
   return <button onClick={onClick} disabled={disabled} style={{...base,...vs[variant],...sx}} {...r}>{children}</button>;
 }
@@ -350,7 +367,7 @@ function SectionHeader({icon,title,subtitle,right,badge}){
   return(<div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,flexWrap:"wrap",gap:8}}>
     <div>
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:subtitle?4:0}}>
-        {icon&&<span style={{fontSize:20}}>{icon}</span>}
+        {icon&&<span style={{display:"flex",alignItems:"center"}}>{icon}</span>}
         <h2 style={{...font.sans,fontSize:18,fontWeight:700,letterSpacing:"-0.02em",color:C.text,margin:0}}>{title}</h2>
         {badge}
       </div>
@@ -363,7 +380,7 @@ function SectionHeader({icon,title,subtitle,right,badge}){
 function MetricCard({icon,label,value,unit,sublabel,color,trend,onClick}){
   return(<div className="metric-card" onClick={onClick} style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:14,padding:"16px 20px",cursor:onClick?"pointer":"default",borderLeft:`4px solid ${color||C.cyan}`,boxShadow:"0 1px 3px rgba(0,0,0,.04)"}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-      <span style={{fontSize:11,fontWeight:600,color:C.textMuted,textTransform:"uppercase",letterSpacing:"0.05em",...font.sans}}>{icon&&<span style={{marginRight:4}}>{icon}</span>}{label}</span>
+      <div style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:600,color:C.textMuted,textTransform:"uppercase",letterSpacing:"0.05em",...font.sans}}>{icon}{label}</div>
       {trend!=null&&<Badge color={trend>=0?C.green:C.red} bg={trend>=0?C.greenBg:C.redBg} size="sm">{trend>=0?"+":""}{trend}%</Badge>}
     </div>
     <div style={{...font.mono,fontSize:28,fontWeight:800,color:color||C.text,letterSpacing:"-0.03em",lineHeight:1}}>{value}{unit&&<span style={{fontSize:14,fontWeight:500,color:C.textMuted,marginLeft:4}}>{unit}</span>}</div>
@@ -465,7 +482,7 @@ function OverlayChart({ selectedKeys, allHistories, sources, verticals }) {
 
   return (
     <Card style={{ marginBottom: 20, borderLeft:`4px solid ${C.purple}` }}>
-      <SectionHeader icon="📊" title="Signal Overlay" subtitle="All signals normalized to 0–100 for comparison. Converging lines = strong multi-factor demand signal." badge={<Badge color={C.purple} bg={C.purpleBg}>{selectedKeys.length} signals</Badge>}/>
+      <SectionHeader icon={<IcoC name="layers" size={18} color={C.purple}/>} title="Signal Overlay" subtitle="All signals normalized to 0–100 for comparison. Converging lines = strong multi-factor demand signal." badge={<Badge color={C.purple} bg={C.purpleBg}>{selectedKeys.length} signals</Badge>}/>
       <div style={{ width: "100%", height: 220 }}>
         <ResponsiveContainer>
           <LineChart data={normalized} margin={{ top:8,right:16,bottom:8,left:8 }}>
@@ -491,7 +508,8 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
   const [showInfo, setShowInfo] = useState(false);
   const kwLabel = { titleKeywords:"Title keywords", descriptionKeywords:"Description keywords", keywords:"Search query" };
   const info = SOURCE_INFO[source.id];
-  const icon = ICONS[source.id] || "📡";
+  const iconMap = {theirstack:"briefcase",google_trends:"trendUp",github_repos:"code",claude_attrib:"bot"};
+  const iconName = iconMap[source.id] || "activity";
 
   const totalCount = verticals.reduce((sum, v) => {
     const res = signalResults[`${v.id}_${source.id}`];
@@ -501,10 +519,10 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
   return (
     <Card style={{ padding:0, overflow:"hidden" }} className="signal-section fade-in-slow">
       {/* Header */}
-      <div style={{ padding:"18px 22px 14px", background:`linear-gradient(135deg, ${C.white}, ${C.nested})` }}>
+      <div style={{ padding:"18px 22px 14px", background:C.white }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
           <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-            <span style={{fontSize:24}}>{icon}</span>
+            <IcoC name={iconName} size={22} color={C.cyan}/>
             <div>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <h3 style={{...font.sans,fontSize:16,fontWeight:700,color:C.text,margin:0,letterSpacing:"-0.02em"}}>{source.name}</h3>
@@ -593,8 +611,8 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
 
                 {/* Actions */}
                 <div style={{display:"flex",gap:4,flexShrink:0}} onClick={e=>e.stopPropagation()}>
-                  <Btn variant={isChart?"primary":"ghost"} size="sm" onClick={()=>setShowChart(isChart?null:v.id)} title="Growth chart">{ICONS.chart}</Btn>
-                  <Btn variant="ghost" size="sm" onClick={()=>onFetch(source.id,v.id)} disabled={isL} title="Refresh this group">{isL?<Spinner size={11}/>:ICONS.sync}</Btn>
+                  <Btn variant={isChart?"primary":"ghost"} size="sm" onClick={()=>setShowChart(isChart?null:v.id)} title="Growth chart"><IcoC name="barChart" size={13} color={isChart?"#fff":C.textSec}/></Btn>
+                  <Btn variant="ghost" size="sm" onClick={()=>onFetch(source.id,v.id)} disabled={isL} title="Refresh this group">{isL?<Spinner size={11}/>:<IcoC name="refresh" size={13} color={C.textSec}/>}</Btn>
                 </div>
 
                 {/* Expand indicator */}
@@ -691,12 +709,12 @@ function HuggingFaceLeaderboard() {
 
   return (
     <Card style={{padding:0,overflow:"hidden"}} className="fade-in-slow">
-      <div style={{padding:"18px 22px 14px",background:`linear-gradient(135deg, ${C.white}, #f0f4ff)`}}>
-        <SectionHeader icon="🤗" title="Hugging Face Leaderboard" subtitle="Open-source model adoption across major AI companies. Download volume = developer ecosystem gravity."
+      <div style={{padding:"18px 22px 14px",background:C.white}}>
+        <SectionHeader icon={<IcoC name="database" size={18} color={C.blue}/>} title="Hugging Face Leaderboard" subtitle="Open-source model adoption across major AI companies. Download volume = developer ecosystem gravity."
           badge={<Badge color={C.green} bg={C.greenBg} size="sm">Public API</Badge>}
           right={<>
             {data?.timestamp&&<span style={{...font.sans,fontSize:11,color:C.textMuted}}>{timeAgo(data.timestamp)}</span>}
-            <Btn variant={showHist?"primary":"ghost"} size="sm" onClick={()=>setShowHist(!showHist)}>{ICONS.chart} Trend</Btn>
+            <Btn variant={showHist?"primary":"ghost"} size="sm" onClick={()=>setShowHist(!showHist)}><IcoC name="barChart" size={13} color={showHist?"#fff":C.textSec}/> Trend</Btn>
             <Btn variant="primary" size="sm" onClick={doFetch} disabled={isL}>{isL?<><Spinner size={12} color="#fff"/> Fetching</>:"Refresh"}</Btn>
           </>}
         />
@@ -706,9 +724,9 @@ function HuggingFaceLeaderboard() {
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:4}}>
             {[1,0,2].map(idx=>{
               const org=top3[idx]; const meta=HF_ORGS.find(o=>o.id===org.orgId)||{name:org.orgId,color:C.textMuted};
-              const medals=["🥇","🥈","🥉"];
+              const ranks=["1st","2nd","3rd"];const rankColors=["#D4AF37","#A0A0A0","#CD7F32"];
               return(<div key={org.orgId} style={{textAlign:"center",padding:idx===0?"16px 12px 12px":"12px",background:C.white,borderRadius:12,border:idx===0?`2px solid ${meta.color}`:`1px solid ${C.border}`,transform:idx===0?"scale(1.02)":"none",boxShadow:idx===0?"0 4px 16px rgba(0,0,0,.08)":"0 1px 3px rgba(0,0,0,.04)"}}>
-                <div style={{fontSize:idx===0?28:22,marginBottom:4}}>{medals[idx]}</div>
+                <div style={{...font.mono,fontSize:idx===0?18:14,fontWeight:800,color:rankColors[idx],marginBottom:4,letterSpacing:"-0.02em"}}>{ranks[idx]}</div>
                 <div style={{...font.sans,fontSize:idx===0?14:12,fontWeight:700,color:meta.color,marginBottom:2}}>{meta.name}</div>
                 <div style={{...font.mono,fontSize:idx===0?22:18,fontWeight:800,color:C.text}}>{fmtDL(org.totalDownloads)}</div>
                 <div style={{...font.sans,fontSize:10,color:C.textMuted,marginTop:2}}>{org.topModels[0]?.id.split("/").pop()||""}</div>
@@ -766,7 +784,7 @@ function HuggingFaceLeaderboard() {
                 </td>
                 <td style={{padding:"12px 14px",minWidth:250}}>
                   <div style={{display:"flex",alignItems:"center",gap:10}}>
-                    <div style={{flex:1,height:22,background:C.nested,borderRadius:6,overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:`linear-gradient(90deg,${meta.color}cc,${meta.color})`,borderRadius:6,transition:"width .6s ease"}}/></div>
+                    <div style={{flex:1,height:20,background:C.nested,borderRadius:4,overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:meta.color,borderRadius:4,transition:"width .6s ease"}}/></div>
                     <span style={{...font.mono,fontSize:14,fontWeight:800,color:C.text,minWidth:60,textAlign:"right"}}>{fmtDL(org.totalDownloads)}</span>
                   </div>
                 </td>
@@ -800,7 +818,7 @@ function CompositeCards({verticals,composites,stageTaxonomy}){
         <div style={{...font.sans,fontSize:12,color:C.textMuted,textAlign:"center",lineHeight:1.4}}>{stage.description}</div>
         <div style={{width:"100%",marginTop:4}}>{Object.entries(comp.breakdown).map(([sid,b])=>(<div key={sid} style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
           <span style={{...font.sans,fontSize:11,fontWeight:600,color:C.textMuted,width:90,textAlign:"right",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{b.source.name}</span>
-          <div style={{flex:1,height:6,background:C.nested,borderRadius:3,overflow:"hidden"}}><div style={{width:`${b.score}%`,height:"100%",background:`linear-gradient(90deg,${(v.color||C.cyan)}88,${v.color||C.cyan})`,borderRadius:3,transition:"width .4s ease"}}/></div>
+          <div style={{flex:1,height:5,background:C.nested,borderRadius:3,overflow:"hidden"}}><div style={{width:`${b.score}%`,height:"100%",background:v.color||C.cyan,borderRadius:3,transition:"width .4s ease"}}/></div>
           <span style={{...font.mono,fontSize:11,fontWeight:700,color:C.text,width:28,textAlign:"right"}}>{b.score}</span>
         </div>))}</div>
       </Card>);
@@ -813,12 +831,12 @@ function CompositeCards({verticals,composites,stageTaxonomy}){
 function AlertFeed({alerts,onPin}){
   const sorted=[...alerts.filter(a=>a.pinned),...alerts.filter(a=>!a.pinned)].slice(0,20);
   const sevC={amber:C.amber,red:C.red,cyan:C.cyan,green:C.green};
-  const sevIcon={amber:"⚠",red:"🔴",green:"🟢",cyan:"🔵"};
+  const sevDot=(sev)=><span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:sevC[sev]||C.textMuted,flexShrink:0,marginTop:4}}/>;
   if(sorted.length===0)return null;
   return(<Card>
-    <SectionHeader icon={ICONS.alert} title="Divergence Alerts" subtitle="Automated signals when metrics diverge from expected patterns." badge={<Badge color={C.amber} bg={C.amberBg} size="sm">{sorted.length} active</Badge>}/>
+    <SectionHeader icon={<IcoC name="zap" size={18} color={C.amber}/>} title="Divergence Alerts" subtitle="Automated signals when metrics diverge from expected patterns." badge={<Badge color={C.amber} bg={C.amberBg} size="sm">{sorted.length} active</Badge>}/>
     <div style={{maxHeight:240,overflowY:"auto"}}>{sorted.map(a=>(<div key={a.id} className="fade-in" style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",marginBottom:6,borderRadius:10,background:sevC[a.severity]?sevC[a.severity]+"08":"transparent",border:`1px solid ${sevC[a.severity]?sevC[a.severity]+"22":C.borderLight}`}}>
-      <span style={{fontSize:14,flexShrink:0,marginTop:1}}>{sevIcon[a.severity]||"●"}</span>
+      {sevDot(a.severity)}
       <div style={{flex:1}}>
         <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:3}}>
           <Badge color={sevC[a.severity]||C.textMuted} size="sm">{a.vertical}</Badge>
@@ -826,7 +844,7 @@ function AlertFeed({alerts,onPin}){
         </div>
         <div style={{...font.sans,fontSize:13,color:C.text,lineHeight:1.4}}>{a.text}</div>
       </div>
-      <button onClick={()=>onPin(a.id)} style={{background:"none",border:"none",cursor:"pointer",color:a.pinned?C.amber:C.textMuted,fontSize:14,padding:4}} title={a.pinned?"Unpin":"Pin"}>📌</button>
+      <button onClick={()=>onPin(a.id)} style={{background:"none",border:"none",cursor:"pointer",color:a.pinned?C.amber:C.textMuted,padding:4}} title={a.pinned?"Unpin":"Pin"}><IcoC name="pin" size={14} color={a.pinned?C.amber:C.textMuted}/></button>
     </div>))}</div>
   </Card>);
 }
@@ -840,7 +858,7 @@ function ConfigPanel({config,setConfig,onClose}){
 
   return(
     <div style={{position:"fixed",top:0,right:0,bottom:0,width:580,maxWidth:"95vw",background:C.white,borderLeft:`1px solid ${C.border}`,boxShadow:"-4px 0 24px rgba(0,0,0,.08)",zIndex:200,display:"flex",flexDirection:"column",...font.sans}} className="fade-in">
-      <div style={{padding:"14px 20px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:16,fontWeight:700}}>⚙ Configuration</span><Btn variant="ghost" onClick={onClose} style={{fontSize:18,padding:4}}>✕</Btn></div>
+      <div style={{padding:"14px 20px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:8}}><IcoC name="settings" size={18} color={C.text}/><span style={{fontSize:16,fontWeight:700}}>Configuration</span></div><Btn variant="ghost" onClick={onClose} style={{fontSize:18,padding:4}}>✕</Btn></div>
       <TabBar tabs={tabs} active={tab} onChange={setTab}/>
       <div style={{flex:1,overflowY:"auto",padding:"0 20px 20px"}}>
 
@@ -943,32 +961,32 @@ function QuickAddGroup({ onAdd }) {
 function OnboardingBanner({hasData,hasKeys,onConfig}){
   if(hasData)return null;
   return(
-    <div className="fade-in-slow" style={{background:"linear-gradient(135deg,#0284c7,#6d28d9)",borderRadius:16,padding:"32px 36px",color:"#fff",marginBottom:24,position:"relative",overflow:"hidden"}}>
-      <div style={{position:"absolute",top:"-30%",right:"-5%",width:200,height:200,borderRadius:"50%",background:"rgba(255,255,255,.05)"}}/>
-      <div style={{position:"absolute",bottom:"-20%",left:"10%",width:150,height:150,borderRadius:"50%",background:"rgba(255,255,255,.03)"}}/>
-      <div style={{position:"relative",zIndex:1}}>
-        <h2 style={{...font.sans,fontSize:24,fontWeight:800,marginBottom:8,letterSpacing:"-0.03em"}}>Welcome to Signal Intelligence</h2>
-        <p style={{...font.sans,fontSize:14,opacity:.9,lineHeight:1.6,maxWidth:600,marginBottom:20}}>
-          Track AI adoption signals across job postings, search trends, GitHub activity, and open-source model downloads.
-          Each signal refreshes automatically and builds a historical trend over time.
-        </p>
-        <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
-          <div style={{background:"rgba(255,255,255,.15)",backdropFilter:"blur(8px)",borderRadius:12,padding:"14px 18px",flex:"1 1 200px",maxWidth:280}}>
-            <div style={{fontSize:16,marginBottom:4}}>1. Create Signal Groups</div>
-            <div style={{fontSize:12,opacity:.8}}>Add keyword groups for industries or technologies you want to monitor (e.g. "Healthcare AI").</div>
-          </div>
-          <div style={{background:"rgba(255,255,255,.15)",backdropFilter:"blur(8px)",borderRadius:12,padding:"14px 18px",flex:"1 1 200px",maxWidth:280}}>
-            <div style={{fontSize:16,marginBottom:4}}>2. Data Flows In</div>
-            <div style={{fontSize:12,opacity:.8}}>Signals auto-refresh on schedule. Each refresh adds a data point to your growth charts.</div>
-          </div>
-          <div style={{background:"rgba(255,255,255,.15)",backdropFilter:"blur(8px)",borderRadius:12,padding:"14px 18px",flex:"1 1 200px",maxWidth:280}}>
-            <div style={{fontSize:16,marginBottom:4}}>3. Compare & Analyze</div>
-            <div style={{fontSize:12,opacity:.8}}>Check the overlay checkbox on any signals to compare them. Converging trends = strong demand signal.</div>
-          </div>
+    <Card className="fade-in-slow" style={{marginBottom:24,border:`1px solid ${C.border}`,borderLeft:`4px solid ${C.cyan}`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
+        <div>
+          <h2 style={{...font.sans,fontSize:20,fontWeight:700,marginBottom:4,letterSpacing:"-0.02em",color:C.text}}>Getting Started</h2>
+          <p style={{...font.sans,fontSize:13,color:C.textSec,lineHeight:1.6,maxWidth:600,margin:0}}>
+            Track AI demand signals across job postings, search trends, GitHub activity, and open-source model downloads.
+          </p>
         </div>
-        {!hasKeys&&<div style={{marginTop:16,display:"flex",gap:8,alignItems:"center"}}><Btn onClick={onConfig} style={{background:"rgba(255,255,255,.2)",borderColor:"rgba(255,255,255,.3)",color:"#fff"}} size="sm">Configure API Keys</Btn><span style={{fontSize:12,opacity:.7}}>API keys are loaded from .env automatically</span></div>}
+        {!hasKeys&&<Btn onClick={onConfig} variant="primary" size="sm"><IcoC name="settings" size={13} color="#fff"/> Configure API Keys</Btn>}
       </div>
-    </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12}}>
+        {[
+          {n:"1",t:"Create Signal Groups",d:"Define keyword groups for industries or technologies you want to monitor."},
+          {n:"2",t:"Data Flows In",d:"Signals auto-refresh on schedule. Each refresh adds a data point to your growth charts."},
+          {n:"3",t:"Compare & Analyze",d:"Select signals for overlay comparison. Converging trends indicate strong multi-factor demand."},
+        ].map(s=>(
+          <div key={s.n} style={{display:"flex",gap:12,padding:"12px 14px",background:C.nested,borderRadius:10}}>
+            <span style={{...font.mono,fontSize:14,fontWeight:800,color:C.cyan,flexShrink:0,width:20}}>{s.n}</span>
+            <div>
+              <div style={{...font.sans,fontSize:13,fontWeight:700,color:C.text,marginBottom:2}}>{s.t}</div>
+              <div style={{...font.sans,fontSize:11.5,color:C.textMuted,lineHeight:1.4}}>{s.d}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }
 
@@ -1108,33 +1126,33 @@ export default function App() {
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",maxWidth:1400,margin:"0 auto"}}>
           <div style={{display:"flex",alignItems:"center",gap:14}}>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontSize:20}}>{ICONS.target}</span>
-              <h1 style={{...font.sans,fontSize:18,fontWeight:800,margin:0,letterSpacing:"-0.03em",background:"linear-gradient(135deg,#0284c7,#6d28d9)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Signal Intelligence</h1>
+              <IcoC name="crosshair" size={20} color={C.cyan}/>
+              <h1 style={{...font.sans,fontSize:18,fontWeight:800,margin:0,letterSpacing:"-0.03em",color:C.text}}>Signal Intelligence</h1>
             </div>
             {anyLoading&&<Spinner size={16}/>}
             <div style={{display:"flex",gap:4}}>
               {hasKeys&&<Badge color={C.green} bg={C.greenBg} size="sm">Live</Badge>}
               {schedulerActive&&hasKeys&&<Badge color={C.cyan} bg={C.cyanBg} size="sm">Auto</Badge>}
-              {cloudStatus==="synced"&&<Badge color={C.green} bg={C.greenBg} size="sm">{ICONS.check} Synced</Badge>}
+              {cloudStatus==="synced"&&<Badge color={C.green} bg={C.greenBg} size="sm">Synced</Badge>}
               {cloudStatus==="error"&&<Badge color={C.red} bg={C.redBg} size="sm">Sync Error</Badge>}
             </div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:6}}>
             <Btn variant={schedulerActive?"ghost":"default"} size="sm" onClick={()=>setSchedulerActive(p=>!p)} className="nav-btn">
-              {schedulerActive?"⏸ Pause":"▶ Resume"}
+              <IcoC name={schedulerActive?"pause":"play"} size={12}/>{schedulerActive?"Pause":"Resume"}
             </Btn>
             <Btn variant="primary" size="sm" onClick={refreshAll} disabled={anyLoading||!hasKeys}>
-              {anyLoading?<><Spinner size={12} color="#fff"/> Refreshing</>:<>{ICONS.sync} Refresh All</>}
+              {anyLoading?<><Spinner size={12} color="#fff"/> Refreshing</>:<><IcoC name="refresh" size={13} color="#fff"/> Refresh All</>}
             </Btn>
             <div style={{width:1,height:20,background:C.border,margin:"0 4px"}}/>
             <Btn variant="ghost" size="sm" onClick={()=>doCloudSync("up")} disabled={cloudStatus.endsWith("…")} title="Save to cloud" className="nav-btn">
-              {cloudStatus==="saving…"?<Spinner size={12}/>:"☁↑"}
+              {cloudStatus==="saving…"?<Spinner size={12}/>:<IcoC name="cloudUp" size={14}/>}
             </Btn>
             <Btn variant="ghost" size="sm" onClick={()=>doCloudSync("down")} disabled={cloudStatus.endsWith("…")} title="Load from cloud" className="nav-btn">
-              {cloudStatus==="loading…"?<Spinner size={12}/>:"☁↓"}
+              {cloudStatus==="loading…"?<Spinner size={12}/>:<IcoC name="cloudDown" size={14}/>}
             </Btn>
             <div style={{width:1,height:20,background:C.border,margin:"0 4px"}}/>
-            <Btn variant="ghost" size="sm" onClick={()=>setShowConfig(true)} className="nav-btn">{ICONS.config} Settings</Btn>
+            <Btn variant="ghost" size="sm" onClick={()=>setShowConfig(true)} className="nav-btn"><IcoC name="settings" size={14}/> Settings</Btn>
           </div>
         </div>
       </div>
@@ -1148,10 +1166,10 @@ export default function App() {
         {/* Summary metric cards */}
         {hasData&&(
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:14,marginBottom:28}} className="fade-in">
-            <MetricCard icon={ICONS.theirstack} label="Job Postings" value={summaryMetrics.jobs.toLocaleString()} sublabel="Matching positions (30d)" color={C.cyan}/>
-            <MetricCard icon={ICONS.google_trends} label="Search Interest" value={summaryMetrics.trends} unit="/100" sublabel="Google Trends index" color={C.blue}/>
-            <MetricCard icon={ICONS.github_repos} label="Active Repos" value={summaryMetrics.repos.toLocaleString()} sublabel="GitHub repos (30d push)" color={C.green}/>
-            <MetricCard icon={ICONS.claude_attrib} label="AI Commits" value={summaryMetrics.claude.toLocaleString()} sublabel="Claude-attributed (7d)" color={C.purple}/>
+            <MetricCard icon={<IcoC name="briefcase" size={14} color={C.cyan}/>} label="Job Postings" value={summaryMetrics.jobs.toLocaleString()} sublabel="Matching positions (30d)" color={C.cyan}/>
+            <MetricCard icon={<IcoC name="trendUp" size={14} color={C.blue}/>} label="Search Interest" value={summaryMetrics.trends} unit="/100" sublabel="Google Trends index" color={C.blue}/>
+            <MetricCard icon={<IcoC name="code" size={14} color={C.green}/>} label="Active Repos" value={summaryMetrics.repos.toLocaleString()} sublabel="GitHub repos (30d push)" color={C.green}/>
+            <MetricCard icon={<IcoC name="bot" size={14} color={C.purple}/>} label="AI Commits" value={summaryMetrics.claude.toLocaleString()} sublabel="Claude-attributed (7d)" color={C.purple}/>
           </div>
         )}
 
@@ -1176,7 +1194,7 @@ export default function App() {
 
         {/* ─── Signal Sources ─── */}
         <div style={{marginBottom:32}}>
-          <SectionHeader icon={ICONS.fire} title="Signal Sources" subtitle="Live data feeds tracking AI demand across job markets, search trends, and developer activity. Click any row to see keywords and results." badge={
+          <SectionHeader icon={<IcoC name="activity" size={18} color={C.cyan}/>} title="Signal Sources" subtitle="Live data feeds tracking AI demand across job markets, search trends, and developer activity. Click any row to see keywords and results." badge={
             <div style={{display:"flex",gap:4}}>{config.sources.filter(s=>s.enabled).map(src=>{const nxt=nextRefresh[src.id];const rem=nxt?Math.max(0,nxt-Date.now()):0;return <Badge key={src.id} color={C.green} bg={C.greenBg} size="sm">{src.name.split(" ")[0]} {rem>0?humanInterval(rem):"…"}</Badge>;})}</div>
           }/>
           <div style={{display:"flex",flexDirection:"column",gap:18}}>
@@ -1191,7 +1209,7 @@ export default function App() {
 
         {/* ─── Pipeline Pressure ─── */}
         <div style={{marginBottom:32}}>
-          <SectionHeader icon={ICONS.rocket} title="Pipeline Pressure Scores" subtitle="Composite scores combining all signal sources. Higher scores indicate stronger near-term AI budget commitment. Stages indicate estimated timeline to procurement."/>
+          <SectionHeader icon={<IcoC name="crosshair" size={18} color={C.green}/>} title="Pipeline Pressure Scores" subtitle="Composite scores combining all signal sources. Higher scores indicate stronger near-term AI budget commitment. Stages indicate estimated timeline to procurement."/>
           <CompositeCards verticals={config.verticals} composites={composites} stageTaxonomy={config.stageTaxonomy}/>
         </div>
 
@@ -1204,11 +1222,11 @@ export default function App() {
 
         {/* No keys prompt */}
         {!hasKeys&&(
-          <Card style={{textAlign:"center",padding:"40px 32px",background:"linear-gradient(135deg,#eff6ff,#f3f0ff)",border:"1.5px solid #bfdbfe",borderRadius:16}} className="fade-in-slow">
-            <div style={{fontSize:32,marginBottom:12}}>{ICONS.alert}</div>
+          <Card style={{textAlign:"center",padding:"40px 32px",background:C.nested,border:`1.5px solid ${C.border}`}} className="fade-in-slow">
+            <div style={{marginBottom:12}}><IcoC name="zap" size={32} color={C.blue}/></div>
             <div style={{...font.sans,fontSize:18,fontWeight:700,marginBottom:6,color:C.text}}>Connect Your Data Sources</div>
             <div style={{...font.sans,fontSize:14,color:C.textSec,marginBottom:16,maxWidth:400,margin:"0 auto 16px"}}>API keys are loaded from <code style={{...font.mono,background:C.nested,padding:"2px 6px",borderRadius:4}}>.env</code> automatically, or configure them in Settings.</div>
-            <Btn variant="primary" onClick={()=>setShowConfig(true)}>{ICONS.config} Open Settings</Btn>
+            <Btn variant="primary" onClick={()=>setShowConfig(true)}><IcoC name="settings" size={14} color="#fff"/> Open Settings</Btn>
           </Card>
         )}
       </div>
