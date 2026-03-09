@@ -811,6 +811,9 @@ const IC = {
   activity:"M22 12h-4l-3 9L9 3l-3 9H2",
   cloudUp:"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242M12 12v9M16 16l-4-4-4 4",
   cloudDown:"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242M12 21v-9M8 17l4 4 4-4",
+  mail:"M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2Zm16 2-8 5-8-5",
+  userPlus:"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM20 8v6M23 11h-6",
+  trash:"M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2",
   layers:"M12 2 2 7l10 5 10-5-10-5ZM2 17l10 5 10-5M2 12l10 5 10-5",
   pin:"M12 17v5M9 11l-6-2 9-6 9 6-6 2M9 11v4a3 3 0 0 0 6 0v-4",
   crosshair:"M22 12h-4M6 12H2M12 6V2M12 22v-4M12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12Z",
@@ -1631,7 +1634,7 @@ function GitHubHistoryChart({ ghHist, tsHist, overlayJobs=false }) {
 
 // ── INLINE SETTINGS ──────────────────────────────────────────────────────────
 
-function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists}){
+function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,mailingList,onUpdateMailingList}){
   const[section,setSection]=useState(null);
   const update=fn=>setConfig(prev=>{const next=fn(prev);sv("config",next);return next;});
 
@@ -1735,10 +1738,54 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists})
     })}
   </div>);
 
+  const [newEmail,setNewEmail]=useState("");
+  const mailingContent=(<div>
+    <div style={{...font.sans,fontSize:12,color:C.textSec,marginBottom:12,lineHeight:1.5}}>
+      Add email addresses to receive the weekly AI intelligence report. When you click "Email to Team" on a generated report, it will be sent to everyone on this list.
+    </div>
+    <div style={{display:"flex",gap:8,marginBottom:14}}>
+      <input value={newEmail} onChange={e=>setNewEmail(e.target.value)} placeholder="colleague@company.com"
+        style={{flex:1,fontSize:13,padding:"8px 12px",borderRadius:8,border:`1px solid ${C.border}`,outline:"none",...font.sans}}
+        onKeyDown={e=>{
+          if(e.key==="Enter"&&newEmail.trim()&&newEmail.includes("@")){
+            onUpdateMailingList([...mailingList,newEmail.trim().toLowerCase()]);
+            setNewEmail("");
+          }
+        }}/>
+      <Btn variant="primary" size="sm" disabled={!newEmail.trim()||!newEmail.includes("@")}
+        onClick={()=>{if(newEmail.trim()&&newEmail.includes("@")){onUpdateMailingList([...mailingList,newEmail.trim().toLowerCase()]);setNewEmail("");}}}>
+        Add
+      </Btn>
+    </div>
+    {mailingList.length===0 ? (
+      <div style={{padding:"18px 12px",textAlign:"center",background:C.nested,borderRadius:10}}>
+        <div style={{...font.sans,fontSize:12,color:C.textMuted}}>No recipients yet. Add email addresses above.</div>
+      </div>
+    ) : (
+      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+        {mailingList.map((email,i)=>(
+          <div key={email+i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:C.nested,borderRadius:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <IcoC name="mail" size={13} color={C.textSec}/>
+              <span style={{...font.sans,fontSize:13,color:C.text}}>{email}</span>
+            </div>
+            <Btn variant="ghost" size="sm" onClick={()=>onUpdateMailingList(mailingList.filter((_,idx)=>idx!==i))}>
+              <IcoC name="trash" size={12} color={C.red}/>
+            </Btn>
+          </div>
+        ))}
+        <div style={{...font.sans,fontSize:11,color:C.textMuted,marginTop:4}}>
+          {mailingList.length} recipient{mailingList.length!==1?"s":""}. Reports are sent via the server — requires RESEND_API_KEY in Vercel environment variables.
+        </div>
+      </div>
+    )}
+  </div>);
+
   const items=[
     {id:"groups",label:"Signal Groups",content:groupsContent},
     {id:"scoring",label:"Scoring & Classification",content:scoringContent},
     {id:"github",label:"GitHub Watchlist",content:githubContent},
+    {id:"mailing",label:"Mailing List",content:mailingContent},
   ];
 
   return(<Card style={{padding:0,overflow:"hidden"}}>
@@ -1785,6 +1832,9 @@ export default function App() {
   const [briefHistory,setBriefHistory]=useState([]);
   const [briefDiffMode,setBriefDiffMode]=useState(false);
   const [briefBaseForDiff,setBriefBaseForDiff]=useState("");
+  const [mailingList,setMailingList]=useState(()=>ld("mailing_list",[]));
+  const [emailSending,setEmailSending]=useState(false);
+  const [emailStatus,setEmailStatus]=useState(null);
   const addRef=useRef(null);
   const migratedLabelsRef=useRef(false);
   const cancelHistoryRef=useRef(false);
@@ -2228,6 +2278,47 @@ export default function App() {
   }, [fetchTheirStackCountInRange, tsHistoryByVertical, recomputeCrossCorr]);
 
   const cancelHistoryLoad = useCallback(()=>{ cancelHistoryRef.current = true; }, []);
+
+  const updateMailingList = useCallback((emails) => {
+    setMailingList(emails);
+    sv("mailing_list", emails);
+  }, []);
+
+  const sendReportEmail = useCallback(async (content, week) => {
+    if (!mailingList.length) { setEmailStatus("No recipients — add emails to the mailing list first"); setTimeout(()=>setEmailStatus(null), 4000); return; }
+    if (!content) { setEmailStatus("No report content to send"); setTimeout(()=>setEmailStatus(null), 4000); return; }
+    setEmailSending(true);
+    setEmailStatus("Sending...");
+    try {
+      const htmlBody = `<!doctype html><html><head><style>body{margin:0;padding:32px 24px;font-family:Georgia,serif;color:#1a1d26;background:#f7f8fa;line-height:1.7}
+.container{max-width:800px;margin:0 auto;background:#fff;border:1px solid #e1e4ea;border-radius:12px;padding:28px 32px}
+.header{font-size:11px;letter-spacing:0.1em;text-transform:uppercase;font-weight:700;color:#8b92a5;border-bottom:1px solid #e1e4ea;padding-bottom:8px;margin-bottom:16px;font-family:Inter,system-ui,sans-serif}
+pre{white-space:pre-wrap;margin:0;font-family:Georgia,serif;font-size:15px;line-height:1.7;color:#1a1d26}
+.footer{margin-top:24px;padding-top:16px;border-top:1px solid #e1e4ea;font-size:11px;color:#8b92a5;font-family:Inter,system-ui,sans-serif}</style></head>
+<body><div class="container">
+<div class="header">AI Demand Signal Weekly Intelligence Report | ${week}</div>
+<pre>${escapeHtml(content)}</pre>
+<div class="footer">Generated by AI Demand Signal Tracker. This is an automated report — do not reply to this email.</div>
+</div></body></html>`;
+
+      const res = await fetch("/api/send-report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: mailingList,
+          subject: `AI Demand Signal Weekly Report — ${week}`,
+          html: htmlBody,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setEmailStatus(`Sent to ${mailingList.length} recipient${mailingList.length > 1 ? "s" : ""}`);
+    } catch (e) {
+      setEmailStatus(`Failed: ${e.message}`);
+    }
+    setEmailSending(false);
+    setTimeout(() => setEmailStatus(null), 5000);
+  }, [mailingList]);
 
   const savePatternNote = useCallback((verticalId, key, text) => {
     setPatternNotes(prev => {
@@ -2923,7 +3014,7 @@ DATA CONFIDENCE ASSESSMENT
 
         {/* ─── Settings (always visible, collapsed by default) ─── */}
         <div style={{marginBottom:20}}>
-          <InlineSettings config={config} setConfig={setConfig} githubWatchlists={githubWatchlists} setGithubWatchlists={setGithubWatchlists}/>
+          <InlineSettings config={config} setConfig={setConfig} githubWatchlists={githubWatchlists} setGithubWatchlists={setGithubWatchlists} mailingList={mailingList} onUpdateMailingList={updateMailingList}/>
         </div>
 
         {/* ─── Summary metrics ─── */}
@@ -3030,6 +3121,10 @@ DATA CONFIDENCE ASSESSMENT
               <label style={{display:"flex",alignItems:"center",gap:4,fontSize:12,color:C.textSec}}><input type="checkbox" checked={briefDiffMode} onChange={e=>setBriefDiffMode(e.target.checked)} /> Show Changes</label>
               <Btn size="sm" onClick={()=>navigator.clipboard?.writeText(briefContent || "")}>Copy as Markdown</Btn>
               <Btn size="sm" onClick={()=>navigator.clipboard?.writeText((briefContent || "").replace(/[#*_`>-]/g,""))}>Copy as Plain Text</Btn>
+              <Btn size="sm" variant={mailingList.length>0?"primary":"default"} disabled={emailSending||!briefContent} onClick={()=>sendReportEmail(briefContent,briefWeek)}>
+                {emailSending ? <><Spinner size={11} color="#fff"/> Sending</> : <><IcoC name="mail" size={12} color={mailingList.length>0?"#fff":C.textSec}/> Email to Team ({mailingList.length})</>}
+              </Btn>
+              {emailStatus && <span style={{...font.sans,fontSize:11,color:emailStatus.startsWith("Failed")?C.red:emailStatus.startsWith("Sent")?C.green:C.textSec}}>{emailStatus}</span>}
               <Btn size="sm" onClick={()=>{
                 const htmlBody = briefDiffMode ? paragraphDiffHtml(briefBaseForDiff, briefContent) : `<pre style="white-space:pre-wrap;font:16px/1.65 Georgia,serif;color:#1a1d26">${escapeHtml(briefContent)}</pre>`;
                 const w = window.open("", "_blank");
