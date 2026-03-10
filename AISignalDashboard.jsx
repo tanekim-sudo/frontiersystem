@@ -1783,8 +1783,6 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
 
   const items=[
     {id:"groups",label:"Signal Groups",content:groupsContent},
-    {id:"scoring",label:"Scoring & Classification",content:scoringContent},
-    {id:"github",label:"GitHub Watchlist",content:githubContent},
     {id:"mailing",label:"Mailing List",content:mailingContent},
   ];
 
