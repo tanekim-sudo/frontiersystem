@@ -45,20 +45,40 @@ function getAllData() {
 
 function loadAllData(data) {
   Object.entries(data).forEach(([k, v]) => {
-    if (k === "config") return;
     const existing = localStorage.getItem(PFX + k);
-    const existingArr = existing ? (() => { try { return JSON.parse(existing); } catch { return null; } })() : null;
-    if (Array.isArray(v) && Array.isArray(existingArr)) {
-      const merged = [...existingArr];
-      const existingTs = new Set(existingArr.map(e => e.ts));
+    const existingParsed = existing ? (() => { try { return JSON.parse(existing); } catch { return null; } })() : null;
+    if (Array.isArray(v) && Array.isArray(existingParsed)) {
+      const merged = [...existingParsed];
+      const existingTs = new Set(existingParsed.map(e => e.ts));
       v.forEach(entry => { if (!existingTs.has(entry.ts)) merged.push(entry); });
       merged.sort((a, b) => (a.ts || 0) - (b.ts || 0));
-      if (merged.length > 200) merged.splice(0, merged.length - 200);
+      if (merged.length > 500) merged.splice(0, merged.length - 500);
       sv(k, merged);
-    } else if (!existing) {
+    } else if (k === "config" && v && typeof v === "object") {
+      if (!existingParsed || !existingParsed.verticals?.length) {
+        sv(k, v);
+      } else {
+        const cloud = v;
+        const local = existingParsed;
+        const cloudVIds = new Set((cloud.verticals || []).map(vt => vt.id));
+        const localVIds = new Set((local.verticals || []).map(vt => vt.id));
+        const mergedVerts = [...(cloud.verticals || [])];
+        (local.verticals || []).forEach(vt => { if (!cloudVIds.has(vt.id)) mergedVerts.push(vt); });
+        const merged = { ...cloud, verticals: mergedVerts };
+        sv(k, merged);
+      }
+    } else if (!existingParsed) {
       sv(k, v);
+    } else if (k !== "config" && v && typeof v === "object" && !Array.isArray(v) && existingParsed && typeof existingParsed === "object" && !Array.isArray(existingParsed)) {
+      sv(k, { ...existingParsed, ...v });
     }
   });
+}
+
+let _syncDebounce = null;
+function debouncedSyncToGist(pat, delayMs = 5000) {
+  if (_syncDebounce) clearTimeout(_syncDebounce);
+  _syncDebounce = setTimeout(() => { syncToGist(pat).catch(() => {}); _syncDebounce = null; }, delayMs);
 }
 
 async function syncToGist(pat) {
@@ -69,7 +89,11 @@ async function syncToGist(pat) {
 
   try {
     if (gistId) {
-      await fetch(`https://api.github.com/gists/${gistId}`, { method: "PATCH", headers: { Authorization: `Bearer ${pat}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const res = await fetch(`https://api.github.com/gists/${gistId}`, { method: "PATCH", headers: { Authorization: `Bearer ${pat}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (!res.ok && res.status === 404) {
+        localStorage.removeItem(GIST_ID_KEY);
+        return syncToGist(pat);
+      }
     } else {
       const res = await fetch("https://api.github.com/gists", { method: "POST", headers: { Authorization: `Bearer ${pat}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (res.ok) { const g = await res.json(); localStorage.setItem(GIST_ID_KEY, g.id); }
@@ -1257,7 +1281,7 @@ const HF_ORGS = [
 
 function fmtDL(n){ return n>=1e6?`${(n/1e6).toFixed(1)}M`:n>=1e3?`${(n/1e3).toFixed(0)}K`:String(n); }
 
-function HuggingFaceLeaderboard() {
+function HuggingFaceLeaderboard({onDataChanged}) {
   const [data,setData]=useState(()=>ld("hf_lb",null));
   const [hfHist,setHfHist]=useState(()=>getHFHistory());
   const [isL,setIsL]=useState(false);
@@ -1277,9 +1301,10 @@ function HuggingFaceLeaderboard() {
       setHfHist(nh);
       const totalDl = results.reduce((s, o) => s + (o.totalDownloads || 0), 0);
       appendSignalHistory("hf_total", totalDl);
+      if(onDataChanged)onDataChanged();
     }catch(e){setErr(e.message);}
     setIsL(false);
-  },[]);
+  },[onDataChanged]);
 
   useEffect(()=>{if(!data||!data.timestamp||(Date.now()-data.timestamp)>6*3600000)doFetch();},[]);
 
@@ -1840,7 +1865,7 @@ export default function App() {
   useEffect(()=>{configRef.current=config;},[config]);
   useEffect(()=>{srRef.current=signalResults;},[signalResults]);
   useEffect(()=>{ldRef.current=loading;},[loading]);
-  useEffect(()=>{sv("config",config);},[config]);
+  useEffect(()=>{sv("config",config);const pat=resolveGitPat();if(pat)debouncedSyncToGist(pat);},[config]);
   useEffect(()=>{if(addingGroup&&addRef.current)addRef.current.focus();},[addingGroup]);
   useEffect(() => {
     setGithubWatchlists(prev => {
@@ -1946,7 +1971,7 @@ export default function App() {
     let cancelled=false;
     (async()=>{
       const pat=resolveGitPat();
-      if(pat){setCloudStatus("loading…");try{await syncFromGist(pat);}catch{}if(!cancelled){setCloudStatus("idle");lastSyncRef.current=Date.now();}}
+      if(pat){setCloudStatus("loading…");try{await syncFromGist(pat);if(!cancelled){setConfig(ld("config",buildDefaultConfig()));setMailingList(ld("mailing_list",[]));}}catch{}if(!cancelled){setCloudStatus("idle");lastSyncRef.current=Date.now();}}
       const cached={};const cfg=ld("config",buildDefaultConfig());
       (cfg.verticals||[]).forEach(v=>{(cfg.sources||[]).forEach(src=>{
         const key=`${v.id}_${src.id}`;
@@ -1982,6 +2007,13 @@ export default function App() {
     return()=>{cancelled=true;};
   },[]);
 
+  useEffect(()=>{
+    const id=setInterval(()=>{const pat=resolveGitPat();if(pat)syncToGist(pat).catch(()=>{});},120000);
+    const onUnload=()=>{const pat=resolveGitPat();if(pat){const data=getAllData();const gistId=localStorage.getItem(GIST_ID_KEY);if(gistId){const body=JSON.stringify({files:{"signal-data.json":{content:JSON.stringify(data)}}});try{fetch(`https://api.github.com/gists/${gistId}`,{method:"PATCH",headers:{Authorization:`Bearer ${pat}`,"Content-Type":"application/json"},body,keepalive:true});}catch(e){}}}};
+    window.addEventListener("beforeunload",onUnload);
+    return()=>{clearInterval(id);window.removeEventListener("beforeunload",onUnload);};
+  },[resolveGitPat]);
+
   const toggleOverlay=useCallback(key=>{setOverlaySelected(p=>p.includes(key)?p.filter(k=>k!==key):[...p,key]);},[]);
 
   const fetchSource=useCallback(async(sourceId,verticalId)=>{
@@ -2002,7 +2034,7 @@ export default function App() {
       setLoading(p=>({...p,[key]:false}));await sleep(300);
     }
     setLoading(p=>({...p,[sourceId]:false}));
-    if(Date.now()-lastSyncRef.current>30000){const pat=resolveGitPat();if(pat){syncToGist(pat).catch(()=>{});lastSyncRef.current=Date.now();}}
+    const pat=resolveGitPat();if(pat)debouncedSyncToGist(pat,3000);
   },[resolveGitPat]);
 
   const refreshAll=useCallback(async()=>{
@@ -2179,7 +2211,8 @@ export default function App() {
       setHistoryProgress({ active: false, verticalId: null, current: 0, total: 0, label: "" });
       return;
     }
-  }, [fetchGoogleTrendsHistory, fetchGitHubCountInRange]);
+    const pat=resolveGitPat();if(pat)debouncedSyncToGist(pat,2000);
+  }, [fetchGoogleTrendsHistory, fetchGitHubCountInRange, resolveGitPat]);
 
   const loadFullHistory = useCallback(async (verticalId, force = false) => {
     const vert = configRef.current.verticals.find(v => v.id === verticalId);
@@ -2235,7 +2268,8 @@ export default function App() {
     });
     setPatternNotes(ld(patternNoteKey(verticalId), {}));
     setHistoryProgress({active:false,verticalId:null,current:0,total:0,label:""});
-  }, [fetchTheirStackCountInRange, recomputeCrossCorr]);
+    const pat=resolveGitPat();if(pat)debouncedSyncToGist(pat,2000);
+  }, [fetchTheirStackCountInRange, recomputeCrossCorr, resolveGitPat]);
 
   const autoFetchRecentHistory = useCallback(async (verticalId) => {
     const vert = configRef.current.verticals.find(v => v.id === verticalId);
@@ -2280,7 +2314,8 @@ export default function App() {
   const updateMailingList = useCallback((emails) => {
     setMailingList(emails);
     sv("mailing_list", emails);
-  }, []);
+    const pat=resolveGitPat();if(pat)debouncedSyncToGist(pat);
+  }, [resolveGitPat]);
 
   const sendReportEmail = useCallback(async (content, week) => {
     if (!mailingList.length) { setEmailStatus("No recipients — add emails to the mailing list first"); setTimeout(()=>setEmailStatus(null), 4000); return; }
@@ -2832,8 +2867,9 @@ DATA CONFIDENCE ASSESSMENT
     } finally {
       if (tmr) clearInterval(tmr);
       setBriefLoading(false);
+      const pat=resolveGitPat();if(pat)debouncedSyncToGist(pat,2000);
     }
-  }, [buildBriefContext]);
+  }, [buildBriefContext, resolveGitPat]);
 
   useEffect(()=>{
     if(!schedulerActive||!hasKeys)return;
@@ -3071,7 +3107,7 @@ DATA CONFIDENCE ASSESSMENT
 
         {/* ─── Hugging Face ─── */}
         <div style={{marginBottom:28}}>
-          <HuggingFaceLeaderboard/>
+          <HuggingFaceLeaderboard onDataChanged={()=>{const pat=resolveGitPat();if(pat)debouncedSyncToGist(pat,3000);}}/>
         </div>
 
         {/* ─── Pipeline Pressure ─── */}
