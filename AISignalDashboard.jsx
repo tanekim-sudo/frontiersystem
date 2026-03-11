@@ -1806,7 +1806,57 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
     )}
   </div>);
 
+  const instructionsContent=(<div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
+      {[
+        { icon: "briefcase", color: C.cyan, title: "Job Postings (TheirStack)", desc: "Counts AI-related job postings matching your keywords across US employers. Tracks hiring volume, language stage classification (exploration vs. deployment), and historical trends back to 2021. Requires TheirStack API key." },
+        { icon: "trendUp", color: C.blue, title: "Google Trends (SerpAPI)", desc: "Measures relative search interest (0\u2013100) for your keywords on Google. Computes momentum vs. 4-week rolling average. Can backfill 5 years of weekly data in a single API call. Requires SerpAPI key." },
+        { icon: "code", color: C.green, title: "GitHub Repos", desc: "Counts active repositories matching your keywords that had pushes in the last 30 days. Tracks open-source ecosystem growth as a leading indicator of enterprise adoption (6\u201318 month lead). Can backfill monthly repo counts back to 2021. Requires GitHub PAT." },
+        { icon: "bot", color: C.purple, title: "Claude Code Attribution", desc: "Counts GitHub commits with 'Co-Authored-By: Claude' signatures in the past 7 days. Measures real AI coding tool penetration into production workflows. Can backfill monthly counts from Jan 2023. Requires GitHub PAT." },
+        { icon: "database", color: C.amber, title: "Hugging Face Leaderboard", desc: "Tracks model download volumes across major AI companies (OpenAI, Google, Meta, Microsoft, etc.) from the Hugging Face API. Measures supply-side AI capability growth. No API key required \u2014 public API." },
+        { icon: "barChart", color: C.orange, title: "Composite Scoring & Stages", desc: "Combines all signals into a weighted composite score (0\u2013100) per vertical. Classifies each into adoption stages: Watchlist \u2192 Validating \u2192 Rolling Out \u2192 Committed. Weights are adjustable in settings." },
+      ].map((item, i) => (
+        <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+          <div style={{flexShrink:0,width:32,height:32,borderRadius:8,background:item.color+"14",display:"flex",alignItems:"center",justifyContent:"center",marginTop:2}}>
+            <IcoC name={item.icon} size={15} color={item.color}/>
+          </div>
+          <div>
+            <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:3}}>{item.title}</div>
+            <div style={{...font.sans,fontSize:11,color:C.textSec,lineHeight:1.5}}>{item.desc}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+    <div style={{...font.sans,fontSize:13,fontWeight:700,color:C.text,marginBottom:10}}>Additional capabilities</div>
+    <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
+      {[
+        { title: "Historical Backfill", desc: "Every signal source has a Backfill button. TheirStack queries monthly job counts from Jan 2021. Google Trends fetches 5 years of weekly data in one call. GitHub counts repos/commits per month going back to 2021 (or 2023 for Claude). All historical data is stored permanently." },
+        { title: "Growth Charts & Overlays", desc: "Every metric records a data point on each refresh, building a persistent time-series graph. Click the chart icon to see growth trends. Select multiple signals across verticals and overlay them on one normalized chart to compare trajectories." },
+        { title: "AI-Powered Weekly Intelligence Report", desc: "Uses Claude (Anthropic API) to synthesize all dashboard data into a comprehensive investment memo. Includes regime classification, inflection detection, divergence analysis, cross-vertical intelligence, and 5 actionable recommendations with conviction levels. Requires Anthropic API key." },
+        { title: "Cloud Persistence", desc: "All data automatically syncs to a private GitHub Gist so it is shared across all team members and survives redeploys. Requires GitHub PAT with gist scope." },
+        { title: "Auto-Refresh Scheduler", desc: "Signals auto-refresh on their configured cadence (weekly by default). The scheduler also backfills recent TheirStack history automatically if stale. Pause/resume from the nav bar." },
+        { title: "Email Reports", desc: "Generated weekly reports can be emailed to your entire team via the mailing list. Requires RESEND_API_KEY configured in Vercel environment variables." },
+      ].map((item, i) => (
+        <div key={i} style={{padding:"10px 14px",background:C.nested,borderRadius:10}}>
+          <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:3}}>{item.title}</div>
+          <div style={{...font.sans,fontSize:11,color:C.textSec,lineHeight:1.5}}>{item.desc}</div>
+        </div>
+      ))}
+    </div>
+    <div style={{...font.sans,fontSize:13,fontWeight:700,color:C.text,marginBottom:8}}>Required API keys (set in .env file)</div>
+    <div style={{...font.sans,fontSize:11,color:C.textSec,lineHeight:1.7,fontFamily:"monospace",background:C.nested,padding:"14px 18px",borderRadius:10,marginBottom:8}}>
+      VITE_THEIRSTACK_KEY=your-key &nbsp;&nbsp;<span style={{color:C.textMuted}}># theirstack.com — job posting data</span><br/>
+      VITE_SERPAPI_KEY=your-key &nbsp;&nbsp;<span style={{color:C.textMuted}}># serpapi.com — Google Trends data</span><br/>
+      VITE_GITHUB_PAT=your-pat &nbsp;&nbsp;<span style={{color:C.textMuted}}># github.com — repos, commits, cloud sync</span><br/>
+      VITE_ANTHROPIC_API_KEY=your-key &nbsp;&nbsp;<span style={{color:C.textMuted}}># anthropic.com — weekly AI report</span>
+    </div>
+    <div style={{...font.sans,fontSize:11,color:C.textMuted}}>
+      Only TheirStack, SerpAPI, and GitHub PAT are needed for core tracking. Anthropic is optional (for the AI weekly report). Hugging Face data is free and requires no key.
+    </div>
+  </div>);
+
   const items=[
+    {id:"instructions",label:"Instructions",content:instructionsContent},
     {id:"groups",label:"Signal Groups",content:groupsContent},
     {id:"mailing",label:"Mailing List",content:mailingContent},
   ];
@@ -2961,95 +3011,27 @@ DATA CONFIDENCE ASSESSMENT
 
       <div style={{padding:"20px 28px 40px",maxWidth:1400,margin:"0 auto"}}>
 
-        {config.verticals.length === 0 ? (
-          /* ═══ ONBOARDING ═══ */
-          <div className="fade-in" style={{maxWidth:720,margin:"40px auto"}}>
-            <div style={{textAlign:"center",marginBottom:36}}>
-              <div style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:56,height:56,borderRadius:16,background:`linear-gradient(135deg,${C.cyan}18,${C.blue}18)`,marginBottom:16}}>
-                <IcoC name="trendUp" size={28} color={C.cyan}/>
-              </div>
-              <h1 style={{...font.sans,fontSize:26,fontWeight:700,color:C.text,margin:"0 0 8px"}}>AI Demand Signal Tracker</h1>
-              <p style={{...font.sans,fontSize:14,color:C.textSec,margin:0,lineHeight:1.6}}>
-                Track enterprise AI adoption across any vertical you define. Create a tracking group, set your keywords, and this tool monitors demand signals from multiple data sources in real time.
-              </p>
-            </div>
-
-            <Card style={{marginBottom:20,padding:"24px 28px"}}>
-              <div style={{...font.sans,fontSize:15,fontWeight:700,color:C.text,marginBottom:16}}>What this tool does</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
-                {[
-                  { icon: "briefcase", color: C.cyan, title: "Job Postings (TheirStack)", desc: "Counts AI-related job postings matching your keywords across US employers. Tracks hiring volume, language stage classification (exploration vs. deployment), and historical trends back to 2021. Requires TheirStack API key." },
-                  { icon: "trendUp", color: C.blue, title: "Google Trends (SerpAPI)", desc: "Measures relative search interest (0\u2013100) for your keywords on Google. Computes momentum vs. 4-week rolling average. Can backfill 5 years of weekly data in a single API call. Requires SerpAPI key." },
-                  { icon: "code", color: C.green, title: "GitHub Repos", desc: "Counts active repositories matching your keywords that had pushes in the last 30 days. Tracks open-source ecosystem growth as a leading indicator of enterprise adoption (6\u201318 month lead). Can backfill monthly repo counts back to 2021. Requires GitHub PAT." },
-                  { icon: "bot", color: C.purple, title: "Claude Code Attribution", desc: "Counts GitHub commits with 'Co-Authored-By: Claude' signatures in the past 7 days. Measures real AI coding tool penetration into production workflows. Can backfill monthly counts from Jan 2023. Requires GitHub PAT." },
-                  { icon: "database", color: C.amber, title: "Hugging Face Leaderboard", desc: "Tracks model download volumes across major AI companies (OpenAI, Google, Meta, Microsoft, etc.) from the Hugging Face API. Measures supply-side AI capability growth. No API key required \u2014 public API." },
-                  { icon: "barChart", color: C.orange, title: "Composite Scoring & Stages", desc: "Combines all signals into a weighted composite score (0\u2013100) per vertical. Classifies each into adoption stages: Watchlist \u2192 Validating \u2192 Rolling Out \u2192 Committed. Weights are adjustable in settings." },
-                ].map((item, i) => (
-                  <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
-                    <div style={{flexShrink:0,width:32,height:32,borderRadius:8,background:item.color+"14",display:"flex",alignItems:"center",justifyContent:"center",marginTop:2}}>
-                      <IcoC name={item.icon} size={15} color={item.color}/>
-                    </div>
-                    <div>
-                      <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:3}}>{item.title}</div>
-                      <div style={{...font.sans,fontSize:11,color:C.textSec,lineHeight:1.5}}>{item.desc}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-
-            <Card style={{marginBottom:20,padding:"24px 28px"}}>
-              <div style={{...font.sans,fontSize:15,fontWeight:700,color:C.text,marginBottom:16}}>Additional capabilities</div>
-              <div style={{display:"flex",flexDirection:"column",gap:12}}>
-                {[
-                  { title: "Historical Backfill", desc: "Every signal source has a Backfill button. TheirStack queries monthly job counts from Jan 2021. Google Trends fetches 5 years of weekly data in one call. GitHub counts repos/commits per month going back to 2021 (or 2023 for Claude). All historical data is stored permanently." },
-                  { title: "Growth Charts & Overlays", desc: "Every metric records a data point on each refresh, building a persistent time-series graph. Click the chart icon to see growth trends. Select multiple signals across verticals and overlay them on one normalized chart to compare trajectories." },
-                  { title: "AI-Powered Weekly Intelligence Report", desc: "Uses Claude (Anthropic API) to synthesize all dashboard data into a comprehensive investment memo. Includes regime classification, inflection detection, divergence analysis, cross-vertical intelligence, and 5 actionable recommendations with conviction levels. Requires Anthropic API key." },
-                  { title: "Cloud Persistence", desc: "Saves all data to a private GitHub Gist so it survives across machines and browsers. Use the cloud sync buttons in the nav bar. Requires GitHub PAT with gist scope." },
-                  { title: "Auto-Refresh Scheduler", desc: "Signals auto-refresh on their configured cadence (weekly by default). The scheduler also backfills recent TheirStack history automatically if stale. Pause/resume from the nav bar." },
-                ].map((item, i) => (
-                  <div key={i} style={{padding:"12px 16px",background:C.nested,borderRadius:10}}>
-                    <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:3}}>{item.title}</div>
-                    <div style={{...font.sans,fontSize:11,color:C.textSec,lineHeight:1.5}}>{item.desc}</div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-
-            <Card style={{marginBottom:20,padding:"24px 28px"}}>
-              <div style={{...font.sans,fontSize:15,fontWeight:700,color:C.text,marginBottom:12}}>Required API keys (set in .env file)</div>
-              <div style={{...font.sans,fontSize:11,color:C.textSec,lineHeight:1.7,fontFamily:"monospace",background:C.nested,padding:"14px 18px",borderRadius:10}}>
-                VITE_THEIRSTACK_KEY=your-key &nbsp;&nbsp;<span style={{color:C.textMuted}}># theirstack.com — job posting data</span><br/>
-                VITE_SERPAPI_KEY=your-key &nbsp;&nbsp;<span style={{color:C.textMuted}}># serpapi.com — Google Trends data</span><br/>
-                VITE_GITHUB_PAT=your-pat &nbsp;&nbsp;<span style={{color:C.textMuted}}># github.com — repos, commits, cloud sync</span><br/>
-                VITE_ANTHROPIC_API_KEY=your-key &nbsp;&nbsp;<span style={{color:C.textMuted}}># anthropic.com — weekly AI report</span>
-              </div>
-              <div style={{...font.sans,fontSize:11,color:C.textMuted,marginTop:8}}>
-                Only TheirStack, SerpAPI, and GitHub PAT are needed for core tracking. Anthropic is optional (for the AI weekly report). Hugging Face data is free and requires no key.
-              </div>
-            </Card>
-
-            <Card style={{padding:"24px 28px",background:`linear-gradient(135deg,${C.cyan}08,${C.blue}08)`}}>
-              <div style={{...font.sans,fontSize:15,fontWeight:700,color:C.text,marginBottom:12}}>Get started — create your first tracking group</div>
-              <p style={{...font.sans,fontSize:12,color:C.textSec,margin:"0 0 16px",lineHeight:1.6}}>
-                A tracking group is a vertical, theme, or sector you want to monitor for AI demand signals. Examples: "Healthcare AI", "Autonomous Vehicles", "AI Coding Tools", "Financial AI". You define the keywords for each data source, and the tool tracks all signals for that group over time.
-              </p>
-              <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                <input ref={addRef} value={newGroupName} onChange={e=>setNewGroupName(e.target.value)} placeholder="e.g. Healthcare AI, FinTech, AI Coding Tools..."
-                  style={{flex:1,fontSize:13,padding:"10px 14px",borderRadius:10,border:`1px solid ${C.border}`,outline:"none",...font.sans}}
-                  onKeyDown={e=>{if(e.key==="Enter"&&newGroupName.trim()){addGroup(newGroupName.trim());setNewGroupName("");}}}/>
-                <Btn variant="primary" size="md" onClick={()=>{if(newGroupName.trim()){addGroup(newGroupName.trim());setNewGroupName("");}}}>
-                  Create Group
-                </Btn>
-              </div>
-            </Card>
-          </div>
-        ) : (<>
-
         {/* ─── Settings (always visible, collapsed by default) ─── */}
         <div style={{marginBottom:20}}>
           <InlineSettings config={config} setConfig={setConfig} githubWatchlists={githubWatchlists} setGithubWatchlists={setGithubWatchlists} mailingList={mailingList} onUpdateMailingList={updateMailingList}/>
         </div>
+
+        {/* ─── Empty state prompt ─── */}
+        {config.verticals.length === 0 && (
+          <Card className="fade-in" style={{padding:"28px 32px",marginBottom:20,textAlign:"center",background:`linear-gradient(135deg,${C.cyan}06,${C.blue}06)`}}>
+            <IcoC name="trendUp" size={24} color={C.cyan}/>
+            <div style={{...font.sans,fontSize:16,fontWeight:700,color:C.text,margin:"12px 0 6px"}}>Create your first tracking group to get started</div>
+            <p style={{...font.sans,fontSize:12,color:C.textSec,margin:"0 0 16px",lineHeight:1.6,maxWidth:520,marginLeft:"auto",marginRight:"auto"}}>
+              A tracking group is a vertical, theme, or sector you want to monitor — e.g. "Healthcare AI", "Autonomous Vehicles", "AI Coding Tools". Click the <strong>Instructions</strong> tab above for full details on what this tool tracks.
+            </p>
+            <div style={{display:"flex",gap:8,alignItems:"center",justifyContent:"center",maxWidth:420,margin:"0 auto"}}>
+              <input ref={addRef} value={newGroupName} onChange={e=>setNewGroupName(e.target.value)} placeholder="e.g. Healthcare AI, FinTech..."
+                style={{flex:1,fontSize:13,padding:"10px 14px",borderRadius:10,border:`1px solid ${C.border}`,outline:"none",...font.sans}}
+                onKeyDown={e=>{if(e.key==="Enter"&&newGroupName.trim()){addGroup(newGroupName.trim());setNewGroupName("");}}}/>
+              <Btn variant="primary" size="md" onClick={()=>{if(newGroupName.trim()){addGroup(newGroupName.trim());setNewGroupName("");}}}>Create Group</Btn>
+            </div>
+          </Card>
+        )}
 
         {/* ─── Summary metrics ─── */}
         {hasData&&(
@@ -3121,7 +3103,6 @@ DATA CONFIDENCE ASSESSMENT
             <AlertFeed alerts={alerts} onPin={id=>setAlerts(p=>p.map(a=>a.id===id?{...a,pinned:!a.pinned}:a))}/>
           </div>
         )}
-        </>)}
       </div>
 
       {briefHistoryOpen && (
