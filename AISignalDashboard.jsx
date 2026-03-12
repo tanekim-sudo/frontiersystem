@@ -1783,6 +1783,7 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
 
   const [newEmail,setNewEmail]=useState("");
   const [emailjsCfg,setEmailjsCfg]=useState(()=>ld("emailjs_config",{service_id:"",template_id:"",public_key:""}));
+  useEffect(()=>{if(section==="mailing"){setEmailjsCfg(ld("emailjs_config",{service_id:"",template_id:"",public_key:""}));}},[section]);
   const updateEmailjsCfg=(field,val)=>{const next={...emailjsCfg,[field]:val};setEmailjsCfg(next);sv("emailjs_config",next);if(onCloudSync)onCloudSync();};
   const emailjsReady=emailjsCfg.service_id&&emailjsCfg.template_id&&emailjsCfg.public_key;
   const mailingContent=(<div>
