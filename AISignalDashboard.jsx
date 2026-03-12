@@ -3014,8 +3014,12 @@ DATA CONFIDENCE ASSESSMENT
   const currentWeekKey = weekKeyFromDate(new Date());
   const signalFingerprint = useMemo(() => JSON.stringify(Object.keys(signalResults).sort().map(k => [k, signalResults[k]?.count || 0])), [signalResults]);
   const lastBriefObj = useMemo(() => { try { return JSON.parse(localStorage.getItem(briefStorageKey(currentWeekKey)) || "null"); } catch { return null; } }, [currentWeekKey, briefContent]);
-  const hasCurrentWeekSignal = useMemo(() => Object.values(signalResults).some(v => (v?.timestamp ? weekKeyFromDate(new Date(v.timestamp)) === currentWeekKey : true)), [signalResults, currentWeekKey]);
-  const canGenerateBrief = hasCurrentWeekSignal;
+  const hasAnySignalData = useMemo(() => {
+    if (Object.keys(signalResults).length > 0) return true;
+    if (config.verticals.length > 0) return true;
+    return false;
+  }, [signalResults, config.verticals]);
+  const canGenerateBrief = hasAnySignalData;
   const shouldPromoteBrief = useMemo(() => {
     if (!canGenerateBrief) return false;
     if (!lastBriefObj?.generated_at) return true;
