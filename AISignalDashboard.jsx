@@ -1677,7 +1677,7 @@ function GitHubHistoryChart({ ghHist, tsHist, overlayJobs=false }) {
 
 // ── INLINE SETTINGS ──────────────────────────────────────────────────────────
 
-function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,mailingList,onUpdateMailingList}){
+function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,mailingList,onUpdateMailingList,onCloudSync}){
   const[section,setSection]=useState(null);
   const update=fn=>setConfig(prev=>{const next=fn(prev);sv("config",next);return next;});
 
@@ -1783,7 +1783,7 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
 
   const [newEmail,setNewEmail]=useState("");
   const [emailjsCfg,setEmailjsCfg]=useState(()=>ld("emailjs_config",{service_id:"",template_id:"",public_key:""}));
-  const updateEmailjsCfg=(field,val)=>{const next={...emailjsCfg,[field]:val};setEmailjsCfg(next);sv("emailjs_config",next);};
+  const updateEmailjsCfg=(field,val)=>{const next={...emailjsCfg,[field]:val};setEmailjsCfg(next);sv("emailjs_config",next);if(onCloudSync)onCloudSync();};
   const emailjsReady=emailjsCfg.service_id&&emailjsCfg.template_id&&emailjsCfg.public_key;
   const mailingContent=(<div>
     <div style={{padding:"12px 14px",background:C.nested,borderRadius:10,marginBottom:16,border:`1px solid ${C.borderLight}`}}>
@@ -2436,7 +2436,8 @@ export default function App() {
       return;
     }
     setEmailSending(true);
-    let sent = 0, failed = 0;
+    let sent = 0, failed = 0, lastErr = "";
+    const trimmedContent = content.length > 40000 ? content.slice(0, 40000) + "\n\n[Report truncated for email delivery]" : content;
     for (let i = 0; i < mailingList.length; i++) {
       setEmailStatus(`Sending ${i + 1}/${mailingList.length}...`);
       try {
@@ -2450,19 +2451,22 @@ export default function App() {
             template_params: {
               to_email: mailingList[i],
               subject: `AI Demand Signal Weekly Report — ${week}`,
-              report_content: content,
+              report_content: trimmedContent,
               week: week,
             },
           }),
         });
-        if (res.ok) sent++; else failed++;
-      } catch { failed++; }
+        if (res.ok) { sent++; } else {
+          failed++;
+          try { lastErr = await res.text(); } catch { lastErr = `HTTP ${res.status}`; }
+        }
+      } catch (e) { failed++; lastErr = e.message; }
       if (i < mailingList.length - 1) await sleep(1100);
     }
     setEmailSending(false);
     if (failed === 0) setEmailStatus(`Sent to ${sent} recipient${sent !== 1 ? "s" : ""}`);
-    else setEmailStatus(`Sent ${sent}, failed ${failed}`);
-    setTimeout(() => setEmailStatus(null), 5000);
+    else setEmailStatus(`Sent ${sent}, failed ${failed}: ${lastErr.slice(0, 100)}`);
+    setTimeout(() => setEmailStatus(null), 8000);
   }, [mailingList]);
 
   const savePatternNote = useCallback((verticalId, key, text) => {
@@ -3079,7 +3083,7 @@ DATA CONFIDENCE ASSESSMENT
 
         {/* ─── Settings (always visible, collapsed by default) ─── */}
         <div style={{marginBottom:20}}>
-          <InlineSettings config={config} setConfig={setConfig} githubWatchlists={githubWatchlists} setGithubWatchlists={setGithubWatchlists} mailingList={mailingList} onUpdateMailingList={updateMailingList}/>
+          <InlineSettings config={config} setConfig={setConfig} githubWatchlists={githubWatchlists} setGithubWatchlists={setGithubWatchlists} mailingList={mailingList} onUpdateMailingList={updateMailingList} onCloudSync={()=>{const pat=resolveGitPat();if(pat)debouncedSyncToGist(pat);}}/>
         </div>
 
         {/* ─── Empty state prompt ─── */}
