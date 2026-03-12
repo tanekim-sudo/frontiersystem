@@ -76,14 +76,34 @@ function loadAllData(data) {
 }
 
 let _syncDebounce = null;
+let _cloudInitDone = false;
 function debouncedSyncToGist(pat, delayMs = 5000) {
+  if (!_cloudInitDone) return;
   if (_syncDebounce) clearTimeout(_syncDebounce);
   _syncDebounce = setTimeout(() => { syncToGist(pat).catch(() => {}); _syncDebounce = null; }, delayMs);
 }
 
 async function syncToGist(pat) {
   if (!pat) return;
+  if (!_cloudInitDone) return;
   const data = getAllData();
+  const localCfg = data.config;
+  if (localCfg && (!localCfg.verticals || localCfg.verticals.length === 0)) {
+    const gistId = localStorage.getItem(GIST_ID_KEY);
+    if (gistId) {
+      try {
+        const chk = await fetch(`https://api.github.com/gists/${gistId}`, { headers: { Authorization: `Bearer ${pat}` } });
+        if (chk.ok) {
+          const g = await chk.json();
+          const content = g.files["signal-data.json"]?.content;
+          if (content) {
+            const cloud = JSON.parse(content);
+            if (cloud.config?.verticals?.length > 0) return;
+          }
+        }
+      } catch {}
+    }
+  }
   const gistId = localStorage.getItem(GIST_ID_KEY);
   const body = { description: "Signal Intelligence Dashboard — persistent data store", public: false, files: { "signal-data.json": { content: JSON.stringify(data) } } };
 
@@ -2034,7 +2054,6 @@ export default function App() {
         color: DEFAULT_STAGE_TAXONOMY[i]?.color || t.color,
       }));
       const next = {...prev,stages:nextStages,stageTaxonomy:nextTax};
-      sv("config",next);
       return next;
     });
   },[]);
@@ -2080,7 +2099,7 @@ export default function App() {
     (async()=>{
       const pat=resolveGitPat();
       if(pat){setCloudStatus("loading…");try{await syncFromGist(pat);if(!cancelled){setConfig(ld("config",buildDefaultConfig()));setMailingList(ld("mailing_list",[]));}}catch{}if(!cancelled){setCloudStatus("idle");lastSyncRef.current=Date.now();}}
-      if(!cancelled)cloudSyncDoneRef.current=true;
+      if(!cancelled){cloudSyncDoneRef.current=true;_cloudInitDone=true;}
       const cached={};const cfg=ld("config",buildDefaultConfig());
       (cfg.verticals||[]).forEach(v=>{(cfg.sources||[]).forEach(src=>{
         const key=`${v.id}_${src.id}`;
@@ -2118,7 +2137,7 @@ export default function App() {
 
   useEffect(()=>{
     const id=setInterval(()=>{const pat=resolveGitPat();if(pat)syncToGist(pat).catch(()=>{});},120000);
-    const onUnload=()=>{const pat=resolveGitPat();if(pat){const data=getAllData();const gistId=localStorage.getItem(GIST_ID_KEY);if(gistId){const body=JSON.stringify({files:{"signal-data.json":{content:JSON.stringify(data)}}});try{fetch(`https://api.github.com/gists/${gistId}`,{method:"PATCH",headers:{Authorization:`Bearer ${pat}`,"Content-Type":"application/json"},body,keepalive:true});}catch(e){}}}};
+    const onUnload=()=>{if(!_cloudInitDone)return;const pat=resolveGitPat();if(pat){const data=getAllData();const gistId=localStorage.getItem(GIST_ID_KEY);if(gistId){const body=JSON.stringify({files:{"signal-data.json":{content:JSON.stringify(data)}}});try{fetch(`https://api.github.com/gists/${gistId}`,{method:"PATCH",headers:{Authorization:`Bearer ${pat}`,"Content-Type":"application/json"},body,keepalive:true});}catch(e){}}}};
     window.addEventListener("beforeunload",onUnload);
     return()=>{clearInterval(id);window.removeEventListener("beforeunload",onUnload);};
   },[resolveGitPat]);
