@@ -721,12 +721,22 @@ async function callSource(source, vertical, configKeys) {
     url = ep + (ep.includes("?")?"&":"?") + qs + (cfg.authType==="query_param" && key ? `&${cfg.authHeader||"api_key"}=${key}` : "");
   }
   else { headers["Content-Type"] = "application/json"; body = filled; }
-  const res = await fetch(url, { method: cfg.method, headers, body });
+  let res;
+  try {
+    res = await fetch(url, { method: cfg.method, headers, body });
+  } catch (networkErr) {
+    if (source.id === "google_trends") {
+      const fallbackUrl = "/serpapi/search.json?" + url.split("?").slice(1).join("?");
+      try { res = await fetch(fallbackUrl, { method: cfg.method, headers }); } catch { throw new Error("Network error — cannot reach Google Trends API"); }
+    } else {
+      throw new Error("Network error — check connection");
+    }
+  }
   if (res.status===401||res.status===403) throw new Error("Invalid API key");
   if (res.status===402) throw new Error("API credits exhausted");
   if (res.status===429) throw new Error("Rate limited");
-  if (res.status===400) throw new Error("Bad request — check keywords");
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (res.status===400) { let detail=""; try{const j=await res.clone().json();detail=j.error||"";}catch{} throw new Error(detail ? `Bad request: ${detail.slice(0,60)}` : "Bad request — check keywords"); }
+  if (!res.ok) { let detail=""; try{const j=await res.clone().json();detail=j.error||"";}catch{} throw new Error(detail ? detail.slice(0,80) : `HTTP ${res.status}`); }
   return res.json();
 }
 
@@ -2147,9 +2157,10 @@ export default function App() {
     const q = Array.isArray(kw) ? kw.filter(Boolean).join(",") : (kw || "");
     if (!q) throw new Error("No keywords");
     const url = `/api/google-trends?engine=google_trends&data_type=TIMESERIES&q=${encodeURIComponent(q)}&date=today+5-y&api_key=${key}`;
-    const res = await fetch(url);
+    let res;
+    try { res = await fetch(url); } catch { res = await fetch(`/serpapi/search.json?engine=google_trends&data_type=TIMESERIES&q=${encodeURIComponent(q)}&date=today+5-y&api_key=${key}`); }
     if (res.status === 402) throw new Error("API credits exhausted");
-    if (!res.ok) throw new Error(`SerpAPI HTTP ${res.status}`);
+    if (!res.ok) { let detail=""; try{const j=await res.clone().json();detail=j.error||"";}catch{} throw new Error(detail || `SerpAPI HTTP ${res.status}`); }
     const json = await res.json();
     const tl = json.interest_over_time?.timeline_data || [];
     return tl.map(d => {
