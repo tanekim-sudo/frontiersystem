@@ -1782,10 +1782,44 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
   </div>);
 
   const [newEmail,setNewEmail]=useState("");
+  const [emailjsCfg,setEmailjsCfg]=useState(()=>ld("emailjs_config",{service_id:"",template_id:"",public_key:""}));
+  const updateEmailjsCfg=(field,val)=>{const next={...emailjsCfg,[field]:val};setEmailjsCfg(next);sv("emailjs_config",next);};
+  const emailjsReady=emailjsCfg.service_id&&emailjsCfg.template_id&&emailjsCfg.public_key;
   const mailingContent=(<div>
-    <div style={{...font.sans,fontSize:12,color:C.textSec,marginBottom:12,lineHeight:1.5}}>
-      Add email addresses to receive the weekly AI intelligence report. When you click "Email to Team" on a generated report, it will be sent to everyone on this list.
+    <div style={{padding:"12px 14px",background:C.nested,borderRadius:10,marginBottom:16,border:`1px solid ${C.borderLight}`}}>
+      <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:6}}>EmailJS Setup (free, no domain needed)</div>
+      <div style={{...font.sans,fontSize:11,color:C.textSec,lineHeight:1.6,marginBottom:10}}>
+        1. Create a free account at <a href="https://www.emailjs.com" target="_blank" rel="noreferrer" style={{color:C.cyan}}>emailjs.com</a><br/>
+        2. Go to <strong>Email Services</strong> → Add service → Connect your Gmail (or any email)<br/>
+        3. Go to <strong>Email Templates</strong> → Create template with these variables:<br/>
+        <span style={{fontFamily:"monospace",fontSize:10,background:C.white,padding:"2px 6px",borderRadius:4,marginLeft:12}}>{"{{to_email}}"}</span> (To field),
+        <span style={{fontFamily:"monospace",fontSize:10,background:C.white,padding:"2px 6px",borderRadius:4}}>{"{{subject}}"}</span> (Subject field),
+        <span style={{fontFamily:"monospace",fontSize:10,background:C.white,padding:"2px 6px",borderRadius:4}}>{"{{report_content}}"}</span> (Body)<br/>
+        4. Copy your IDs below:
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <span style={{...font.sans,fontSize:11,fontWeight:600,color:C.textSec,minWidth:85}}>Service ID</span>
+          <input value={emailjsCfg.service_id} onChange={e=>updateEmailjsCfg("service_id",e.target.value)} placeholder="e.g. service_abc123"
+            style={{flex:1,fontSize:12,padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,outline:"none",...font.sans}}/>
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <span style={{...font.sans,fontSize:11,fontWeight:600,color:C.textSec,minWidth:85}}>Template ID</span>
+          <input value={emailjsCfg.template_id} onChange={e=>updateEmailjsCfg("template_id",e.target.value)} placeholder="e.g. template_xyz789"
+            style={{flex:1,fontSize:12,padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,outline:"none",...font.sans}}/>
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <span style={{...font.sans,fontSize:11,fontWeight:600,color:C.textSec,minWidth:85}}>Public Key</span>
+          <input value={emailjsCfg.public_key} onChange={e=>updateEmailjsCfg("public_key",e.target.value)} placeholder="e.g. user_ABCdef12345"
+            style={{flex:1,fontSize:12,padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,outline:"none",...font.sans}}/>
+        </div>
+      </div>
+      <div style={{marginTop:8,...font.sans,fontSize:11,color:emailjsReady?C.green:C.textMuted}}>
+        {emailjsReady ? "EmailJS configured — ready to send" : "Fill in all three fields to enable email sending"}
+      </div>
     </div>
+
+    <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:8}}>Recipients</div>
     <div style={{display:"flex",gap:8,marginBottom:14}}>
       <input value={newEmail} onChange={e=>setNewEmail(e.target.value)} placeholder="colleague@company.com"
         style={{flex:1,fontSize:13,padding:"8px 12px",borderRadius:8,border:`1px solid ${C.border}`,outline:"none",...font.sans}}
@@ -1818,7 +1852,7 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
           </div>
         ))}
         <div style={{...font.sans,fontSize:11,color:C.textMuted,marginTop:4}}>
-          {mailingList.length} recipient{mailingList.length!==1?"s":""}. Reports are sent via the server — requires RESEND_API_KEY in Vercel environment variables.
+          {mailingList.length} recipient{mailingList.length!==1?"s":""}. Emails sent via EmailJS (free, 200/month).
         </div>
       </div>
     )}
@@ -1853,7 +1887,7 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
         { title: "AI-Powered Weekly Intelligence Report", desc: "Uses Claude (Anthropic API) to synthesize all dashboard data into a comprehensive investment memo. Includes regime classification, inflection detection, divergence analysis, cross-vertical intelligence, and 5 actionable recommendations with conviction levels. Requires Anthropic API key." },
         { title: "Cloud Persistence", desc: "All data automatically syncs to a private GitHub Gist so it is shared across all team members and survives redeploys. Requires GitHub PAT with gist scope." },
         { title: "Auto-Refresh Scheduler", desc: "Signals auto-refresh on their configured cadence (weekly by default). The scheduler also backfills recent TheirStack history automatically if stale. Pause/resume from the nav bar." },
-        { title: "Email Reports", desc: "Generated weekly reports can be emailed to your entire team via the mailing list. Requires RESEND_API_KEY configured in Vercel environment variables." },
+        { title: "Email Reports", desc: "Generated weekly reports can be emailed to your entire team via EmailJS (free, no domain verification needed). Set up your EmailJS account and configure it in the Mailing List tab. 200 emails/month on the free plan." },
       ].map((item, i) => (
         <div key={i} style={{padding:"10px 14px",background:C.nested,borderRadius:10}}>
           <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:3}}>{item.title}</div>
@@ -2387,38 +2421,41 @@ export default function App() {
   }, [resolveGitPat]);
 
   const sendReportEmail = useCallback(async (content, week) => {
-    if (!mailingList.length) { setEmailStatus("No recipients — add emails to the mailing list first"); setTimeout(()=>setEmailStatus(null), 4000); return; }
+    if (!mailingList.length) { setEmailStatus("No recipients — add emails in the Mailing List tab"); setTimeout(()=>setEmailStatus(null), 4000); return; }
     if (!content) { setEmailStatus("No report content to send"); setTimeout(()=>setEmailStatus(null), 4000); return; }
+    const emailCfg = ld("emailjs_config", null);
+    if (!emailCfg?.service_id || !emailCfg?.template_id || !emailCfg?.public_key) {
+      setEmailStatus("EmailJS not configured — set up in the Mailing List tab");
+      setTimeout(() => setEmailStatus(null), 5000);
+      return;
+    }
     setEmailSending(true);
-    setEmailStatus("Sending...");
-    try {
-      const htmlBody = `<!doctype html><html><head><style>body{margin:0;padding:32px 24px;font-family:Georgia,serif;color:#1a1d26;background:#f7f8fa;line-height:1.7}
-.container{max-width:800px;margin:0 auto;background:#fff;border:1px solid #e1e4ea;border-radius:12px;padding:28px 32px}
-.header{font-size:11px;letter-spacing:0.1em;text-transform:uppercase;font-weight:700;color:#8b92a5;border-bottom:1px solid #e1e4ea;padding-bottom:8px;margin-bottom:16px;font-family:Inter,system-ui,sans-serif}
-pre{white-space:pre-wrap;margin:0;font-family:Georgia,serif;font-size:15px;line-height:1.7;color:#1a1d26}
-.footer{margin-top:24px;padding-top:16px;border-top:1px solid #e1e4ea;font-size:11px;color:#8b92a5;font-family:Inter,system-ui,sans-serif}</style></head>
-<body><div class="container">
-<div class="header">AI Demand Signal Weekly Intelligence Report | ${week}</div>
-<pre>${escapeHtml(content)}</pre>
-<div class="footer">Generated by AI Demand Signal Tracker. This is an automated report — do not reply to this email.</div>
-</div></body></html>`;
-
-      const res = await fetch("/api/send-report", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: mailingList,
-          subject: `AI Demand Signal Weekly Report — ${week}`,
-          html: htmlBody,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setEmailStatus(`Sent to ${mailingList.length} recipient${mailingList.length > 1 ? "s" : ""}`);
-    } catch (e) {
-      setEmailStatus(`Failed: ${e.message}`);
+    let sent = 0, failed = 0;
+    for (let i = 0; i < mailingList.length; i++) {
+      setEmailStatus(`Sending ${i + 1}/${mailingList.length}...`);
+      try {
+        const res = await fetch("https://api.emailjs.com/api/v1.0/email/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            service_id: emailCfg.service_id,
+            template_id: emailCfg.template_id,
+            user_id: emailCfg.public_key,
+            template_params: {
+              to_email: mailingList[i],
+              subject: `AI Demand Signal Weekly Report — ${week}`,
+              report_content: content,
+              week: week,
+            },
+          }),
+        });
+        if (res.ok) sent++; else failed++;
+      } catch { failed++; }
+      if (i < mailingList.length - 1) await sleep(1100);
     }
     setEmailSending(false);
+    if (failed === 0) setEmailStatus(`Sent to ${sent} recipient${sent !== 1 ? "s" : ""}`);
+    else setEmailStatus(`Sent ${sent}, failed ${failed}`);
     setTimeout(() => setEmailStatus(null), 5000);
   }, [mailingList]);
 
