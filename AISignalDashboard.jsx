@@ -1964,10 +1964,15 @@ export default function App() {
   const migratedLabelsRef=useRef(false);
   const cancelHistoryRef=useRef(false);
   const configRef=useRef(config);const srRef=useRef(signalResults);const ldRef=useRef(loading);
+  const cloudSyncDoneRef=useRef(false);
   useEffect(()=>{configRef.current=config;},[config]);
   useEffect(()=>{srRef.current=signalResults;},[signalResults]);
   useEffect(()=>{ldRef.current=loading;},[loading]);
-  useEffect(()=>{sv("config",config);const pat=resolveGitPat();if(pat)debouncedSyncToGist(pat);},[config]);
+  useEffect(()=>{
+    if(!cloudSyncDoneRef.current) return;
+    sv("config",config);
+    const pat=resolveGitPat();if(pat)debouncedSyncToGist(pat);
+  },[config]);
   useEffect(()=>{if(addingGroup&&addRef.current)addRef.current.focus();},[addingGroup]);
   useEffect(() => {
     setGithubWatchlists(prev => {
@@ -2074,6 +2079,7 @@ export default function App() {
     (async()=>{
       const pat=resolveGitPat();
       if(pat){setCloudStatus("loading…");try{await syncFromGist(pat);if(!cancelled){setConfig(ld("config",buildDefaultConfig()));setMailingList(ld("mailing_list",[]));}}catch{}if(!cancelled){setCloudStatus("idle");lastSyncRef.current=Date.now();}}
+      if(!cancelled)cloudSyncDoneRef.current=true;
       const cached={};const cfg=ld("config",buildDefaultConfig());
       (cfg.verticals||[]).forEach(v=>{(cfg.sources||[]).forEach(src=>{
         const key=`${v.id}_${src.id}`;
