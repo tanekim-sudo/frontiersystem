@@ -632,7 +632,7 @@ const DEFAULT_SOURCES = [
       bodyTemplate: JSON.stringify({ page:0,limit:25,posted_at_max_age_days:30,job_title_or:"{{titleKeywords}}",job_description_pattern_or:"{{descriptionKeywords}}",job_country_code_or:["US"],order_by:[{desc:true,field:"date_posted"}],include_total_results:true },null,2) },
     responsePaths: { countPath: "metadata.total_results", itemsPath: "data", titleField: "job_title", bodyField: "short_description" } },
   { id: "google_trends", name: "Google Trends", type: "index", weight: 0.25, cadence: "weekly", enabled: true,
-    apiConfig: { endpoint: "/serpapi/search.json", method: "GET", authType: "query_param", authHeader: "api_key", proxyPrefix: "", bodyTemplate: "engine=google_trends&data_type=TIMESERIES&q={{keywords}}" },
+    apiConfig: { endpoint: "/api/google-trends", method: "GET", authType: "query_param", authHeader: "api_key", proxyPrefix: "", bodyTemplate: "engine=google_trends&data_type=TIMESERIES&q={{keywords}}" },
     responsePaths: { countPath: "", itemsPath: "interest_over_time.timeline_data", titleField: "", bodyField: "" } },
   { id: "github_repos", name: "GitHub Repos", type: "count", weight: 0.15, cadence: "weekly", enabled: true,
     apiConfig: { endpoint: "https://api.github.com/search/repositories", method: "GET", authType: "bearer", authHeader: "", proxyPrefix: "", bodyTemplate: "q={{keywords}}+pushed:>{{since30d}}&sort=updated&per_page=5" },
@@ -697,8 +697,16 @@ async function callSource(source, vertical, configKeys) {
   if (vkw.titleKeywords) tv.titleKeywords = vkw.titleKeywords;
   if (vkw.descriptionKeywords) tv.descriptionKeywords = vkw.descriptionKeywords;
   const hasKw = (tv.keywords && tv.keywords.length > 0) || (Array.isArray(tv.titleKeywords) ? tv.titleKeywords.filter(Boolean).length > 0 : !!tv.titleKeywords) || (Array.isArray(tv.descriptionKeywords) ? tv.descriptionKeywords.filter(Boolean).length > 0 : !!tv.descriptionKeywords);
-  if (!hasKw) throw new Error("No keywords configured");
-  const filled = fillTemplate(cfg.bodyTemplate, tv);
+  if (!hasKw && source.id !== "claude_attrib") throw new Error("No keywords configured");
+  let templateStr = cfg.bodyTemplate;
+  if (source.id === "claude_attrib") {
+    const extraKw = Array.isArray(vkw.keywords) ? vkw.keywords.filter(Boolean) : [];
+    if (extraKw.length > 0) {
+      const kwQ = extraKw.map(k => `"${k}"`).join("+");
+      templateStr = templateStr.replace('"Co-Authored-By: Claude"', `"Co-Authored-By: Claude"+${kwQ}`);
+    }
+  }
+  const filled = fillTemplate(templateStr, tv);
   const ep = cfg.proxyPrefix ? cfg.proxyPrefix + cfg.endpoint : cfg.endpoint;
   const headers = { Accept: "application/json" };
   const key = resolveKey(source, configKeys);
@@ -725,7 +733,7 @@ async function callSource(source, vertical, configKeys) {
 // ── RESPONSE PARSERS ─────────────────────────────────────────────────────────
 
 function parseSourceResponse(source, json) {
-  if (source.id === "google_trends") { const tl=json.interest_over_time?.timeline_data||[]; const vals=tl.map(d=>d.values?.[0]?parseInt(d.values[0].extracted_value??d.values[0].value,10):0); const cur=vals.length>0?vals[vals.length-1]:0; const l4=vals.slice(-4); const avg=l4.length>0?Math.round(l4.reduce((a,b)=>a+b,0)/l4.length):0; const mom=avg>0?Math.round(((cur-avg)/avg)*100):0; return { count:cur, items:[{title:`Index: ${cur}/100`,body:`4wk avg: ${avg}, momentum: ${mom>0?"+":""}${mom}%`}], values:vals, momentum:mom }; }
+  if (source.id === "google_trends") { const tl=json.interest_over_time?.timeline_data||[]; const vals=tl.map(d=>d.values?.[0]?parseInt(d.values[0].extracted_value??d.values[0].value,10):0); const cur=vals.length>0?vals[vals.length-1]:0; const l4=vals.slice(-4); const avg=l4.length>0?Math.round(l4.reduce((a,b)=>a+b,0)/l4.length):0; const mom=avg>0?Math.round(((cur-avg)/avg)*100):0; return { count:cur, items:[{title:`Relative interest: ${cur} (0–100 scale)`,body:`4wk avg: ${avg}, momentum: ${mom>0?"+":""}${mom}%`}], values:vals, momentum:mom }; }
   if (source.id === "claude_attrib") { const c=json.total_count||0; return { count:c, items:[{title:`${c.toLocaleString()} Claude-attributed commits (7d)`,body:"Signature: Co-Authored-By: Claude"}] }; }
   const p = source.responsePaths;
   const count = p.countPath ? resolvePath(json,p.countPath)||0 : 0;
@@ -935,8 +943,8 @@ const SOURCE_INFO = {
     investment: "Job postings are the strongest leading indicator of enterprise AI spend. Rising counts signal expanding headcount budgets (6-12 month forward spend). A shift from 'AI strategy' titles to 'ML engineer' or 'platform engineer' titles indicates the transition from exploration to committed deployment — this is when procurement cycles begin. Sustained 30%+ WoW growth with language shift = high-confidence budget acceleration signal. Declining postings after a peak often precedes earnings misses in AI-exposed vendors.",
   },
   google_trends: {
-    metric: "Google Trends interest index (0–100 scale, relative search volume)",
-    how: "GET via SerpAPI google_trends engine — returns a normalized search interest score where 100 = peak popularity for that keyword in the selected time range. Momentum compares current value to the 4-week rolling average.",
+    metric: "Google Trends relative interest index (0–100 scale, not absolute search counts)",
+    how: "GET via SerpAPI google_trends engine — returns a normalized search interest score where 100 = peak popularity for that keyword in the selected time range, 50 = half that peak, 0 = insufficient data. This is NOT an absolute count of Google searches. It measures relative popularity compared to the keyword's own historical peak within the time window. Momentum compares the current reading to the 4-week rolling average.",
     investment: "Search interest is a demand-side awareness proxy. Rising trends for specific AI tools or methodologies (e.g. 'AI copilot', 'RAG pipeline') signal enterprise decision-makers in active evaluation. Momentum > +15% suggests accelerating mindshare — procurement teams are researching. A divergence between high search trends and low job postings suggests 'tire-kicking' — awareness without budget commitment. Convergence of both rising = strong conviction signal for AI infrastructure vendors.",
   },
   github_repos: {
@@ -2138,7 +2146,7 @@ export default function App() {
     const kw = vertical.keywords?.google_trends?.keywords;
     const q = Array.isArray(kw) ? kw.filter(Boolean).join(",") : (kw || "");
     if (!q) throw new Error("No keywords");
-    const url = `/serpapi/search.json?engine=google_trends&data_type=TIMESERIES&q=${encodeURIComponent(q)}&date=today+5-y&api_key=${key}`;
+    const url = `/api/google-trends?engine=google_trends&data_type=TIMESERIES&q=${encodeURIComponent(q)}&date=today+5-y&api_key=${key}`;
     const res = await fetch(url);
     if (res.status === 402) throw new Error("API credits exhausted");
     if (!res.ok) throw new Error(`SerpAPI HTTP ${res.status}`);
@@ -3037,7 +3045,7 @@ DATA CONFIDENCE ASSESSMENT
         {hasData&&(
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12,marginBottom:24}} className="fade-in">
             <MetricCard icon={<IcoC name="briefcase" size={13} color={C.cyan}/>} label="Job Postings" value={summaryMetrics.jobs.toLocaleString()} sublabel="Matching positions (30d)" color={C.cyan}/>
-            <MetricCard icon={<IcoC name="trendUp" size={13} color={C.blue}/>} label="Search Interest" value={summaryMetrics.trends} unit="/100" sublabel="Google Trends index" color={C.blue}/>
+            <MetricCard icon={<IcoC name="trendUp" size={13} color={C.blue}/>} label="Search Interest" value={summaryMetrics.trends} sublabel="Relative interest (0–100)" color={C.blue}/>
             <MetricCard icon={<IcoC name="code" size={13} color={C.green}/>} label="Active Repos" value={summaryMetrics.repos.toLocaleString()} sublabel="GitHub repos (30d push)" color={C.green}/>
             <MetricCard icon={<IcoC name="bot" size={13} color={C.purple}/>} label="AI Commits" value={summaryMetrics.claude.toLocaleString()} sublabel="Claude-attributed (7d)" color={C.purple}/>
           </div>
