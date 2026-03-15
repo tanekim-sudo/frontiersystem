@@ -883,6 +883,7 @@ const IC = {
   database:"M12 2C6.48 2 2 4.02 2 6.5V17.5C2 19.98 6.48 22 12 22S22 19.98 22 17.5V6.5C22 4.02 17.52 2 12 2ZM2 6.5C2 8.98 6.48 11 12 11S22 8.98 22 6.5M2 12c0 2.48 4.48 4.5 10 4.5S22 14.48 22 12",
   pause:"M10 4H6v16h4V4ZM18 4h-4v16h4V4Z",
   play:"M5 3l14 9-14 9V3Z",
+  shield:"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z",
 };
 function IcoC({name,size=16,color="currentColor",style:sx}){return IC[name]?<Ico d={IC[name]} size={size} color={color} style={sx}/>:null;}
 
@@ -1050,47 +1051,482 @@ function SignalHistoryChart({ signalKey, color, label }) {
 
 // ── OVERLAY COMPARISON CHART ─────────────────────────────────────────────────
 
+function computeZScoreDiv(seriesA, seriesB) {
+  if (seriesA.length < 4 || seriesB.length < 4) return null;
+  const diffs = [];
+  const len = Math.min(seriesA.length, seriesB.length);
+  for (let i = 0; i < len; i++) {
+    if (seriesA[i] != null && seriesB[i] != null) diffs.push(seriesA[i] - seriesB[i]);
+  }
+  if (diffs.length < 4) return null;
+  const mean = diffs.reduce((a, b) => a + b, 0) / diffs.length;
+  const variance = diffs.reduce((a, b) => a + (b - mean) ** 2, 0) / diffs.length;
+  const std = Math.sqrt(variance);
+  if (std < 0.5) return { z: 0, mean, std, currentDiff: diffs[diffs.length - 1] };
+  const z = (diffs[diffs.length - 1] - mean) / std;
+  return { z, mean, std, currentDiff: diffs[diffs.length - 1] };
+}
+
+function pearsonCorr(a, b) {
+  const n = Math.min(a.length, b.length);
+  if (n < 4) return 0;
+  const ax = a.slice(0, n), bx = b.slice(0, n);
+  const ma = ax.reduce((s, v) => s + v, 0) / n, mb = bx.reduce((s, v) => s + v, 0) / n;
+  let num = 0, dA = 0, dB = 0;
+  for (let i = 0; i < n; i++) { num += (ax[i] - ma) * (bx[i] - mb); dA += (ax[i] - ma) ** 2; dB += (bx[i] - mb) ** 2; }
+  const den = Math.sqrt(dA * dB);
+  return den === 0 ? 0 : num / den;
+}
+
 function OverlayChart({ selectedKeys, allHistories, sources, verticals }) {
-  if (selectedKeys.length === 0) return null;
-  const allPoints = [];
-  selectedKeys.forEach((sk) => {
-    const hist = allHistories[sk] || [];
-    hist.forEach(h => {
-      const ts = new Date(h.isoDate || h.ts).getTime();
-      allPoints.push({ _ts: ts, sk, value: h.value });
+  const [aiNarrative, setAiNarrative] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const narrativeCacheRef = useRef({});
+
+  const labelFor = useCallback((sk) => {
+    const parts = sk.split("_");
+    const sId = parts.pop();
+    const vId = parts.join("_");
+    const v = verticals.find(x => x.id === vId) || verticals.find(x => sk.startsWith(x.id));
+    const s = sources.find(x => x.id === sId);
+    return `${v?.name||vId} · ${s?.name||sId}`;
+  }, [verticals, sources]);
+
+  const { data } = useMemo(() => {
+    if (selectedKeys.length === 0) return { data: [] };
+    const allPoints = [];
+    selectedKeys.forEach((sk) => {
+      const hist = allHistories[sk] || [];
+      hist.forEach(h => {
+        const ts = new Date(h.isoDate || h.ts).getTime();
+        allPoints.push({ _ts: ts, sk, value: h.value });
+      });
     });
-  });
-  allPoints.sort((a,b) => a._ts - b._ts);
-  const allTs = [...new Set(allPoints.map(p => p._ts))].sort((a,b)=>a-b);
-  const maxPerKey = {};
-  selectedKeys.forEach(sk => { const hist = allHistories[sk] || []; maxPerKey[sk] = Math.max(1, ...hist.map(h => h.value)); });
-  const data = allTs.map(ts => {
-    const row = { _ts: ts };
-    allPoints.filter(p => p._ts === ts).forEach(p => { row[p.sk] = Math.round((p.value / maxPerKey[p.sk]) * 100); });
-    return row;
-  });
-  const labelFor = (sk) => { const [vId, sId] = sk.split("_"); const v = verticals.find(x => x.id === vId); const s = sources.find(x => x.id === sId); return `${v?.name||vId} · ${s?.name||sId}`; };
+    allPoints.sort((a,b) => a._ts - b._ts);
+    const allTs = [...new Set(allPoints.map(p => p._ts))].sort((a,b)=>a-b);
+    const mx = {}, mn = {};
+    selectedKeys.forEach(sk => {
+      const vals = (allHistories[sk] || []).map(h => h.value);
+      mx[sk] = Math.max(1, ...vals);
+      mn[sk] = Math.min(0, ...vals);
+    });
+    const rows = allTs.map(ts => {
+      const row = { _ts: ts };
+      allPoints.filter(p => p._ts === ts).forEach(p => {
+        const range = mx[p.sk] - mn[p.sk];
+        row[p.sk] = range > 0 ? Math.round(((p.value - mn[p.sk]) / range) * 100) : 50;
+      });
+      return row;
+    });
+    return { data: rows };
+  }, [selectedKeys, allHistories]);
+
+  const divergences = useMemo(() => {
+    if (selectedKeys.length < 2 || data.length < 3) return [];
+    const results = [];
+    for (let i = 0; i < selectedKeys.length; i++) {
+      for (let j = i + 1; j < selectedKeys.length; j++) {
+        const a = selectedKeys[i], b = selectedKeys[j];
+        const aVals = [], bVals = [];
+        data.forEach(row => {
+          if (row[a] != null && row[b] != null) { aVals.push(row[a]); bVals.push(row[b]); }
+        });
+        const zResult = computeZScoreDiv(aVals, bVals);
+        if (!zResult) continue;
+        const corr = pearsonCorr(aVals, bVals);
+        const absZ = Math.abs(zResult.z);
+        const aLabel = labelFor(a), bLabel = labelFor(b);
+        const aShort = aLabel.split("·")[1]?.trim() || aLabel;
+        const bShort = bLabel.split("·")[1]?.trim() || bLabel;
+        const aRecent = aVals.slice(-3), bRecent = bVals.slice(-3);
+        const aDir = aRecent.length >= 2 ? aRecent[aRecent.length-1] - aRecent[0] : 0;
+        const bDir = bRecent.length >= 2 ? bRecent[bRecent.length-1] - bRecent[0] : 0;
+        const aUp = aDir > 0, bUp = bDir > 0;
+
+        if (absZ >= 1.5) {
+          const isOpposite = (aDir > 3 && bDir < -3) || (aDir < -3 && bDir > 3);
+          let signal, severity, type;
+          if (isOpposite) {
+            signal = `${aUp?"↑":"↓"} ${aShort} vs ${bUp?"↑":"↓"} ${bShort} — ${absZ.toFixed(1)}σ divergence (historically correlated r=${corr.toFixed(2)})`;
+            severity = C.red; type = "opposing";
+          } else if (corr > 0.5 && absZ >= 2.0) {
+            signal = `${aShort} + ${bShort} co-movement breaking down — spread at ${absZ.toFixed(1)}σ (historical r=${corr.toFixed(2)})`;
+            severity = C.red; type = "breakdown";
+          } else {
+            signal = `${aShort} vs ${bShort} — spread at ${absZ.toFixed(1)}σ from mean (${zResult.currentDiff > 0 ? "A leading" : "B leading"})`;
+            severity = C.amber; type = "spread";
+          }
+          results.push({ signal, severity, type, z: absZ, corr, aLabel, bLabel, aShort, bShort, aDir, bDir });
+        } else if (corr > 0.6 && absZ < 0.5 && Math.abs(aDir) > 5 && Math.abs(bDir) > 5 && aUp === bUp) {
+          results.push({
+            signal: `${aShort} + ${bShort} — strong co-movement confirmed (r=${corr.toFixed(2)}, both ${aUp?"rising":"falling"})`,
+            severity: C.green, type: "confirmation", z: absZ, corr, aLabel, bLabel, aShort, bShort, aDir, bDir
+          });
+        }
+      }
+    }
+    return results.sort((a, b) => b.z - a.z);
+  }, [data, selectedKeys, labelFor]);
+
+  const generateNarrative = useCallback(async () => {
+    const apiKey = ENV_KEYS.anthropic;
+    if (!apiKey || divergences.length === 0) return;
+    const cacheKey = divergences.map(d => d.signal).join("|");
+    if (narrativeCacheRef.current[cacheKey]) { setAiNarrative(narrativeCacheRef.current[cacheKey]); return; }
+    setAiLoading(true);
+    try {
+      const ctx = divergences.map(d => `- [${d.type}] ${d.signal}`).join("\n");
+      const signalLabels = selectedKeys.map(sk => labelFor(sk)).join(", ");
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514", max_tokens: 800,
+          system: "You are a senior quantitative analyst interpreting signal divergences for enterprise AI demand tracking. Be direct and actionable. Write 2-4 short paragraphs. Use specific numbers from the data. End with a clear call-to-action for the investment team.",
+          messages: [{ role: "user", content: `Analyze these signal divergences detected across: ${signalLabels}\n\nDivergences:\n${ctx}\n\nInterpret what pattern these divergences reveal about enterprise AI adoption timing. Specifically address: (1) What phase mismatch this indicates (e.g., mandate vs adoption, awareness vs spend), (2) Which signal is likely leading/lagging, (3) What this means for vendor/infrastructure timing over the next 3-6 months.` }],
+        }),
+      });
+      if (!res.ok) throw new Error(`API ${res.status}`);
+      const json = await res.json();
+      const text = json.content?.[0]?.text || "No analysis generated.";
+      narrativeCacheRef.current[cacheKey] = text;
+      setAiNarrative(text);
+    } catch (e) { setAiNarrative(`Analysis unavailable: ${e.message}`); }
+    setAiLoading(false);
+  }, [divergences, selectedKeys, labelFor]);
+
+  if (selectedKeys.length === 0 || data.length === 0) return null;
   const showDots = data.length <= 60;
 
   return (
     <Card style={{ marginBottom: 20, borderLeft:`4px solid ${C.purple}` }}>
-      <SectionHeader icon={<IcoC name="layers" size={18} color={C.purple}/>} title="Signal Overlay" subtitle="All signals normalized to 0–100 for comparison. Converging lines = strong multi-factor demand signal." badge={<Badge color={C.purple} bg={C.purpleBg}>{selectedKeys.length} signals</Badge>}/>
+      <SectionHeader icon={<IcoC name="layers" size={18} color={C.purple}/>} title="Signal Divergence Overlay" subtitle="Normalized 0–100. Divergences >1.5σ from historical co-movement are flagged automatically." badge={<Badge color={C.purple} bg={C.purpleBg}>{selectedKeys.length} signals</Badge>}/>
       <div style={{...font.sans,fontSize:10,color:C.textMuted,marginBottom:4}}>{data.length} data points since {formatChartDateShort(new Date(data[0]?._ts).toISOString())}</div>
-      <div style={{ width: "100%", height: 220 }}>
+      <div style={{ width: "100%", height: 280 }}>
         <ResponsiveContainer>
           <LineChart data={data} margin={{ top:8,right:16,bottom:8,left:8 }}>
             <XAxis dataKey="_ts" type="number" scale="time" domain={["dataMin","dataMax"]}
               tickFormatter={ts=>formatChartDateShort(new Date(ts).toISOString())}
               tick={{fontSize:9,fill:C.textMuted}} interval="preserveStartEnd" tickCount={6} />
-            <YAxis tick={{fontSize:10,fill:C.textMuted}} width={35} domain={[0,100]} />
-            <Tooltip contentStyle={{...font.sans,fontSize:12,background:C.white,border:`1px solid ${C.border}`,borderRadius:10,boxShadow:"0 4px 12px rgba(0,0,0,.08)"}} labelFormatter={ts=>formatChartDate(new Date(ts).toISOString())} />
+            <YAxis tick={{fontSize:10,fill:C.textMuted}} width={35} domain={[0,100]} label={{value:"Normalized",angle:-90,position:"insideLeft",style:{fontSize:9,fill:C.textMuted}}}/>
+            <Tooltip contentStyle={{...font.sans,fontSize:12,background:C.white,border:`1px solid ${C.border}`,borderRadius:10,boxShadow:"0 4px 12px rgba(0,0,0,.08)"}} labelFormatter={ts=>formatChartDate(new Date(ts).toISOString())} formatter={(v)=>[`${v}/100`]}/>
             <Legend wrapperStyle={{fontSize:11,...font.sans}} />
+            <ReferenceLine y={50} stroke={C.border} strokeDasharray="4 4" />
             {selectedKeys.map((sk, i) => (
               <Line key={sk} type="monotone" dataKey={sk} stroke={PALETTE[i % PALETTE.length]} strokeWidth={2.5} dot={showDots?{r:3}:false} name={labelFor(sk)} connectNulls />
             ))}
           </LineChart>
         </ResponsiveContainer>
       </div>
+      {divergences.length > 0 && (
+        <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:6}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <div style={{...font.sans,fontSize:11,fontWeight:700,color:C.text,textTransform:"uppercase",letterSpacing:"0.05em"}}>
+              Detected Divergences ({divergences.filter(d=>d.type!=="confirmation").length} anomalies, {divergences.filter(d=>d.type==="confirmation").length} confirmations)
+            </div>
+            {ENV_KEYS.anthropic && divergences.filter(d=>d.type!=="confirmation").length > 0 && (
+              <Btn size="sm" variant="ghost" onClick={generateNarrative} disabled={aiLoading}>
+                {aiLoading ? "Analyzing..." : "AI Interpret"}
+              </Btn>
+            )}
+          </div>
+          {divergences.map((d, i) => (
+            <div key={i} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"8px 12px",background:d.severity+"08",border:`1px solid ${d.severity}22`,borderRadius:8}}>
+              <span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:d.severity,flexShrink:0,marginTop:4}}/>
+              <div style={{flex:1}}>
+                <div style={{...font.sans,fontSize:12,color:C.text,lineHeight:1.5}}>{d.signal}</div>
+                {d.type === "opposing" && (
+                  <div style={{...font.sans,fontSize:10,color:C.textMuted,marginTop:2,fontStyle:"italic"}}>
+                    Possible pattern: {d.aDir > 0 ? `${d.aShort} spike → ${d.bShort} lag → watch for budget confirmation` : `${d.bShort} spike → ${d.aShort} lag → watch for budget confirmation`}
+                  </div>
+                )}
+              </div>
+              <span style={{...font.mono,fontSize:10,color:d.severity,fontWeight:700,flexShrink:0}}>{d.z.toFixed(1)}σ</span>
+            </div>
+          ))}
+          {aiNarrative && (
+            <div style={{marginTop:8,padding:"12px 16px",background:C.purpleBg,border:`1px solid ${C.purple}22`,borderRadius:10}}>
+              <div style={{...font.sans,fontSize:11,fontWeight:700,color:C.purple,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>AI Divergence Analysis</div>
+              <div style={{...font.sans,fontSize:12,color:C.text,lineHeight:1.65,whiteSpace:"pre-wrap"}}>{aiNarrative}</div>
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ── STAGE PROGRESSION HEATMAP ────────────────────────────────────────────────
+
+function StageHeatmap({ verticals, composites, stageTaxonomy, signalResults, sources }) {
+  const stages = stageTaxonomy || DEFAULT_STAGE_TAXONOMY;
+
+  const heatData = useMemo(() => {
+    if (!verticals.length) return [];
+    return verticals.map(v => {
+      const comp = composites[v.id] || { score: 0, breakdown: {} };
+      const currentStage = resolveStage(comp.score, stages);
+      const signals = {};
+      sources.filter(s => s.enabled).forEach(src => {
+        const res = signalResults[`${v.id}_${src.id}`];
+        signals[src.id] = res?.count || 0;
+      });
+      const stageHeat = stages.map((stg, si) => {
+        const isCurrentOrPast = si <= currentStage.index;
+        const isCurrent = si === currentStage.index;
+        const progressInStage = isCurrent
+          ? Math.min(1, Math.max(0, (comp.score - stg.min) / Math.max(1, (stg.max||100) - stg.min)))
+          : isCurrentOrPast ? 1 : 0;
+        return { stage: stg, heat: progressInStage, isCurrent, isPast: isCurrentOrPast && !isCurrent };
+      });
+      return { vertical: v, score: comp.score, currentStage, stageHeat, signals };
+    });
+  }, [verticals, composites, stages, signalResults, sources]);
+
+  const heatColor = (heat, isCurrent) => {
+    if (heat === 0) return C.nested;
+    if (isCurrent) return `rgba(2, 132, 199, ${0.15 + heat * 0.65})`;
+    return `rgba(15, 123, 85, ${0.1 + heat * 0.3})`;
+  };
+
+  if (!heatData.length) return null;
+
+  return (
+    <Card style={{ marginBottom: 20 }}>
+      <SectionHeader icon={<IcoC name="barChart" size={18} color={C.cyan}/>} title="Stage Progression Heatmap" subtitle="Portfolio-level view of AI adoption progression. Scan all verticals in 30 seconds." badge={<Badge color={C.cyan} bg={C.cyanBg}>{verticals.length} verticals</Badge>}/>
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",...font.sans,fontSize:12}}>
+          <thead>
+            <tr>
+              <th style={{textAlign:"left",padding:"10px 14px",borderBottom:`2px solid ${C.border}`,fontWeight:700,color:C.text,minWidth:130}}>Vertical</th>
+              <th style={{textAlign:"center",padding:"10px 8px",borderBottom:`2px solid ${C.border}`,fontWeight:600,color:C.textMuted,width:60}}>Score</th>
+              {stages.map(stg => (
+                <th key={stg.name} style={{textAlign:"center",padding:"10px 8px",borderBottom:`2px solid ${C.border}`,fontWeight:600,color:C.textMuted,minWidth:110}}>
+                  {stg.name}
+                  <div style={{fontSize:9,fontWeight:400,color:C.textMuted,marginTop:2}}>{stg.min}–{stg.max||100}</div>
+                </th>
+              ))}
+              <th style={{textAlign:"center",padding:"10px 8px",borderBottom:`2px solid ${C.border}`,fontWeight:600,color:C.textMuted,minWidth:90}}>Signals</th>
+            </tr>
+          </thead>
+          <tbody>
+            {heatData.map(row => (
+              <tr key={row.vertical.id}>
+                <td style={{padding:"10px 14px",borderBottom:`1px solid ${C.borderLight}`,fontWeight:600,color:C.text}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:row.vertical.color||C.cyan,flexShrink:0}}/>
+                    {row.vertical.name}
+                  </div>
+                </td>
+                <td style={{textAlign:"center",padding:"10px 8px",borderBottom:`1px solid ${C.borderLight}`}}>
+                  <span style={{...font.mono,fontSize:16,fontWeight:800,color:row.currentStage.color||C.text}}>{row.score}</span>
+                </td>
+                {row.stageHeat.map((sh, si) => (
+                  <td key={si} style={{textAlign:"center",padding:"6px 8px",borderBottom:`1px solid ${C.borderLight}`}}>
+                    <div style={{
+                      padding:"8px 6px",borderRadius:8,
+                      background:heatColor(sh.heat, sh.isCurrent),
+                      border:sh.isCurrent?`2px solid ${C.cyan}`:`1px solid ${sh.heat>0?C.border+"60":"transparent"}`,
+                      transition:"all .3s",
+                    }}>
+                      {sh.isCurrent && <div style={{fontSize:10,fontWeight:700,color:C.cyan}}>ACTIVE</div>}
+                      {sh.isPast && <div style={{fontSize:10,fontWeight:600,color:C.green}}>PASSED</div>}
+                      {!sh.isCurrent && !sh.isPast && sh.heat === 0 && <div style={{fontSize:10,color:C.textMuted}}>—</div>}
+                      <div style={{fontSize:9,color:sh.heat>0?C.textSec:C.textMuted,marginTop:2}}>{Math.round(sh.heat*100)}%</div>
+                    </div>
+                  </td>
+                ))}
+                <td style={{padding:"6px 8px",borderBottom:`1px solid ${C.borderLight}`}}>
+                  <div style={{display:"flex",flexDirection:"column",gap:2}}>
+                    {sources.filter(s=>s.enabled).map(src => {
+                      const val = row.signals[src.id] || 0;
+                      return val > 0 ? (
+                        <div key={src.id} style={{display:"flex",justifyContent:"space-between",gap:4,fontSize:10,color:C.textSec}}>
+                          <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:50}}>{src.name.split(" ")[0]}</span>
+                          <span style={{...font.mono,fontWeight:600}}>{val.toLocaleString()}</span>
+                        </div>
+                      ) : null;
+                    })}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+// ── PCAOB AUDIT DEFICIENCY SIGNAL ────────────────────────────────────────────
+
+const PCAOB_PROXY_URL = "/api/pcaob";
+const PCAOB_DIRECT_URL = "https://pcaobus.org/docs/default-source/generated-reports/inspecton-reports-json.json?sfvrsn=da1a11cd_987";
+const BIG4_NETWORKS = ["Deloitte Touche Tohmatsu Limited", "Ernst & Young Global Limited", "KPMG International Cooperative", "PricewaterhouseCoopers International Limited"];
+const NEXT_TIER_NETWORKS = ["BDO International Limited", "RSM International Ltd", "Grant Thornton International Ltd", "Mazars Group", "Baker Tilly International Limited", "Crowe Global", "Moore Global Network Limited", "Nexia International Limited", "HLB International Limited"];
+
+function classifyFirmTier(globalNetwork, company) {
+  if (!globalNetwork) {
+    if (/^(Deloitte|Ernst|EY|KPMG|PricewaterhouseCoopers|PwC)\b/i.test(company)) return "Big 4";
+    if (/^(BDO|RSM|Grant Thornton|Mazars|Baker Tilly|Crowe|Moore|Nexia|HLB|Forvis)\b/i.test(company)) return "Next Tier";
+    return "Regional";
+  }
+  if (BIG4_NETWORKS.some(n => globalNetwork.includes(n))) return "Big 4";
+  if (NEXT_TIER_NETWORKS.some(n => globalNetwork.includes(n))) return "Next Tier";
+  return "Regional";
+}
+
+function PcaobSignalPanel({ onDataChanged }) {
+  const [rawData, setRawData] = useState(() => ld("pcaob_raw", null));
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [expanded, setExpanded] = useState(false);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      let res;
+      try {
+        res = await fetch(PCAOB_PROXY_URL, { headers: { Accept: "application/json" } });
+        if (!res.ok) throw new Error(`Proxy ${res.status}`);
+      } catch {
+        res = await fetch(PCAOB_DIRECT_URL, { headers: { Accept: "application/json" } });
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      sv("pcaob_raw", json);
+      sv("pcaob_fetched_at", new Date().toISOString());
+      setRawData(json);
+      if (onDataChanged) onDataChanged();
+    } catch (e) { setError(e.message); }
+    setLoading(false);
+  }, [onDataChanged]);
+
+  const analysis = useMemo(() => {
+    if (!rawData || !Array.isArray(rawData)) return null;
+    const withRate = rawData.filter(r => r.PartIADeficiencyRate != null && r.InspectionYear);
+    const byYear = {};
+    withRate.forEach(r => {
+      const yr = String(r.InspectionYear);
+      const tier = classifyFirmTier(r.GlobalNetwork, r.Company);
+      if (!byYear[yr]) byYear[yr] = { "Big 4": { total: 0, deficient: 0, audits: 0, defAudits: 0 }, "Next Tier": { total: 0, deficient: 0, audits: 0, defAudits: 0 }, Regional: { total: 0, deficient: 0, audits: 0, defAudits: 0 } };
+      byYear[yr][tier].total++;
+      const rate = parseFloat(r.PartIADeficiencyRate);
+      if (rate > 0) byYear[yr][tier].deficient++;
+      byYear[yr][tier].audits += parseInt(r.TotalAuditsReviewed || 0);
+      byYear[yr][tier].defAudits += parseInt(r.AuditsWithPartIADeficiencies || 0);
+    });
+    const years = Object.keys(byYear).sort();
+    const chartData = years.map(yr => {
+      const row = { year: yr };
+      ["Big 4", "Next Tier", "Regional"].forEach(tier => {
+        const d = byYear[yr][tier];
+        row[tier] = d.audits > 0 ? Math.round((d.defAudits / d.audits) * 100) : 0;
+        row[`${tier}_firms`] = d.total;
+        row[`${tier}_audits`] = d.audits;
+      });
+      return row;
+    });
+    const latestYear = years[years.length - 1];
+    const prevYear = years.length >= 2 ? years[years.length - 2] : null;
+    const convergence = [];
+    if (prevYear) {
+      ["Big 4", "Next Tier", "Regional"].forEach(tier => {
+        const curr = chartData.find(r => r.year === latestYear)?.[tier] || 0;
+        const prev = chartData.find(r => r.year === prevYear)?.[tier] || 0;
+        convergence.push({ tier, current: curr, previous: prev, delta: curr - prev });
+      });
+    }
+    const big4Latest = chartData.find(r => r.year === latestYear)?.["Big 4"] || 0;
+    const regionalLatest = chartData.find(r => r.year === latestYear)?.["Regional"] || 0;
+    const gap = regionalLatest - big4Latest;
+    return { chartData, years, byYear, latestYear, convergence, gap, totalReports: withRate.length };
+  }, [rawData]);
+
+  const fetchedAt = ld("pcaob_fetched_at", null);
+
+  return (
+    <Card style={{borderLeft:`4px solid ${C.orange}`}}>
+      <SectionHeader
+        icon={<IcoC name="shield" size={18} color={C.orange}/>}
+        title="PCAOB Audit Deficiency Signal"
+        subtitle="Convergence of deficiency rates across firm tiers = AI audit tooling adoption. Novel, unpriced demand proxy."
+        badge={analysis ? <Badge color={C.orange} bg={C.orange+"15"}>{analysis.totalReports} reports</Badge> : null}
+      />
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+        <Btn size="sm" variant="primary" onClick={fetchData} disabled={loading}>
+          {loading ? "Fetching..." : rawData ? "Refresh Data" : "Load PCAOB Data"}
+        </Btn>
+        {fetchedAt && <span style={{...font.sans,fontSize:10,color:C.textMuted}}>Last fetched: {new Date(fetchedAt).toLocaleDateString()}</span>}
+      </div>
+      {error && <div style={{...font.sans,fontSize:12,color:C.red,marginBottom:8}}>Error: {error}</div>}
+      {analysis && (
+        <>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:16}}>
+            {analysis.convergence.map(c => (
+              <div key={c.tier} style={{padding:"12px 14px",background:C.nested,borderRadius:10,textAlign:"center"}}>
+                <div style={{...font.sans,fontSize:11,fontWeight:600,color:C.textMuted,marginBottom:4}}>{c.tier}</div>
+                <div style={{...font.mono,fontSize:22,fontWeight:800,color:c.delta > 0 ? C.red : c.delta < 0 ? C.green : C.text}}>{c.current}%</div>
+                <div style={{...font.sans,fontSize:10,color:c.delta > 0 ? C.red : C.green}}>
+                  {c.delta > 0 ? "↑" : c.delta < 0 ? "↓" : "→"} {Math.abs(c.delta)}pp vs {analysis.years[analysis.years.length-2]}
+                </div>
+              </div>
+            ))}
+            <div style={{padding:"12px 14px",background:analysis.gap < 15 ? C.green+"12" : C.nested,borderRadius:10,textAlign:"center",border:analysis.gap < 15 ? `1px solid ${C.green}30` : "none"}}>
+              <div style={{...font.sans,fontSize:11,fontWeight:600,color:C.textMuted,marginBottom:4}}>Tier Gap</div>
+              <div style={{...font.mono,fontSize:22,fontWeight:800,color:analysis.gap < 15 ? C.green : C.amber}}>{analysis.gap}pp</div>
+              <div style={{...font.sans,fontSize:10,color:C.textMuted}}>Regional – Big 4</div>
+            </div>
+          </div>
+          <div style={{width:"100%",height:220,marginBottom:8}}>
+            <ResponsiveContainer>
+              <ComposedChart data={analysis.chartData} margin={{top:8,right:16,bottom:8,left:8}}>
+                <XAxis dataKey="year" tick={{fontSize:11,fill:C.textMuted}} />
+                <YAxis tick={{fontSize:10,fill:C.textMuted}} width={35} domain={[0,100]} label={{value:"Deficiency %",angle:-90,position:"insideLeft",style:{fontSize:9,fill:C.textMuted}}}/>
+                <Tooltip contentStyle={{...font.sans,fontSize:12,background:C.white,border:`1px solid ${C.border}`,borderRadius:10}} formatter={(v,name)=>[`${v}%`,name]}/>
+                <Legend wrapperStyle={{fontSize:11,...font.sans}} />
+                <Line type="monotone" dataKey="Big 4" stroke={C.blue} strokeWidth={2.5} dot={{r:4}} />
+                <Line type="monotone" dataKey="Next Tier" stroke={C.amber} strokeWidth={2.5} dot={{r:4}} />
+                <Line type="monotone" dataKey="Regional" stroke={C.red} strokeWidth={2.5} dot={{r:4}} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+          <div style={{...font.sans,fontSize:11,color:C.textMuted,lineHeight:1.5,padding:"8px 12px",background:C.nested,borderRadius:8,marginBottom:8}}>
+            <strong style={{color:C.text}}>Investment thesis:</strong> When Big 4 and regional firm deficiency rates converge, it signals that AI-powered audit tooling is democratizing — smaller firms are closing the quality gap through technology adoption. A narrowing gap (&lt;15pp) is a leading indicator of broad-based AI infrastructure spend across the professional services vertical. Current gap: <strong style={{color:analysis.gap < 15 ? C.green : C.amber}}>{analysis.gap}pp</strong>.
+          </div>
+          <button onClick={()=>setExpanded(!expanded)} style={{...font.sans,fontSize:11,color:C.textSec,background:"none",border:"none",cursor:"pointer",padding:0}}>
+            {expanded ? "▾ Hide firm details" : "▸ Show firm details by year"}
+          </button>
+          {expanded && (
+            <div style={{marginTop:8,maxHeight:300,overflowY:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",...font.sans,fontSize:11}}>
+                <thead>
+                  <tr>
+                    <th style={{textAlign:"left",padding:"6px 8px",borderBottom:`2px solid ${C.border}`,color:C.textMuted}}>Year</th>
+                    <th style={{textAlign:"left",padding:"6px 8px",borderBottom:`2px solid ${C.border}`,color:C.textMuted}}>Tier</th>
+                    <th style={{textAlign:"right",padding:"6px 8px",borderBottom:`2px solid ${C.border}`,color:C.textMuted}}>Firms</th>
+                    <th style={{textAlign:"right",padding:"6px 8px",borderBottom:`2px solid ${C.border}`,color:C.textMuted}}>Audits</th>
+                    <th style={{textAlign:"right",padding:"6px 8px",borderBottom:`2px solid ${C.border}`,color:C.textMuted}}>Def. Rate</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {analysis.chartData.slice().reverse().flatMap(row =>
+                    ["Big 4", "Next Tier", "Regional"].map(tier => (
+                      <tr key={`${row.year}_${tier}`}>
+                        <td style={{padding:"4px 8px",borderBottom:`1px solid ${C.borderLight}`,...font.mono}}>{row.year}</td>
+                        <td style={{padding:"4px 8px",borderBottom:`1px solid ${C.borderLight}`}}>{tier}</td>
+                        <td style={{padding:"4px 8px",borderBottom:`1px solid ${C.borderLight}`,textAlign:"right",...font.mono}}>{row[`${tier}_firms`]}</td>
+                        <td style={{padding:"4px 8px",borderBottom:`1px solid ${C.borderLight}`,textAlign:"right",...font.mono}}>{row[`${tier}_audits`]}</td>
+                        <td style={{padding:"4px 8px",borderBottom:`1px solid ${C.borderLight}`,textAlign:"right",...font.mono,fontWeight:700,color:row[tier]>50?C.red:row[tier]>25?C.amber:C.green}}>{row[tier]}%</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
     </Card>
   );
 }
@@ -1904,7 +2340,10 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
     <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
       {[
         { title: "Historical Backfill", desc: "Every signal source has a Backfill button. TheirStack queries monthly job counts from Jan 2021. Google Trends fetches 5 years of weekly data in one call. GitHub counts repos/commits per month going back to 2021 (or 2023 for Claude). All historical data is stored permanently." },
-        { title: "Growth Charts & Overlays", desc: "Every metric records a data point on each refresh, building a persistent time-series graph. Click the chart icon to see growth trends. Select multiple signals across verticals and overlay them on one normalized chart to compare trajectories." },
+        { title: "Growth Charts & Signal Divergence Overlay", desc: "Every metric records a data point on each refresh, building a persistent time-series graph. Click the chart icon to see growth trends. Select 2–4 signals across verticals and metric types to overlay them on a normalized 0–100 scale. The system automatically detects divergences (e.g., job postings rising while API wrapper traffic drops = CIO mandate without real adoption) — these are your actual investment signals." },
+        { title: "Stage Progression Heatmap", desc: "A matrix view where rows are your verticals and columns are the 4 adoption stages (Watchlist → Validating → Rolling Out → Committed). Each cell is colored by how hot that signal is, letting investors scan the entire portfolio in 30 seconds." },
+        { title: "PCAOB Audit Deficiency Signal", desc: "A novel, likely unpriced demand proxy. Fetches structured inspection data from pcaobus.org and computes audit deficiency rates by firm tier (Big 4 vs Next Tier vs Regional). When the gap between tiers converges, it signals that AI audit tooling is democratizing quality — a leading indicator of broad professional services AI infrastructure spend. Click 'Load PCAOB Data' to fetch the latest reports." },
+        { title: "AI-Powered Divergence Analysis", desc: "When you overlay 2+ signals, the system uses z-score statistics (1.5σ threshold) and Pearson correlation to detect when historically co-moving signals diverge. Click 'AI Interpret' to have Claude generate a narrative explaining what the divergence means for investment timing (e.g., 'RFP spike → jobs lag → budget confirm' pattern detection)." },
         { title: "AI-Powered Weekly Intelligence Report", desc: "Uses Claude (Anthropic API) to synthesize all dashboard data into a comprehensive investment memo. Includes regime classification, inflection detection, divergence analysis, cross-vertical intelligence, and 5 actionable recommendations with conviction levels. Requires Anthropic API key." },
         { title: "Cloud Persistence", desc: "All data automatically syncs to a private GitHub Gist so it is shared across all team members and survives redeploys. Requires GitHub PAT with gist scope." },
         { title: "Auto-Refresh Scheduler", desc: "Signals auto-refresh on their configured cadence (weekly by default). The scheduler also backfills recent TheirStack history automatically if stale. Pause/resume from the nav bar." },
@@ -3182,10 +3621,22 @@ DATA CONFIDENCE ASSESSMENT
           <HuggingFaceLeaderboard onDataChanged={()=>{const pat=resolveGitPat();if(pat)debouncedSyncToGist(pat,3000);}}/>
         </div>
 
+        {/* ─── PCAOB Audit Deficiency ─── */}
+        <div style={{marginBottom:28}}>
+          <PcaobSignalPanel onDataChanged={()=>{const pat=resolveGitPat();if(pat)debouncedSyncToGist(pat,3000);}}/>
+        </div>
+
         {/* ─── Pipeline Pressure ─── */}
         <div style={{marginBottom:28}}>
           <CompositeCards verticals={config.verticals} composites={composites} stageTaxonomy={config.stageTaxonomy}/>
         </div>
+
+        {/* ─── Stage Progression Heatmap ─── */}
+        {config.verticals.length > 0 && (
+          <div style={{marginBottom:28}}>
+            <StageHeatmap verticals={config.verticals} composites={composites} stageTaxonomy={config.stageTaxonomy} signalResults={signalResults} sources={config.sources}/>
+          </div>
+        )}
 
         {/* ─── Alerts ─── */}
         {alerts.length>0&&(

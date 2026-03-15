@@ -26,6 +26,11 @@ export default defineConfig(({ mode }) => {
             return '/search.json?' + params.toString();
           },
         },
+        '/api/pcaob': {
+          target: 'https://pcaobus.org',
+          changeOrigin: true,
+          rewrite: () => '/docs/default-source/generated-reports/inspecton-reports-json.json?sfvrsn=da1a11cd_987',
+        },
       },
     },
   };
