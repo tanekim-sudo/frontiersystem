@@ -87,8 +87,11 @@ async function syncToGist(pat) {
   if (!pat) return;
   if (!_cloudInitDone) return;
   const data = getAllData();
+  const localKeys = Object.keys(data);
   const localCfg = data.config;
-  if (localCfg && (!localCfg.verticals || localCfg.verticals.length === 0)) {
+  const localEmpty = !localCfg || !localCfg.verticals || localCfg.verticals.length === 0;
+  const localThin = localKeys.length < 3;
+  if (localEmpty || localThin) {
     const gistId = localStorage.getItem(GIST_ID_KEY);
     if (gistId) {
       try {
@@ -98,7 +101,9 @@ async function syncToGist(pat) {
           const content = g.files["signal-data.json"]?.content;
           if (content) {
             const cloud = JSON.parse(content);
+            const cloudKeys = Object.keys(cloud);
             if (cloud.config?.verticals?.length > 0) return;
+            if (cloudKeys.length > localKeys.length + 5) return;
           }
         }
       } catch {}
@@ -744,10 +749,20 @@ async function callSource(source, vertical, configKeys) {
   let res;
   try {
     res = await fetch(url, { method: cfg.method, headers, body });
+    if (source.id === "google_trends" && !res.ok) {
+      const fallbackUrl = "/serpapi/search.json?" + url.split("?").slice(1).join("?");
+      try { const fb = await fetch(fallbackUrl, { method: cfg.method, headers }); if (fb.ok) res = fb; } catch {}
+    }
   } catch (networkErr) {
     if (source.id === "google_trends") {
-      const fallbackUrl = "/serpapi/search.json?" + url.split("?").slice(1).join("?");
-      try { res = await fetch(fallbackUrl, { method: cfg.method, headers }); } catch { throw new Error("Network error — cannot reach Google Trends API"); }
+      const qs = url.split("?").slice(1).join("?");
+      const fallbackUrl = "/serpapi/search.json?" + qs;
+      try { res = await fetch(fallbackUrl, { method: cfg.method, headers }); } catch {
+        const directUrl = "https://serpapi.com/search.json?" + qs;
+        try { res = await fetch(directUrl, { method: cfg.method, headers }); } catch {
+          throw new Error("Cannot reach Google Trends — check SERPAPI_KEY in Vercel env vars");
+        }
+      }
     } else {
       throw new Error("Network error — check connection");
     }
@@ -2537,7 +2552,8 @@ export default function App() {
     let cancelled=false;
     (async()=>{
       const pat=resolveGitPat();
-      if(pat){setCloudStatus("loading…");try{await syncFromGist(pat);if(!cancelled){setConfig(ld("config",buildDefaultConfig()));setMailingList(ld("mailing_list",[]));}}catch{}if(!cancelled){setCloudStatus("idle");lastSyncRef.current=Date.now();}}
+      if(pat){setCloudStatus("loading…");try{await syncFromGist(pat);if(!cancelled){setConfig(prev=>{const cloud=ld("config",null);return cloud&&cloud.verticals?.length>0?cloud:prev;});setMailingList(ld("mailing_list",[]));}}catch{}if(!cancelled){setCloudStatus("idle");lastSyncRef.current=Date.now();}}
+      await new Promise(r=>setTimeout(r,100));
       if(!cancelled){cloudSyncDoneRef.current=true;_cloudInitDone=true;}
       const cached={};const cfg=ld("config",buildDefaultConfig());
       (cfg.verticals||[]).forEach(v=>{(cfg.sources||[]).forEach(src=>{
