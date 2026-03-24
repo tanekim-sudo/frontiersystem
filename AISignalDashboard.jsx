@@ -4027,7 +4027,40 @@ export default function App() {
   }, [composites, signalResults, githubHistoryByVertical, tsHistoryByVertical, crossCorr]);
 
   const generateBrief = useCallback(async () => {
-    const ctx = buildBriefContext();
+    const baseCtx = buildBriefContext();
+    let macro_labor_context = null;
+    try {
+      const r = await fetch("/api/labor/overview");
+      if (r.ok) {
+        const j = await r.json();
+        macro_labor_context = {
+          framing:
+            "US national macro (Chicago Fed nowcast + FRED). Typically lagging or coincident versus your leading signals (job postings, search, GitHub, Claude). Use for regime backdrop and correlation narratives — do not collapse into a single heat index.",
+          fetched_at: j.fetched_at,
+          chicago_fed: j.chicago_fed,
+          fred_headlines: (j.fred_latest || [])
+            .filter((x) => !x.error && x.value != null)
+            .slice(0, 28)
+            .map((x) => ({ id: x.series_id, name: x.name, category: x.category, value: x.value, date: x.date })),
+          chicago_recent_weeks: (j.chicago_fed_timeseries || []).slice(-14).map((row) => ({
+            date: row.date,
+            forecast_u: row.forecast_unemployment,
+            u3: row.official_u3,
+            layoffs: row.layoffs_separations_rate,
+            hiring_u: row.hiring_rate_unemployed,
+          })),
+        };
+      }
+    } catch {
+      macro_labor_context = { note: "Macro labor endpoint unreachable for this brief run." };
+    }
+    const ctx = trimPayloadSize(
+      {
+        ...baseCtx,
+        macro_labor_context: macro_labor_context || { note: "No macro snapshot returned." },
+      },
+      26000,
+    );
     const wk = ctx.week || weekKeyFromDate(new Date());
     setBriefWeek(wk);
     setBriefOpen(true);
@@ -4054,6 +4087,11 @@ SIGNAL TIMING KNOWLEDGE (use for predictions):
 - Claude Code Attribution: 0-3 months. Most real-time signal. Directly reflects current AI tool adoption. Revenue impact for coding platforms is same-quarter. Compute demand impact within 1 quarter.
 - Hugging Face Downloads: 3-12 months. Open-source model adoption leads enterprise deployment decisions. Download concentration shifts signal vendor market share changes 2-4 quarters ahead.
 - PCAOB Deficiency Convergence: 12-24 months. When Big 4 and regional firm deficiency rates converge, AI audit tooling is democratizing — leading indicator of broad professional services AI spend.
+
+MACRO IN THE PAYLOAD (when macro_labor_context is present):
+- Treat Chicago Fed / FRED as **national regime context**, usually **lagging or coincident** relative to hiring, search, repos, and Claude attribution. They explain *environment*, not a second headline score.
+- Do **not** invent a unified "macro heat" or single composite index. Instead, name **specific pairs or triplets** of series (e.g. JOLTS vs. job-posting momentum; claims vs. Claude; sentiment vs. trends) and discuss **alignment or tension** with explicit uncertainty.
+- A major part of your value is **correlation discovery**: patterns a human skimming charts would miss — especially **cross-domain** (micro demand signals ↔ macro; vertical A ↔ vertical B; level vs. momentum vs. second derivative).
 
 MARKET CONTEXT (illustrative baseline — refresh with live facts when you have them):
 - AI coding tools at 73% daily enterprise usage (up from 41% in 2025). Claude Code at 69% market share.
@@ -4105,10 +4143,21 @@ If a series has <2 points, write "insufficient points" instead of a strip.
 
 MACRO & EXTERNAL CONTEXT (DESK RESEARCH — IMPLICATIONS, NOT HEADLINES)
 Relative to generated_at / ISO week:
+- If macro_labor_context includes chicago_fed / fred_headlines / chicago_recent_weeks: anchor **at least 2 bullets** to those **numbers** (levels or recent direction). Still label macro as **lagging/coincident** vs. your leading demand signals where relevant.
 - LAST ~7 DAYS: 3 bullets — typical macro/tech narrative themes; each bullet ties to a specific metric in the payload and states a plausible transmission channel (e.g., "If credit spreads widened, job-posting velocity in X vertical could reflect…").
 - LAST ~30 DAYS: 3 bullets — labor, rates expectations, enterprise IT / SaaS sentiment, AI capex narrative; each maps to at least one signal movement.
 - BROADER ECONOMY: 3 bullets — unemployment / JOLTS style framing, productivity & automation debate, semiconductor–cloud–model vendor chain; explain how each could bias hiring vs search vs OSS activity.
 Use "consistent with / plausible / speculative" language. Do not fabricate specific headline events or exact unemployment prints unless they are widely known for that period; prefer thematic framing.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CORRELATIONS & BLIND SPOTS (REQUIRED — THIS IS THE CORE VALUE)
+The reader is not asking for a macro heat map. They want **insights they would not notice themselves**.
+
+- Provide **exactly 4** items prefixed **NON-OBVIOUS:**. Each must **combine at least two distinct domains** from the payload (examples: vertical A jobs momentum + vertical B trends; JOLTS or claims + Claude commits; Chicago Fed nowcast trajectory + Google Trends; Hugging Face + payrolls; two second-derivatives that disagree).
+- For each item: (1) the juxtaposition, (2) why a human skimming the dashboard would miss it, (3) a **testable** implication with **approximate timing** using the lead/lag framework, (4) one sentence on **what would falsify** the take.
+- If macro_labor_context is empty or thin, still deliver 4 items using only vertical signals + cross_corr — and state that the macro snapshot was unavailable.
+- Do **not** output a composite macro score or ranked heat index.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
