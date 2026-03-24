@@ -2830,10 +2830,11 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
       VITE_THEIRSTACK_MOCK=true &nbsp;&nbsp;<span style={{color:C.textMuted}}># optional — force demo job data even if a key is set</span><br/>
       VITE_SERPAPI_KEY=your-key &nbsp;&nbsp;<span style={{color:C.textMuted}}># serpapi.com — Google Trends data</span><br/>
       VITE_GITHUB_PAT=your-pat &nbsp;&nbsp;<span style={{color:C.textMuted}}># github.com — repos, commits, cloud sync</span><br/>
-      VITE_ANTHROPIC_API_KEY=your-key &nbsp;&nbsp;<span style={{color:C.textMuted}}># anthropic.com — weekly AI report</span>
+      VITE_ANTHROPIC_API_KEY=your-key &nbsp;&nbsp;<span style={{color:C.textMuted}}># anthropic.com — weekly AI report</span><br/>
+      FRED_API_KEY=your-key &nbsp;&nbsp;<span style={{color:C.textMuted}}># fred.stlouisfed.org — server-side only; powers /api/labor on Vercel + Vite dev</span>
     </div>
     <div style={{...font.sans,fontSize:11,color:C.textMuted}}>
-      Without VITE_THEIRSTACK_KEY, job counts and backfills use realistic simulated series so charts and briefs still work. Anthropic is optional (for the AI weekly report). Hugging Face data is free and requires no key.
+      Without VITE_THEIRSTACK_KEY, job counts and backfills use realistic simulated series so charts and briefs still work. Anthropic is optional (for the AI weekly report). Hugging Face data is free and requires no key. Chicago Fed labor overlay uses a public xlsx (no key); add FRED_API_KEY for macro series in the Jobs & labor panel.
     </div>
   </div>);
 
@@ -2890,6 +2891,9 @@ export default function App() {
   const [briefDiffMode,setBriefDiffMode]=useState(false);
   const [briefBaseForDiff,setBriefBaseForDiff]=useState("");
   const [briefSnapshot,setBriefSnapshot]=useState(null);
+  const [laborOverview,setLaborOverview]=useState(null);
+  const [laborLoad,setLaborLoad]=useState(false);
+  const [laborErr,setLaborErr]=useState(null);
   const [mailingList,setMailingList]=useState(()=>ld("mailing_list",[]));
   const [emailSending,setEmailSending]=useState(false);
   const [emailStatus,setEmailStatus]=useState(null);
@@ -2923,6 +2927,25 @@ export default function App() {
       setGithubSelectedVert(config.verticals[0]?.id || null);
     }
   }, [config.verticals, githubSelectedVert]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLaborLoad(true);
+      setLaborErr(null);
+      try {
+        const res = await fetch("/api/labor/overview");
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(j.error || res.statusText || "Labor API failed");
+        if (!cancelled) setLaborOverview(j);
+      } catch (e) {
+        if (!cancelled) setLaborErr(e.message || String(e));
+      } finally {
+        if (!cancelled) setLaborLoad(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   useEffect(() => {
     pruneOldBriefs(12);
     const wk = weekKeyFromDate(new Date());
@@ -3978,6 +4001,7 @@ DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
 
   const anyLoading=Object.values(loading).some(Boolean);
   const hasData=Object.keys(signalResults).length>0;
+  const showSummaryStrip=hasData||config.verticals.length>0;
   const currentWeekKey = weekKeyFromDate(new Date());
   const signalFingerprint = useMemo(() => JSON.stringify(Object.keys(signalResults).sort().map(k => [k, signalResults[k]?.count || 0])), [signalResults]);
   const lastBriefObj = useMemo(() => { try { return JSON.parse(localStorage.getItem(briefStorageKey(currentWeekKey)) || "null"); } catch { return null; } }, [currentWeekKey, briefContent]);
@@ -4044,6 +4068,104 @@ DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
 
       <div style={{padding:"20px 28px 40px",maxWidth:1400,margin:"0 auto"}}>
 
+        {/* ─── Jobs & labor — above settings so hiring + macro stay visible ─── */}
+        <Card style={{marginBottom:20,padding:16,borderLeft:`4px solid ${C.cyan}`}} className="fade-in">
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10,marginBottom:12}}>
+            <div>
+              <div style={{...font.sans,fontSize:14,fontWeight:700,color:C.text}}>Jobs & labor</div>
+              <div style={{...font.sans,fontSize:11,color:C.textMuted,maxWidth:720,lineHeight:1.55,marginTop:4}}>
+                Hiring per tracking group (TheirStack or simulated demo data) and macro labor (Chicago Fed + FRED via <code style={{fontSize:10}}>/api/labor/overview</code>).
+              </div>
+            </div>
+            {laborLoad && <Spinner size={14}/>}
+          </div>
+
+          {config.verticals.length > 0 && (
+            <div style={{marginBottom:14}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.textSec,marginBottom:8}}>Hiring by tracking group (TheirStack, ~30d)</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:10}}>
+                {config.verticals.map((v) => {
+                  const tsSrc = config.sources.find((s) => s.id === "theirstack");
+                  const key = `${v.id}_theirstack`;
+                  const jr = signalResults[key];
+                  const busy = loading[key];
+                  const err = errors[key];
+                  const mock = tsSrc && resolveTheirStackMocking(tsSrc, config.apiKeys);
+                  const tsOff = !tsSrc?.enabled;
+                  return (
+                    <div key={v.id} style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:10,padding:10}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:6}}>
+                        <span style={{...font.sans,fontSize:12,fontWeight:700,color:C.text}}>{v.name}</span>
+                        {busy && <Spinner size={12}/>}
+                      </div>
+                      {tsOff && <div style={{fontSize:10,color:C.textMuted,marginTop:4}}>TheirStack disabled in Signal Groups</div>}
+                      {!tsOff && mock && <div style={{fontSize:10,color:C.cyan,marginTop:4}}>Simulated job data</div>}
+                      {!tsOff && !mock && !busy && jr == null && <div style={{fontSize:11,color:C.textSec,marginTop:4}}>No fetch yet — use Refresh or wait for auto-refresh</div>}
+                      {jr != null && (
+                        <div style={{...font.mono,fontSize:20,fontWeight:800,color:C.text,marginTop:4}}>{(jr.count ?? 0).toLocaleString()}</div>
+                      )}
+                      {err && <div style={{fontSize:10,color:C.red,marginTop:4}}>{err}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginTop:4}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+              <IcoC name="barChart" size={14} color={C.amber}/>
+              <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text}}>Macro labor context</div>
+            </div>
+            <div style={{...font.sans,fontSize:11,color:C.textMuted,maxWidth:640,lineHeight:1.5,marginBottom:10}}>
+              Chicago Fed Labor Market Indicators (public xlsx) and FRED (server-side <code style={{fontSize:10}}>FRED_API_KEY</code>). Same API paths in Vite dev and on Vercel.
+            </div>
+            {laborErr && (
+              <div style={{...font.sans,fontSize:12,color:C.red,marginBottom:8}}>{laborErr}</div>
+            )}
+            {laborOverview?.chicago_fed && (
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:10,marginBottom:12}}>
+                <div style={{background:C.nested,borderRadius:10,padding:10}}>
+                  <div style={{fontSize:10,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:"0.06em"}}>Chicago Fed UR forecast (50th)</div>
+                  <div style={{...font.mono,fontSize:22,fontWeight:800,color:C.text}}>{laborOverview.chicago_fed.forecast_unemployment != null ? `${laborOverview.chicago_fed.forecast_unemployment}%` : "—"}</div>
+                  <div style={{fontSize:11,color:C.textSec}}>Release week {laborOverview.chicago_fed.release_date}</div>
+                </div>
+                <div style={{background:C.nested,borderRadius:10,padding:10}}>
+                  <div style={{fontSize:10,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:"0.06em"}}>Layoffs &amp; other sep. rate</div>
+                  <div style={{...font.mono,fontSize:22,fontWeight:800,color:C.text}}>{laborOverview.chicago_fed.layoffs_separations_rate != null ? laborOverview.chicago_fed.layoffs_separations_rate.toFixed(2) : "—"}</div>
+                </div>
+                <div style={{background:C.nested,borderRadius:10,padding:10}}>
+                  <div style={{fontSize:10,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:"0.06em"}}>Hiring rate (unemployed)</div>
+                  <div style={{...font.mono,fontSize:22,fontWeight:800,color:C.text}}>{laborOverview.chicago_fed.hiring_rate_unemployed != null ? laborOverview.chicago_fed.hiring_rate_unemployed.toFixed(1) : "—"}</div>
+                </div>
+                {laborOverview.chicago_fed.official_u3 != null && (
+                  <div style={{background:C.nested,borderRadius:10,padding:10}}>
+                    <div style={{fontSize:10,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:"0.06em"}}>BLS U-3 (official)</div>
+                    <div style={{...font.mono,fontSize:22,fontWeight:800,color:C.text}}>{laborOverview.chicago_fed.official_u3}%</div>
+                  </div>
+                )}
+              </div>
+            )}
+            {laborOverview?.fred_latest?.length > 0 && (
+              <div style={{marginTop:4}}>
+                <div style={{fontSize:11,fontWeight:700,color:C.textSec,marginBottom:6}}>FRED (latest observation per series)</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                  {laborOverview.fred_latest.filter((x) => x.value != null && !x.error).slice(0, 12).map((x) => (
+                    <span key={x.series_id} style={{...font.sans,fontSize:11,padding:"4px 8px",background:C.white,border:`1px solid ${C.border}`,borderRadius:8}}>
+                      <b>{x.series_id}</b> {x.value} <span style={{color:C.textMuted}}>({x.date})</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {laborOverview?.source_notes?.length > 0 && (
+              <div style={{...font.sans,fontSize:10,color:C.textMuted,marginTop:10,lineHeight:1.5}}>
+                {laborOverview.source_notes.map((n, i) => (<div key={i}>• {n}</div>))}
+              </div>
+            )}
+          </div>
+        </Card>
+
         {/* ─── Settings (always visible, collapsed by default) ─── */}
         <div style={{marginBottom:20}}>
           <InlineSettings config={config} setConfig={setConfig} githubWatchlists={githubWatchlists} setGithubWatchlists={setGithubWatchlists} mailingList={mailingList} onUpdateMailingList={updateMailingList} onCloudSync={()=>{const pat=resolveGitPat();if(pat)debouncedSyncToGist(pat);}}/>
@@ -4067,7 +4189,7 @@ DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
         )}
 
         {/* ─── Summary metrics ─── */}
-        {hasData&&(
+        {showSummaryStrip&&(
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12,marginBottom:24}} className="fade-in">
             <MetricCard icon={<IcoC name="briefcase" size={13} color={C.cyan}/>} label="Job Postings" value={summaryMetrics.jobs.toLocaleString()} sublabel="Matching positions (30d)" color={C.cyan}/>
             <MetricCard icon={<IcoC name="trendUp" size={13} color={C.blue}/>} label="Search Interest" value={summaryMetrics.trends} sublabel="Relative interest (0–100)" color={C.blue}/>

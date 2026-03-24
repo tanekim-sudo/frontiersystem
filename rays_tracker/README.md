@@ -2,6 +2,8 @@
 
 FastAPI service that ingests **free** macro/labor data, starting with **Chicago Fed Labor Market Indicators** (public xlsx) and **FRED** (free API key).
 
+**Vercel / production:** the same Chicago Fed + FRED logic also runs as **Node serverless** routes at `/api/labor/*` (see repo `api/labor/` and `lib/labor/`). Use those on deploy; use this Python stack when you want SQLite, scheduled jobs, or local-only workflows.
+
 ## Setup
 
 From the **repository root** (`Rays AI Demand Tracker`):
@@ -18,7 +20,6 @@ Copy env keys (repo root `.env`):
 FRED_API_KEY=your_fred_key
 # Optional later:
 # BLS_API_KEY=
-# USAJOBS_API_KEY=
 # GITHUB_TOKEN=
 DATABASE_URL=sqlite:///./data/rays_tracker.db
 ```
