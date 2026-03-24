@@ -193,6 +193,29 @@ function appendHFHistory(orgs) {
   return h;
 }
 
+/** Local trail when you refresh macro labor (syncs via Gist with other dashboard data). */
+function getLaborMacroHistory() { return ld("hist_labor_macro", []); }
+function appendLaborMacroSnapshot(row) {
+  const h = getLaborMacroHistory();
+  h.push({ ts: Date.now(), ...row });
+  if (h.length > 260) h.splice(0, h.length - 260);
+  sv("hist_labor_macro", h);
+  return h;
+}
+
+const LABOR_FRED_CAT_ORDER = ["labor", "jolts", "wages", "growth", "housing", "sentiment", "financial_stress", "rates", "tech_production"];
+const LABOR_FRED_CAT_LABEL = {
+  labor: "Labor",
+  jolts: "JOLTS",
+  wages: "Wages",
+  growth: "Growth & demand",
+  housing: "Housing",
+  sentiment: "Sentiment",
+  financial_stress: "Financial stress",
+  rates: "Rates",
+  tech_production: "Tech production",
+};
+
 function timeAgo(ts) {
   if (!ts) return "Never"; const m = Math.floor((Date.now() - ts) / 60000);
   if (m < 1) return "Just now"; if (m < 60) return `${m}m ago`;
@@ -1947,11 +1970,17 @@ function PcaobSignalPanel({ onDataChanged }) {
   );
 }
 
-/** Chicago Fed xlsx + FRED — national macro only (no signal-group keywords). Same as /api/labor/overview on Vercel. */
-function LaborMacroPanel() {
+/** Chicago Fed xlsx + FRED — national macro, charts, multi-year history (FRED needs server key). */
+function LaborMacroPanel({ onAfterLoad }) {
   const [laborOverview, setLaborOverview] = useState(null);
   const [laborLoad, setLaborLoad] = useState(false);
   const [laborErr, setLaborErr] = useState(null);
+  const [fredCat, setFredCat] = useState("labor");
+  const [snapTick, setSnapTick] = useState(0);
+  const onAfterRef = useRef(onAfterLoad);
+  useEffect(() => {
+    onAfterRef.current = onAfterLoad;
+  }, [onAfterLoad]);
 
   const loadLabor = useCallback(async () => {
     setLaborLoad(true);
@@ -1961,6 +1990,16 @@ function LaborMacroPanel() {
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || res.statusText || "Labor API failed");
       setLaborOverview(j);
+      appendLaborMacroSnapshot({
+        fetched_at: j.fetched_at,
+        chicago_release: j.chicago_fed?.release_date ?? null,
+        forecast_u: j.chicago_fed?.forecast_unemployment ?? null,
+        official_u3: j.chicago_fed?.official_u3 ?? null,
+        jolts: (j.fred_latest || []).find((x) => x.series_id === "JTSJOL")?.value ?? null,
+        claims: (j.fred_latest || []).find((x) => x.series_id === "ICSA")?.value ?? null,
+      });
+      setSnapTick((n) => n + 1);
+      onAfterRef.current?.();
     } catch (e) {
       setLaborErr(e.message || String(e));
     } finally {
@@ -1972,70 +2011,227 @@ function LaborMacroPanel() {
     loadLabor();
   }, [loadLabor]);
 
+  const chiTs = laborOverview?.chicago_fed_timeseries || [];
+  const fredHist = laborOverview?.fred_histories;
+  const fredByCat = useMemo(() => {
+    if (!fredHist) return {};
+    const by = {};
+    for (const [id, pack] of Object.entries(fredHist)) {
+      const cat = pack.meta?.category || "other";
+      if (!by[cat]) by[cat] = [];
+      by[cat].push({ id, meta: pack.meta, observations: pack.observations || [], error: pack.error });
+    }
+    return by;
+  }, [fredHist]);
+
+  const snapHist = useMemo(() => getLaborMacroHistory(), [laborOverview, snapTick]);
+  const snapChart = useMemo(
+    () =>
+      snapHist
+        .filter((r) => r.ts)
+        .slice(-80)
+        .map((r) => ({
+          t: r.ts,
+          label: new Date(r.ts).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+          forecast_u: r.forecast_u,
+          jolts: r.jolts,
+        })),
+    [snapHist],
+  );
+
+  const fredSeriesInCat = fredByCat[fredCat] || [];
+
   return (
     <Card style={{ borderLeft: `4px solid ${C.amber}`, padding: 0, overflow: "hidden" }} className="fade-in">
       <div style={{ padding: "18px 22px 14px", background: C.white }}>
         <SectionHeader
           icon={<IcoC name="barChart" size={18} color={C.amber} />}
-          title="Macro labor (US)"
-          subtitle="Chicago Fed labor indicators (public spreadsheet) and FRED series. National context — not tied to your tracking keywords. Add FRED_API_KEY on Vercel for full FRED chips."
-          badge={<Badge color={C.amber} bg={C.amber + "18"} size="sm">No keywords</Badge>}
+          title="Macro labor & economy (US)"
+          subtitle="Chicago Fed nowcast (weekly xlsx, no key) + expanded FRED context (hiring, JOLTS, growth, rates, stress, tech IP). Charts use multi-year history; each refresh appends a snapshot you can compare over time."
+          badge={<Badge color={C.amber} bg={C.amber + "18"} size="sm">National</Badge>}
         />
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
           <Btn variant="primary" size="sm" onClick={loadLabor} disabled={laborLoad}>
-            {laborLoad ? <><Spinner size={12} color="#fff" /> Loading</> : <><IcoC name="refresh" size={12} color="#fff" /> Refresh macro data</>}
+            {laborLoad ? <><Spinner size={12} color="#fff" /> Loading</> : <><IcoC name="refresh" size={12} color="#fff" /> Refresh / backfill history</>}
           </Btn>
           {laborOverview?.chicago_fed?.release_date && (
-            <span style={{ ...font.sans, fontSize: 10, color: C.textMuted }}>Chicago Fed week {laborOverview.chicago_fed.release_date}</span>
+            <span style={{ ...font.sans, fontSize: 10, color: C.textMuted }}>Chicago Fed row {laborOverview.chicago_fed.release_date}</span>
+          )}
+          {laborOverview?.fetched_at && (
+            <span style={{ ...font.sans, fontSize: 10, color: C.textMuted }}>Pulled {new Date(laborOverview.fetched_at).toLocaleString()}</span>
           )}
         </div>
       </div>
       <div style={{ padding: "0 22px 18px" }}>
         {laborErr && <div style={{ ...font.sans, fontSize: 12, color: C.red, marginBottom: 8 }}>{laborErr}</div>}
+
         {laborOverview?.chicago_fed && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 10, marginBottom: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginBottom: 14 }}>
             <div style={{ background: C.nested, borderRadius: 10, padding: 10 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>UR forecast (50th)</div>
-              <div style={{ ...font.mono, fontSize: 20, fontWeight: 800, color: C.text }}>{laborOverview.chicago_fed.forecast_unemployment != null ? `${laborOverview.chicago_fed.forecast_unemployment}%` : "—"}</div>
+              <div style={{ ...font.mono, fontSize: 18, fontWeight: 800, color: C.text }}>{laborOverview.chicago_fed.forecast_unemployment != null ? `${laborOverview.chicago_fed.forecast_unemployment}%` : "—"}</div>
             </div>
             <div style={{ background: C.nested, borderRadius: 10, padding: 10 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Layoffs &amp; sep. rate</div>
-              <div style={{ ...font.mono, fontSize: 20, fontWeight: 800, color: C.text }}>{laborOverview.chicago_fed.layoffs_separations_rate != null ? laborOverview.chicago_fed.layoffs_separations_rate.toFixed(2) : "—"}</div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Layoffs &amp; sep.</div>
+              <div style={{ ...font.mono, fontSize: 18, fontWeight: 800, color: C.text }}>{laborOverview.chicago_fed.layoffs_separations_rate != null ? laborOverview.chicago_fed.layoffs_separations_rate.toFixed(2) : "—"}</div>
             </div>
             <div style={{ background: C.nested, borderRadius: 10, padding: 10 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Hiring (unemployed)</div>
-              <div style={{ ...font.mono, fontSize: 20, fontWeight: 800, color: C.text }}>{laborOverview.chicago_fed.hiring_rate_unemployed != null ? laborOverview.chicago_fed.hiring_rate_unemployed.toFixed(1) : "—"}</div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Hiring (unemp.)</div>
+              <div style={{ ...font.mono, fontSize: 18, fontWeight: 800, color: C.text }}>{laborOverview.chicago_fed.hiring_rate_unemployed != null ? laborOverview.chicago_fed.hiring_rate_unemployed.toFixed(1) : "—"}</div>
             </div>
             {laborOverview.chicago_fed.official_u3 != null && (
               <div style={{ background: C.nested, borderRadius: 10, padding: 10 }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>BLS U-3</div>
-                <div style={{ ...font.mono, fontSize: 20, fontWeight: 800, color: C.text }}>{laborOverview.chicago_fed.official_u3}%</div>
+                <div style={{ ...font.mono, fontSize: 18, fontWeight: 800, color: C.text }}>{laborOverview.chicago_fed.official_u3}%</div>
               </div>
             )}
           </div>
         )}
-        {laborOverview?.fred_latest?.length > 0 && (
-          <div style={{ marginTop: 4 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: C.textSec, marginBottom: 6 }}>FRED (latest)</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {laborOverview.fred_latest.filter((x) => x.value != null && !x.error).slice(0, 14).map((x) => (
-                <span key={x.series_id} style={{ ...font.sans, fontSize: 11, padding: "4px 8px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 8 }}>
-                  <b>{x.series_id}</b> {x.value} <span style={{ color: C.textMuted }}>({x.date})</span>
-                </span>
-              ))}
+
+        {chiTs.length >= 2 && (
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 6 }}>Chicago Fed — unemployment nowcast vs official U-3 ({chiTs.length} weekly points)</div>
+            <div style={{ height: 200, width: "100%" }}>
+              <ResponsiveContainer>
+                <LineChart data={chiTs} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                  <XAxis dataKey="date" tick={{ fontSize: 9, fill: C.textMuted }} interval="preserveStartEnd" />
+                  <YAxis tick={{ fontSize: 9, fill: C.textMuted }} width={36} domain={["auto", "auto"]} />
+                  <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
+                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Line type="monotone" dataKey="official_u3" name="Official U-3" stroke={C.blue} strokeWidth={2} dot={false} connectNulls />
+                  <Line type="monotone" dataKey="forecast_unemployment" name="Nowcast (50th)" stroke={C.amber} strokeWidth={2} dot={false} connectNulls />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, margin: "14px 0 6px" }}>Chicago Fed — layoffs / separations vs hiring (unemployed)</div>
+            <div style={{ height: 200, width: "100%" }}>
+              <ResponsiveContainer>
+                <LineChart data={chiTs} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                  <XAxis dataKey="date" tick={{ fontSize: 9, fill: C.textMuted }} interval="preserveStartEnd" />
+                  <YAxis tick={{ fontSize: 9, fill: C.textMuted }} width={36} domain={["auto", "auto"]} />
+                  <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
+                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Line type="monotone" dataKey="layoffs_separations_rate" name="Layoffs & sep. rate" stroke={C.red} strokeWidth={2} dot={false} connectNulls />
+                  <Line type="monotone" dataKey="hiring_rate_unemployed" name="Hiring rate (U)" stroke={C.green} strokeWidth={2} dot={false} connectNulls />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
           </div>
         )}
+
+        {snapChart.length >= 2 && (
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 4 }}>Your refresh snapshots (stored locally)</div>
+            <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 6 }}>Each macro refresh records Chicago nowcast, JOLTS openings, and UI claims when FRED is configured.</div>
+            <div style={{ height: 160, width: "100%" }}>
+              <ResponsiveContainer>
+                <LineChart data={snapChart} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                  <XAxis dataKey="label" tick={{ fontSize: 8, fill: C.textMuted }} interval="preserveStartEnd" />
+                  <YAxis yAxisId="l" tick={{ fontSize: 9, fill: C.textMuted }} width={32} />
+                  <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 9, fill: C.textMuted }} width={40} />
+                  <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
+                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Line yAxisId="l" type="monotone" dataKey="forecast_u" name="Nowcast %" stroke={C.amber} strokeWidth={2} dot connectNulls />
+                  <Line yAxisId="r" type="monotone" dataKey="jolts" name="JOLTS openings" stroke={C.cyan} strokeWidth={2} dot={false} connectNulls />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+
+        {fredHist && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 8 }}>FRED — history by theme (multi-year per series)</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+              {LABOR_FRED_CAT_ORDER.filter((c) => (fredByCat[c] || []).length > 0).map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setFredCat(c)}
+                  style={{
+                    ...font.sans,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${fredCat === c ? C.amber : C.border}`,
+                    background: fredCat === c ? C.amberBg : C.white,
+                    color: C.text,
+                    cursor: "pointer",
+                  }}
+                >
+                  {LABOR_FRED_CAT_LABEL[c] || c}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 12 }}>
+              {fredSeriesInCat.map((s, idx) => {
+                const col = PALETTE[idx % PALETTE.length];
+                const data = (s.observations || []).map((o) => ({ date: o.date, v: o.value }));
+                if (s.error) {
+                  return (
+                    <div key={s.id} style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.borderLight}`, background: C.nested }}>
+                      <div style={{ fontSize: 11, fontWeight: 700 }}>{s.id}</div>
+                      <div style={{ fontSize: 10, color: C.red }}>{s.error}</div>
+                    </div>
+                  );
+                }
+                if (data.length < 2) {
+                  return (
+                    <div key={s.id} style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.borderLight}`, background: C.nested }}>
+                      <div style={{ fontSize: 11, fontWeight: 700 }}>{s.meta?.name || s.id}</div>
+                      <div style={{ fontSize: 10, color: C.textMuted }}>Not enough points</div>
+                    </div>
+                  );
+                }
+                return (
+                  <div key={s.id} style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.borderLight}`, background: C.white }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 2 }}>{s.meta?.name || s.id}</div>
+                    <div style={{ fontSize: 9, color: C.textMuted, fontFamily: font.mono.fontFamily, marginBottom: 6 }}>{s.id}</div>
+                    <div style={{ height: 120, width: "100%" }}>
+                      <ResponsiveContainer>
+                        <LineChart data={data} margin={{ top: 2, right: 4, left: -18, bottom: 0 }}>
+                          <XAxis dataKey="date" tick={{ fontSize: 8, fill: C.textMuted }} interval="preserveStartEnd" />
+                          <YAxis tick={{ fontSize: 8, fill: C.textMuted }} width={44} domain={["auto", "auto"]} />
+                          <Tooltip contentStyle={{ fontSize: 10, borderRadius: 8 }} formatter={(v) => [v, ""]} />
+                          <Line type="monotone" dataKey="v" stroke={col} strokeWidth={2} dot={false} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {laborOverview?.fred_latest?.length > 0 && (
+          <div style={{ marginTop: 4 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.textSec, marginBottom: 6 }}>FRED — latest print (all series)</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, maxHeight: 160, overflowY: "auto", padding: 4, background: C.nested, borderRadius: 10 }}>
+              {laborOverview.fred_latest
+                .filter((x) => !x.error)
+                .map((x) => (
+                  <span key={x.series_id} style={{ ...font.sans, fontSize: 10, padding: "4px 8px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 8 }}>
+                    <b>{x.series_id}</b> {x.value != null ? x.value : "—"}{" "}
+                    <span style={{ color: C.textMuted }}>({x.date || "—"})</span>
+                  </span>
+                ))}
+            </div>
+          </div>
+        )}
+
         {laborOverview?.source_notes?.length > 0 && (
-          <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginTop: 10, lineHeight: 1.5 }}>
+          <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginTop: 12, lineHeight: 1.5 }}>
             {laborOverview.source_notes.map((n, i) => (
               <div key={i}>• {n}</div>
             ))}
           </div>
         )}
-        <Expandable title="Why this sits separate from job postings">
+        <Expandable title="How this relates to your tracking groups">
           <div style={{ padding: "10px 14px", fontSize: 12, color: C.textSec, lineHeight: 1.6 }}>
-            <strong style={{ color: C.text }}>TheirStack</strong> (above/below) is per tracking group and uses your keywords — that is your hiring-demand signal. These figures are <strong>US economy-wide</strong> labor market indicators. They update on refresh here; they are not backfilled into monthly history like job counts (FRED history would require extra API calls).
+            <strong style={{ color: C.text }}>Per-group cards</strong> (TheirStack, Trends, etc.) use <em>your</em> keywords. This section is <strong>US-wide context</strong>: regime (unemployment, claims, JOLTS), demand (GDP, retail, consumption), stress (VIX, NFCI), rates (curve), and tech-related industrial production.
+            Chicago Fed data is <strong>backfilled from the public xlsx</strong> each time you refresh. FRED history is <strong>backfilled from the FRED API</strong> when <code style={{ fontSize: 11 }}>FRED_API_KEY</code> is set server-side.
           </div>
         </Expandable>
       </div>
@@ -4251,7 +4447,12 @@ DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
           <div style={{...font.sans,fontSize:11,color:C.textMuted,marginTop:4}}>US-wide labor indicators — not filtered by your keywords.</div>
         </div>
         <div style={{marginBottom:28}}>
-          <LaborMacroPanel />
+          <LaborMacroPanel
+            onAfterLoad={() => {
+              const pat = resolveGitPat();
+              if (pat) debouncedSyncToGist(pat, 4000);
+            }}
+          />
         </div>
 
         {/* ─── Backfill progress (global) ─── */}

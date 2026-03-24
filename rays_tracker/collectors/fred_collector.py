@@ -14,16 +14,34 @@ logger = logging.getLogger(__name__)
 
 FRED_BASE = "https://api.stlouisfed.org/fred/series/observations"
 
+# Keep aligned with lib/labor/fred.js (category → stored as signal_type).
 SERIES_MAP: dict[str, dict[str, str]] = {
-    "UNRATE": {"name": "Unemployment Rate U-3", "type": "unemployment"},
-    "U6RATE": {"name": "Broad Unemployment U-6", "type": "unemployment"},
-    "ICSA": {"name": "Initial UI Claims Weekly", "type": "unemployment"},
-    "CCSA": {"name": "Continuing UI Claims", "type": "unemployment"},
-    "JTSJOL": {"name": "JOLTS Job Openings", "type": "labor_demand"},
-    "JTSQUR": {"name": "JOLTS Quit Rate", "type": "worker_confidence"},
-    "PAYEMS": {"name": "Total Nonfarm Payrolls", "type": "employment"},
-    "CES0500000003": {"name": "Average Hourly Earnings", "type": "wages"},
-    "LNS11300000": {"name": "Labor Force Participation Rate", "type": "labor_supply"},
+    "UNRATE": {"name": "Unemployment Rate (U-3)", "type": "labor"},
+    "U6RATE": {"name": "U-6 Underemployment", "type": "labor"},
+    "EMRATIO": {"name": "Employment-Population Ratio", "type": "labor"},
+    "LNS11300000": {"name": "Labor Force Participation", "type": "labor"},
+    "PAYEMS": {"name": "Nonfarm Payrolls (000s)", "type": "labor"},
+    "CES0500000003": {"name": "Avg Hourly Earnings (private)", "type": "wages"},
+    "ICSA": {"name": "Initial Jobless Claims", "type": "labor"},
+    "CCSA": {"name": "Continuing Claims", "type": "labor"},
+    "JTSJOL": {"name": "JOLTS Job Openings", "type": "jolts"},
+    "JTSHIR": {"name": "JOLTS Hires", "type": "jolts"},
+    "JTSQUR": {"name": "JOLTS Quit Rate", "type": "jolts"},
+    "JTSR": {"name": "Job Openings Rate", "type": "jolts"},
+    "GDPC1": {"name": "Real GDP", "type": "growth"},
+    "INDPRO": {"name": "Industrial Production", "type": "growth"},
+    "RSXFS": {"name": "Retail Sales (ex food)", "type": "growth"},
+    "PCEC96": {"name": "Real Personal Consumption", "type": "growth"},
+    "HOUST": {"name": "Housing Starts", "type": "housing"},
+    "UMCSENT": {"name": "U Michigan Consumer Sentiment", "type": "sentiment"},
+    "VIXCLS": {"name": "VIX (close)", "type": "financial_stress"},
+    "NFCI": {"name": "Chicago Fed NFCI", "type": "financial_stress"},
+    "STLFSI4": {"name": "St. Louis Fed Financial Stress", "type": "financial_stress"},
+    "DGS10": {"name": "10Y Treasury Yield", "type": "rates"},
+    "DGS2": {"name": "2Y Treasury Yield", "type": "rates"},
+    "T10Y2Y": {"name": "10Y–2Y Treasury Spread", "type": "rates"},
+    "IPG3341S": {"name": "Computer & Electronic Products IP", "type": "tech_production"},
+    "IPG3342S": {"name": "Computer Equipment IP", "type": "tech_production"},
 }
 
 
