@@ -31,6 +31,12 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           rewrite: () => '/docs/default-source/generated-reports/inspecton-reports-json.json?sfvrsn=da1a11cd_987',
         },
+        // Python FastAPI (rays_tracker) — run: uvicorn rays_tracker.main:app --port 8765
+        '/rays-tracker': {
+          target: 'http://127.0.0.1:8765',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/rays-tracker/, ''),
+        },
       },
     },
   };

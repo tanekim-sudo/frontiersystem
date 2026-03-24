@@ -149,6 +149,20 @@ async function syncFromGist(pat) {
   return false;
 }
 
+// ── SHARED ANNOTATION LOG ────────────────────────────────────────────────────
+function getAnnotations() { return ld("annotations", []); }
+function addAnnotation(ann) {
+  const all = getAnnotations();
+  all.push({ id: Date.now() + "_" + Math.random().toString(36).slice(2, 7), ts: Date.now(), isoDate: new Date().toISOString(), ...ann });
+  sv("annotations", all);
+  return all;
+}
+function deleteAnnotation(id) {
+  const all = getAnnotations().filter(a => a.id !== id);
+  sv("annotations", all);
+  return all;
+}
+
 function getSignalHistory(signalKey) {
   const h = ld(`hist_${signalKey}`, []);
   return h.map(p => ({ ...p, isoDate: p.isoDate || new Date(p.ts).toISOString() }));
@@ -188,7 +202,7 @@ function getCacheStats() { let c=0,s=0; for(let i=0;i<localStorage.length;i++){c
 
 // ── HISTORICAL ENGINE ────────────────────────────────────────────────────────
 
-const HIST_START = "2021-01-01";
+const HIST_START = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
 const HSPFX = "aitracker_";
 
 function hashKeywordsForVertical(vertical) {
@@ -199,6 +213,70 @@ function hashKeywordsForVertical(vertical) {
   let h = 5381;
   for (let i = 0; i < raw.length; i++) h = ((h << 5) + h) + raw.charCodeAt(i);
   return `k${Math.abs(h >>> 0).toString(36)}`;
+}
+
+function theirStackMockForced() {
+  try {
+    const v = String(import.meta.env.VITE_THEIRSTACK_MOCK || "").toLowerCase();
+    return v === "true" || v === "1" || import.meta.env.VITE_THEIRSTACK_MOCK === true;
+  } catch {
+    return false;
+  }
+}
+function mockTheirStackRng(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (Math.imul(1664525, s) + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+/** Deterministic pseudo job counts for any keyword set + date range (demo when TheirStack API is off). */
+function mockTheirStackCountForRange(vertical, gte, lte) {
+  const kw = vertical.keywords?.theirstack || {};
+  const parts = [...(Array.isArray(kw.titleKeywords) ? kw.titleKeywords : []), ...(Array.isArray(kw.descriptionKeywords) ? kw.descriptionKeywords : [])]
+    .map((x) => String(x || "").trim().toLowerCase())
+    .filter(Boolean);
+  const seedStr = `${vertical.id}|${parts.join(",")}`;
+  let seed = 2166136261;
+  for (let i = 0; i < seedStr.length; i++) seed = Math.imul(seed ^ seedStr.charCodeAt(i), 16777619);
+  const gteMs = new Date(gte + "T12:00:00Z").getTime();
+  const lteMs = new Date(lte + "T12:00:00Z").getTime();
+  const midMs = (gteMs + lteMs) / 2;
+  const spanDays = Math.max(1, Math.round((lteMs - gteMs) / 86400000) + 1);
+  const monthsSince2021 = (midMs - Date.UTC(2021, 0, 15)) / (30.44 * 86400000);
+  const rng = mockTheirStackRng((seed ^ Math.floor(midMs / 86400000)) >>> 0);
+  const base = 12 + (Math.abs(seed) % 140);
+  const growth = 1 + Math.min(2.4, Math.max(0, monthsSince2021 * 0.011));
+  const seasonal = 1 + 0.09 * Math.sin((monthsSince2021 / 12) * Math.PI * 2);
+  const noise = 0.82 + rng() * 0.38;
+  const wave = 1 + 0.11 * Math.sin((midMs / (86400000 * 23)) * Math.PI * 2);
+  const dailyRate = (base * growth * seasonal * noise * wave) / 28;
+  let count = Math.round(dailyRate * spanDays);
+  count = Math.max(2, Math.min(12000, count));
+  return count;
+}
+function buildMockTheirStackJobItems(nSample, vertical) {
+  const titles = [
+    "Senior ML Engineer — Production AI", "AI Product Manager", "MLOps Engineer", "GenAI Solutions Architect",
+    "VP Data & AI Strategy", "AI Implementation Specialist", "Applied Scientist", "AI Governance Lead",
+  ];
+  const descs = [
+    "deploy production models", "proof of concept pilot", "evaluate vendors", "strategy roadmap", "budget approval",
+    "scale inference", "compliance automation",
+  ];
+  const kw = vertical.keywords?.theirstack || {};
+  const focus = String((Array.isArray(kw.titleKeywords) && kw.titleKeywords[0]) || "AI").replace(/[<>]/g, "");
+  const out = [];
+  const rng = mockTheirStackRng((hashKeywordsForVertical(vertical).length * 9973) >>> 0);
+  for (let i = 0; i < nSample; i++) {
+    const t = titles[Math.floor(rng() * titles.length)];
+    const d = descs[Math.floor(rng() * descs.length)];
+    out.push({
+      job_title: `${focus} · ${t}`,
+      short_description: `Enterprise team hiring for ${d}. Stack: cloud, LLMs, safety.`,
+    });
+  }
+  return out;
 }
 function historyKey(verticalId, keywordsHash) { return `${HSPFX}history_${verticalId}_${keywordsHash}`; }
 function weeklyKey(verticalId, keywordsHash) { return `${HSPFX}weekly_${verticalId}_${keywordsHash}`; }
@@ -615,7 +693,183 @@ function offlineBriefFromContext(ctx) {
 
   const dq = ctx.data_quality_flags?.length ? `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nDATA QUALITY FLAGS\n${ctx.data_quality_flags.map(x => `- ${x}`).join("\n")}` : "";
 
-  return `${header}${regime}${divSection}${cv}${supply}${dq}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nNOTE: Full AI-powered analysis (inflection detection, divergence interpretation, actionable recommendations) requires Anthropic API key. This is a raw data summary only.`;
+  const vis = (ctx.verticals || []).map((v) => {
+    const jm = (v.theirstack_historical?.recent_monthly || []).map((m) => m.count || 0);
+    const jv = jm.length >= 2 ? jm : (v.signals?.job_postings?.time_series?.recent_values || []).map((p) => p.value || 0);
+    const tv = (v.signals?.google_trends?.time_series?.recent_values || []).map((p) => p.value || 0);
+    return `${v.name}  Jobs ${asciiSparkline(jv)}  Trends ${asciiSparkline(tv)}`;
+  }).join("\n");
+  const visSection = `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nTREND STRIPS (ASCII)\n${vis}`;
+
+  return `${header}${regime}${divSection}${cv}${supply}${dq}${visSection}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nNOTE: Full AI-powered analysis (inflection detection, divergence interpretation, actionable recommendations) requires Anthropic API key. This is a raw data summary only.`;
+}
+function asciiSparkline(values) {
+  const v = (values || []).map(Number).filter((x) => !Number.isNaN(x));
+  if (!v.length) return "—";
+  const blocks = "▁▂▃▄▅▆▇█";
+  const lo = Math.min(...v), hi = Math.max(...v);
+  if (hi <= lo) return blocks[4].repeat(v.length);
+  return v.map((n) => {
+    const t = (n - lo) / (hi - lo);
+    const idx = Math.min(blocks.length - 1, Math.round(t * (blocks.length - 1)));
+    return blocks[idx];
+  }).join("");
+}
+function buildBriefAsciiCharts(snapshot) {
+  if (!snapshot?.verticals?.length) return "";
+  const lines = snapshot.verticals.map((v) => {
+    const jm = (v.theirstack_historical?.recent_monthly || []).map((m) => m.count || 0);
+    const jv = jm.length >= 2 ? jm : (v.signals?.job_postings?.time_series?.recent_values || []).map((p) => p.value || 0);
+    const tv = (v.signals?.google_trends?.time_series?.recent_values || []).map((p) => p.value || 0);
+    return `${v.name}: Jobs ${asciiSparkline(jv)} | Trends ${asciiSparkline(tv)}`;
+  });
+  return `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nDASHBOARD TREND STRIPS (ASCII)\n${lines.join("\n")}`;
+}
+function simpleMarkdownToHtml(md) {
+  if (!md) return "";
+  const esc = (s) => escapeHtml(s);
+  const lines = String(md).split("\n");
+  const out = [];
+  let para = [];
+  const flush = () => {
+    if (!para.length) return;
+    const raw = esc(para.join(" ")).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    out.push(`<p style="margin:0 0 12px;line-height:1.65;color:#1a1d26">${raw}</p>`);
+    para = [];
+  };
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t) {
+      flush();
+      continue;
+    }
+    if (t.startsWith("### ")) {
+      flush();
+      out.push(`<h3 style="font:700 15px Inter,system-ui,sans-serif;margin:18px 0 6px;color:#1a1d26">${esc(t.slice(4))}</h3>`);
+      continue;
+    }
+    if (t.startsWith("## ")) {
+      flush();
+      out.push(`<h2 style="font:700 17px Inter,system-ui,sans-serif;margin:20px 0 8px;color:#1a1d26">${esc(t.slice(3))}</h2>`);
+      continue;
+    }
+    if (t.startsWith("# ")) {
+      flush();
+      out.push(`<h1 style="font:700 20px Inter,system-ui,sans-serif;margin:0 0 10px;color:#1a1d26">${esc(t.slice(2))}</h1>`);
+      continue;
+    }
+    if (/^━+$/.test(t) || t === "---") {
+      flush();
+      out.push("<hr style=\"border:none;border-top:1px solid #e1e4ea;margin:16px 0\" />");
+      continue;
+    }
+    para.push(t);
+  }
+  flush();
+  return out.join("\n");
+}
+function buildSvgSparkline(vals, w, h, stroke) {
+  const v = (vals || []).map(Number);
+  if (v.length < 2) return "";
+  const pad = 6;
+  const lo = Math.min(...v), hi = Math.max(...v);
+  const span = hi - lo || 1;
+  const step = (w - 2 * pad) / (v.length - 1);
+  const d = v.map((n, i) => {
+    const x = pad + i * step;
+    const y = pad + (1 - (n - lo) / span) * (h - 2 * pad);
+    return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block;max-width:100%"><rect fill="#f8fafc" width="100%" height="100%" rx="6"/><path d="${d}" fill="none" stroke="${stroke}" stroke-width="2"/></svg>`;
+}
+function buildBriefChartsHtml(ctx) {
+  if (!ctx?.verticals?.length) return "";
+  const parts = [`<div style="font:12px Inter,system-ui,sans-serif;color:#4b5163;margin-bottom:12px">Trend snapshots from your dashboard at report generation time.</div>`];
+  for (const v of ctx.verticals) {
+    const mon = v.theirstack_historical?.recent_monthly || [];
+    const jobVals = mon.length >= 2 ? mon.map((m) => m.count || 0) : (v.signals?.job_postings?.time_series?.recent_values || []).map((p) => p.value || 0);
+    const trendVals = (v.signals?.google_trends?.time_series?.recent_values || []).map((p) => p.value || 0);
+    parts.push(`<div style="margin-bottom:14px;padding:12px;border:1px solid #e1e4ea;border-radius:8px;background:#fff">`);
+    parts.push(`<div style="font:600 13px Inter,system-ui,sans-serif;color:#1a1d26;margin-bottom:8px">${escapeHtml(v.name)}</div>`);
+    parts.push(`<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>`);
+    if (jobVals.length >= 2) {
+      parts.push(`<td style="vertical-align:top;width:50%;padding-right:6px"><div style="font:10px Arial,sans-serif;color:#8b92a5;margin-bottom:4px">Job postings (index / count)</div>${buildSvgSparkline(jobVals, 280, 52, "#0284c7")}</td>`);
+    } else {
+      parts.push(`<td style="vertical-align:top;width:50%;padding-right:6px"><div style="font:10px Arial,sans-serif;color:#8b92a5">Jobs: need more history</div></td>`);
+    }
+    if (trendVals.length >= 2) {
+      parts.push(`<td style="vertical-align:top;width:50%;padding-left:6px"><div style="font:10px Arial,sans-serif;color:#8b92a5;margin-bottom:4px">Google Trends (0–100)</div>${buildSvgSparkline(trendVals, 280, 52, "#2563eb")}</td>`);
+    } else {
+      parts.push(`<td style="vertical-align:top;width:50%;padding-left:6px"><div style="font:10px Arial,sans-serif;color:#8b92a5">Trends: need more history</div></td>`);
+    }
+    parts.push(`</tr></table></div>`);
+  }
+  return `<div style="margin:0 0 20px 0">${parts.join("")}</div>`;
+}
+function briefEmailHtmlDocument(week, snapshot, markdownBody, diffMode, baseForDiff) {
+  const charts = buildBriefChartsHtml(snapshot);
+  const inner = diffMode
+    ? paragraphDiffHtml(baseForDiff, markdownBody)
+    : `${charts}<div style="font:15px/1.65 Georgia,serif;color:#1a1d26">${simpleMarkdownToHtml(markdownBody)}</div>`;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Weekly Brief ${escapeHtml(week)}</title></head><body style="margin:0;padding:28px;background:#f0f2f5;font-family:Inter,system-ui,sans-serif"><div style="max-width:720px;margin:0 auto;background:#fff;border:1px solid #e1e4ea;border-radius:12px;padding:24px 28px">${inner}</div></body></html>`;
+}
+function BriefSnapshotCharts({ ctx }) {
+  if (!ctx?.verticals?.length) return null;
+  return (
+    <div style={{ marginTop: 18, paddingTop: 18, borderTop: `1px solid ${C.border}` }}>
+      <div style={{ ...font.sans, fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>
+        Dashboard trend charts (snapshot sent to Claude)
+      </div>
+      {ctx.verticals.map((v) => {
+        const mon = v.theirstack_historical?.recent_monthly || [];
+        const jobData = mon.length >= 2
+          ? mon.map((m) => ({ x: m.month?.slice(2) || m.month, y: m.count || 0 }))
+          : (v.signals?.job_postings?.time_series?.recent_values || []).map((p, i) => ({ x: String(i), y: p.value || 0 }));
+        const trendData = (v.signals?.google_trends?.time_series?.recent_values || []).map((p, i) => ({ x: (p.date || "").slice(5, 10) || String(i), y: p.value || 0 }));
+        return (
+          <div key={v.name} style={{ marginBottom: 14, padding: 12, background: C.nested, borderRadius: 10, border: `1px solid ${C.border}` }}>
+            <div style={{ ...font.sans, fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 6 }}>{v.name}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div>
+                <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>Jobs</div>
+                {jobData.length >= 2 ? (
+                  <div style={{ width: "100%", height: 72 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={jobData} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
+                        <XAxis dataKey="x" tick={{ fontSize: 9 }} stroke={C.border} />
+                        <YAxis width={32} tick={{ fontSize: 9 }} stroke={C.border} />
+                        <Tooltip />
+                        <Line type="monotone" dataKey="y" stroke={C.cyan} strokeWidth={2} dot={false} name="Jobs" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 11, color: C.textMuted }}>Need more history</div>
+                )}
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>Google Trends</div>
+                {trendData.length >= 2 ? (
+                  <div style={{ width: "100%", height: 72 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={trendData} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
+                        <XAxis dataKey="x" tick={{ fontSize: 9 }} stroke={C.border} />
+                        <YAxis width={32} tick={{ fontSize: 9 }} stroke={C.border} />
+                        <Tooltip />
+                        <Line type="monotone" dataKey="y" stroke={C.blue} strokeWidth={2} dot={false} name="Trends" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 11, color: C.textMuted }}>Need more history</div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 function paragraphDiffHtml(oldText, newText) {
   const oldP = (oldText || "").split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
@@ -647,6 +901,11 @@ function resolveKey(source, configKeys) {
   const kid = gh ? "github" : source.id;
   // Always prefer .env keys for internal use; config keys are fallback only.
   return ENV_KEYS[kid] || ENV_KEYS[source.id] || configKeys[kid] || "";
+}
+function resolveTheirStackMocking(source, configKeys) {
+  if (source?.id !== "theirstack") return false;
+  if (theirStackMockForced()) return true;
+  return !resolveKey(source, configKeys);
 }
 
 // ── DEFAULT CONFIG ───────────────────────────────────────────────────────────
@@ -731,9 +990,19 @@ async function callSource(source, vertical, configKeys) {
       templateStr = templateStr.replace('"Co-Authored-By: Claude"', `"Co-Authored-By: Claude"+${kwQ}`);
     }
   }
+  if (resolveTheirStackMocking(source, configKeys)) {
+    const lte = new Date().toISOString().slice(0, 10);
+    const gte = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const count = mockTheirStackCountForRange(vertical, gte, lte);
+    const sample = Math.min(25, Math.max(5, Math.ceil(count / 50)));
+    return {
+      metadata: { total_results: count },
+      data: buildMockTheirStackJobItems(sample, vertical),
+    };
+  }
   const filled = fillTemplate(templateStr, tv);
   const ep = cfg.proxyPrefix ? cfg.proxyPrefix + cfg.endpoint : cfg.endpoint;
-  const headers = { Accept: "application/json" };
+  const headers = { Accept: source.id === "claude_attrib" ? "application/vnd.github.cloak-preview+json" : "application/json" };
   const key = resolveKey(source, configKeys);
   if (cfg.authType === "bearer" && key) headers.Authorization = `Bearer ${key}`;
   if (cfg.authType === "header" && cfg.authHeader && key) headers[cfg.authHeader] = key;
@@ -747,23 +1016,24 @@ async function callSource(source, vertical, configKeys) {
   }
   else { headers["Content-Type"] = "application/json"; body = filled; }
   let res;
-  try {
-    res = await fetch(url, { method: cfg.method, headers, body });
-    if (source.id === "google_trends" && !res.ok) {
-      const fallbackUrl = "/serpapi/search.json?" + url.split("?").slice(1).join("?");
-      try { const fb = await fetch(fallbackUrl, { method: cfg.method, headers }); if (fb.ok) res = fb; } catch {}
-    }
-  } catch (networkErr) {
-    if (source.id === "google_trends") {
-      const qs = url.split("?").slice(1).join("?");
-      const fallbackUrl = "/serpapi/search.json?" + qs;
-      try { res = await fetch(fallbackUrl, { method: cfg.method, headers }); } catch {
-        const directUrl = "https://serpapi.com/search.json?" + qs;
-        try { res = await fetch(directUrl, { method: cfg.method, headers }); } catch {
-          throw new Error("Cannot reach Google Trends — check SERPAPI_KEY in Vercel env vars");
+  if (source.id === "google_trends") {
+    const qs = url.split("?").slice(1).join("?");
+    const tryFetch = async (u) => { const r = await fetch(u, { method: "GET", headers }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r; };
+    try { res = await tryFetch(url); } catch {
+      try { res = await tryFetch("/serpapi/search.json?" + qs); } catch {
+        try {
+          const serpKey = key || "";
+          const directQs = qs.includes("api_key=") ? qs : qs + (serpKey ? `&api_key=${serpKey}` : "");
+          res = await tryFetch("https://serpapi.com/search.json?" + directQs);
+        } catch {
+          throw new Error("Cannot reach Google Trends — verify SERPAPI_KEY in Vercel env vars and that your API credits are active");
         }
       }
-    } else {
+    }
+  } else {
+    try {
+      res = await fetch(url, { method: cfg.method, headers, body });
+    } catch (networkErr) {
       throw new Error("Network error — check connection");
     }
   }
@@ -987,21 +1257,54 @@ const SOURCE_INFO = {
     metric: "Total matching job postings (US, last 30 days)",
     how: "POST to TheirStack /v1/jobs/search — aggregates LinkedIn, Indeed, Glassdoor & thousands of ATS platforms (Greenhouse, Lever, Workable) into one deduplicated count. Title keywords match against job_title_or, description keywords match against job_description_pattern_or.",
     investment: "Job postings are the strongest leading indicator of enterprise AI spend. Rising counts signal expanding headcount budgets (6-12 month forward spend). A shift from 'AI strategy' titles to 'ML engineer' or 'platform engineer' titles indicates the transition from exploration to committed deployment — this is when procurement cycles begin. Sustained 30%+ WoW growth with language shift = high-confidence budget acceleration signal. Declining postings after a peak often precedes earnings misses in AI-exposed vendors.",
+    leadLag: "6–12 months. Job postings lead vendor revenue by 2–4 quarters. Hiring intent → procurement cycle (1–2Q) → vendor contract (1Q) → revenue recognition (1Q). Contract hiring surges compress this to 3–6 months.",
+    movements: {
+      strongUp: { label: "Sustained +30% WoW growth", meaning: "Budget acceleration phase. Enterprise has moved past evaluation into committed headcount expansion. Procurement cycle has begun or is imminent. Vendor revenue inflection likely in 2–4 quarters.", marketImpact: "Bullish for AI infrastructure vendors, cloud providers, and professional services firms in this vertical. Watch for vendor earnings beats 2–3 quarters out." },
+      moderateUp: { label: "+10–30% WoW growth", meaning: "Active evaluation expanding into pilot staffing. Budgets are being allocated but not yet committed. Decision-makers are building internal teams to evaluate and deploy.", marketImpact: "Early signal — position for vendors serving this vertical. Too early for high-conviction plays but worth monitoring for acceleration." },
+      flat: { label: "±10% WoW (stable)", meaning: "Steady-state demand. Either the vertical hasn't caught the AI wave yet, or it has already absorbed it into baseline hiring. Check other signals for context.", marketImpact: "Neutral. If flat while other signals (search, repos) are rising, this is a divergence — indicates 'tire-kicking' without budget commitment." },
+      moderateDown: { label: "-10–30% WoW decline", meaning: "Budget tightening or hiring freeze. Could indicate: (a) project completion and move to maintenance, (b) macro headwinds hitting the vertical, or (c) shift from hiring to vendor procurement (outsourcing the AI work).", marketImpact: "Watch for the cause. If paired with rising vendor adoption signals, it means build-vs-buy has shifted to buy — bullish for vendors. If across-the-board decline, defensive positioning warranted." },
+      strongDown: { label: "Sustained -30% WoW decline", meaning: "Budget freeze or strategic retreat. The vertical is pulling back from AI investment. Two consecutive months of decline historically precedes earnings misses in AI-exposed vendors serving this vertical.", marketImpact: "Bearish for vendors with concentrated exposure to this vertical. Reduce positions. Watch for contagion to adjacent verticals." },
+      titleShift: { label: "Title mix shifting from strategy → engineering", meaning: "The most important signal in this metric. When 'AI Strategy Lead' postings decline while 'ML Engineer', 'MLOps', 'Platform Engineer' postings rise, the vertical has crossed from exploration to implementation. Procurement is active.", marketImpact: "High-conviction bullish signal. This is where the budget commitment happens. Vendor revenue acceleration begins 1–2 quarters after this shift." },
+    },
   },
   google_trends: {
     metric: "Google Trends relative interest index (0–100 scale, not absolute search counts)",
     how: "GET via SerpAPI google_trends engine — returns a normalized search interest score where 100 = peak popularity for that keyword in the selected time range, 50 = half that peak, 0 = insufficient data. This is NOT an absolute count of Google searches. It measures relative popularity compared to the keyword's own historical peak within the time window. Momentum compares the current reading to the 4-week rolling average.",
     investment: "Search interest is a demand-side awareness proxy. Rising trends for specific AI tools or methodologies (e.g. 'AI copilot', 'RAG pipeline') signal enterprise decision-makers in active evaluation. Momentum > +15% suggests accelerating mindshare — procurement teams are researching. A divergence between high search trends and low job postings suggests 'tire-kicking' — awareness without budget commitment. Convergence of both rising = strong conviction signal for AI infrastructure vendors.",
+    leadLag: "1–4 weeks for volatility/attention effects. 3–9 months for enterprise procurement impact. Search spikes predict increased trading volume within 1–2 weeks (academic: Granger-causal at p<0.05). Enterprise procurement cycles triggered by search activity materialize in 2–3 quarters.",
+    movements: {
+      strongUp: { label: "Index jumps >20 points in <4 weeks", meaning: "Viral attention event — could be a product launch, regulatory announcement, or industry inflection. Decision-makers across the vertical are actively researching. This is the 'awareness shock' that precedes enterprise evaluation cycles.", marketImpact: "Short-term: increased trading volume and volatility in related stocks within 1–2 weeks. Medium-term: if sustained >4 weeks, procurement teams are entering evaluation — vendor pipeline builds over next 2 quarters." },
+      moderateUp: { label: "Steady +5–15 point climb over 8+ weeks", meaning: "Organic demand growth. Not a spike — sustained interest indicates a structural shift in the vertical's relationship with the technology. This is the most reliable search signal because it filters out noise.", marketImpact: "Medium-conviction bullish. Vendor pipeline is building. Revenue impact in 2–4 quarters. More reliable than spike signals because it indicates genuine adoption momentum, not hype." },
+      peakAndDecline: { label: "Index hits 80+ then drops 30%+", meaning: "Hype cycle peak followed by 'trough of disillusionment.' The vertical had intense initial interest but is now in evaluation fatigue or has decided against adoption. Common with immature or overhyped technologies.", marketImpact: "Bearish short-term for vendors targeting this vertical. But watch for a 'plateau of productivity' signal — if index stabilizes at 40–60 range, the serious buyers remain. The tourists have left." },
+      flat: { label: "Index stable 20–50 range", meaning: "Steady background awareness. The vertical knows about the technology but isn't actively researching it. Either already adopted (check job postings) or not yet motivated (watch for a catalyst).", marketImpact: "Neutral. Pair with other signals. Flat search + rising jobs = internal mandate (search happened months ago). Flat search + flat jobs = no current demand catalyst." },
+      divergenceWithJobs: { label: "Search rising + Jobs flat/falling", meaning: "CRITICAL DIVERGENCE: Awareness without budget commitment. The vertical is 'tire-kicking.' Decision-makers are interested personally but haven't convinced budget holders. This gap closes either by jobs rising (bull case) or search declining (bear case).", marketImpact: "Wait for resolution. Do NOT position based on search alone when jobs diverge. The gap typically resolves within 2–3 months." },
+    },
   },
   github_repos: {
     metric: "Active GitHub repositories matching keywords (pushed in last 30 days)",
     how: "GET to GitHub Search API /search/repositories — filters by keyword and pushed:>30d ago. Measures active open-source development activity.",
     investment: "Open-source activity is a supply-side innovation proxy. Growing repo counts indicate an expanding developer ecosystem building tooling around a technology. This leads enterprise adoption by 6-18 months — enterprises build on mature OSS. Rapid growth (>50% increase) in repos for a specific framework signals it may become the dominant standard, making vendors built on that stack more defensible. Declining activity = consolidation phase, fewer new entrants, potential winner-take-most dynamics.",
+    leadLag: "6–18 months. OSS ecosystem maturity leads enterprise deployment by 2–6 quarters. Developer experimentation (repos) → open-source tooling matures → enterprise evaluates mature stack → procurement. This is the longest lead-time signal but also the highest-conviction for structural trends.",
+    movements: {
+      strongUp: { label: "+50% or more repo growth in 30 days", meaning: "Ecosystem explosion. A new framework or approach has captured developer mindshare. Generative AI repos grew 178% YoY through 2025 — this level of growth indicates a technology is transitioning from experimental to infrastructure-grade.", marketImpact: "Bullish for platforms built on this stack. Enterprises adopt mature OSS — high repo growth today means vendor integration opportunities in 3–6 quarters. Identify which companies are building on this ecosystem." },
+      moderateUp: { label: "+15–50% repo growth over 30 days", meaning: "Healthy ecosystem expansion. Developer interest is translating into projects. This is typical of technologies past the 'hype' phase entering real tooling development.", marketImpact: "Constructive for the ecosystem. Start identifying which enterprise vendors are wrapping services around this OSS. Revenue impact in 4–6 quarters as enterprises need commercial support." },
+      flat: { label: "±15% stable repo count", meaning: "Mature technology. Developer ecosystem is established but not rapidly expanding. Could indicate: (a) technology is broadly adopted (check HF downloads), or (b) interest has plateaued.", marketImpact: "Neutral for new plays. If the tech is already broadly adopted, winners are known. Look for 'second derivative' — adjacent tooling repos growing even if core repos are stable." },
+      declining: { label: "Repo count declining >15%", meaning: "Consolidation or abandonment. Developer attention is shifting away. If this is a narrow framework, it may be losing to a competitor. If broad technology, developers may be moving from experimentation to fewer, higher-quality production implementations.", marketImpact: "Differentiate cause: consolidation (bullish for winners) vs abandonment (bearish for the technology). Declining repos + rising enterprise adoption = healthy maturation. Declining repos + declining everything = the technology is failing." },
+      languageShift: { label: "Primary language of repos shifts (e.g., Python → TypeScript)", meaning: "Enterprise signal. TypeScript overtook Python on GitHub in Aug 2025, reflecting enterprise preference for type-safe systems paired with AI tools. When repos shift from scripting languages to enterprise languages, it signals the technology is crossing from prototyping to production.", marketImpact: "Bullish for enterprise readiness. Production-grade repos attract enterprise evaluation. Revenue impact for tooling vendors begins 2–3 quarters after the language shift." },
+    },
   },
   claude_attrib: {
     metric: "GitHub commits with AI co-author signatures (last 7 days)",
     how: 'GET to GitHub Search API /search/commits — searches for "Co-Authored-By: Claude" in commit messages within the past 7 days.',
     investment: "AI-attributed commits are a direct measure of AI coding tool penetration into real development workflows. Growth here tracks the actual productization of AI assistants — not just interest, but daily usage. Accelerating attribution rates signal that AI coding tools are reaching 'default tool' status, which directly impacts: (1) developer productivity metrics in earnings calls, (2) seat expansion for AI coding platforms, (3) compute demand for inference at scale. This is the most concrete 'AI is being used' signal vs. 'AI is being talked about'.",
+    leadLag: "0–3 months. This is the most real-time signal. Attribution rates directly reflect current tool usage. Revenue impact for AI coding platforms (Anthropic, GitHub/Microsoft) is nearly immediate — seat counts expand within the same quarter. Compute demand impact (cloud providers) follows within 1 quarter.",
+    movements: {
+      strongUp: { label: "+40% WoW attribution growth", meaning: "Viral adoption event. A new model release, pricing change, or enterprise rollout is driving rapid uptake. Claude Code reached 69% market share by Jan 2026, growing from near-zero in 9 months — this is the speed at which AI tool adoption moves.", marketImpact: "Immediately bullish for the AI coding platform (Anthropic revenue), cloud compute providers (inference demand), and the broader 'AI is real' thesis. This signal has zero lag — it IS the adoption." },
+      moderateUp: { label: "+10–40% WoW steady growth", meaning: "Organic adoption expansion. More developers are integrating AI into daily workflows. 73% of engineering teams now use AI coding tools daily (up from 41% in 2025). Steady growth indicates the tool is becoming default behavior, not a novelty.", marketImpact: "Bullish for platform revenue (seat expansion) and compute providers (inference volume). Productivity gains (2.1x features shipped/sprint, 38% fewer bugs) flow into enterprise earnings 1–2 quarters later as hiring needs decrease." },
+      plateau: { label: "Attribution count stabilizes (±10%)", meaning: "Market saturation for the current tool version. The existing user base is stable. New growth requires: (a) a new model release driving capability step-change, (b) enterprise mandates pushing remaining holdouts, or (c) expansion into new geographies/industries.", marketImpact: "Neutral for the platform. Revenue stabilizes but doesn't decline. Watch for competitive dynamics — if Claude attribution plateaus while Copilot attribution rises, market share is shifting." },
+      decline: { label: "Attribution count drops >15%", meaning: "Competitive displacement or backlash. Developers are switching tools or reverting to manual coding. Could be: (a) a better competitor emerged, (b) enterprise policy restricted AI tool use, or (c) a model quality regression.", marketImpact: "Bearish for the specific platform. Identify the beneficiary — attribution is a zero-sum game across tools. If ALL AI attribution declines, this is a bearish signal for the entire AI coding thesis." },
+      enterprisePattern: { label: "Weekday/weekend ratio shifts toward weekdays", meaning: "Enterprise adoption signal. When attribution concentrates on weekdays, it means companies — not hobbyists — are driving usage. Enterprise seats are 3–5x more valuable than individual developer seats.", marketImpact: "Bullish for enterprise revenue. Enterprise contracts are larger, stickier, and have expansion potential. This pattern shift precedes seat count acceleration in earnings reports by 1 quarter." },
+    },
   },
 };
 
@@ -1020,6 +1323,92 @@ function formatChartDateShort(iso) {
   if (diffDays < 1) return d.toLocaleTimeString("en-US", { hour:"2-digit", minute:"2-digit" });
   if (diffDays < 365) return d.toLocaleDateString("en-US", { month:"short", day:"numeric" });
   return d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"2-digit" });
+}
+
+// ── ANNOTATION TYPES ─────────────────────────────────────────────────────────
+const ANNOTATION_TYPES = [
+  { id: "inflection", label: "Inflection Detected", color: "#ef4444", icon: "⬥" },
+  { id: "thesis_change", label: "Thesis Change", color: "#f59e0b", icon: "◆" },
+  { id: "catalyst", label: "Catalyst / Event", color: "#8b5cf6", icon: "★" },
+  { id: "risk", label: "Risk Flag", color: "#ec4899", icon: "⚠" },
+  { id: "note", label: "General Note", color: "#6b7280", icon: "●" },
+];
+
+function AnnotationMarker({ ann, x, chartHeight }) {
+  const tp = ANNOTATION_TYPES.find(t => t.id === ann.type) || ANNOTATION_TYPES[4];
+  const [hover, setHover] = useState(false);
+  return (
+    <g onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)} style={{ cursor: "pointer" }}>
+      <line x1={x} x2={x} y1={0} y2={chartHeight - 30} stroke={tp.color} strokeWidth={1.5} strokeDasharray="3 3" opacity={0.6} />
+      <text x={x} y={12} textAnchor="middle" fill={tp.color} fontSize={14} fontWeight="bold">{tp.icon}</text>
+      {hover && (
+        <foreignObject x={x - 120} y={18} width={240} height={100}>
+          <div xmlns="http://www.w3.org/1999/xhtml" style={{ ...font.sans, fontSize: 11, background: C.white, border: `1px solid ${tp.color}44`, borderRadius: 8, padding: "6px 10px", boxShadow: "0 4px 12px rgba(0,0,0,.12)" }}>
+            <div style={{ fontWeight: 700, color: tp.color, marginBottom: 2 }}>{tp.icon} {tp.label}</div>
+            <div style={{ color: C.text, marginBottom: 3 }}>{ann.note}</div>
+            <div style={{ color: C.textMuted, fontSize: 10 }}>{ann.author || "Team"} · {new Date(ann.isoDate).toLocaleDateString()}</div>
+          </div>
+        </foreignObject>
+      )}
+    </g>
+  );
+}
+
+function AnnotationForm({ signalKey, signalLabel, onAdd, onClose }) {
+  const [type, setType] = useState("inflection");
+  const [note, setNote] = useState("");
+  const [author, setAuthor] = useState(() => ld("annotation_author", ""));
+  const submit = () => {
+    if (!note.trim()) return;
+    sv("annotation_author", author);
+    onAdd({ signalKey, signalLabel, type, note: note.trim(), author: author.trim() || "Team" });
+    onClose();
+  };
+  const inputSt = { ...font.sans, fontSize: 12, padding: "6px 10px", border: `1px solid ${C.border}`, borderRadius: 8, background: C.white, color: C.text, width: "100%" };
+  return (
+    <div className="fade-in" style={{ padding: "12px 14px", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, marginTop: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <span style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text }}>Add annotation — {signalLabel}</span>
+        <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted, fontSize: 16 }}>✕</button>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+        {ANNOTATION_TYPES.map(t => (
+          <button key={t.id} onClick={() => setType(t.id)}
+            style={{ ...font.sans, fontSize: 11, padding: "4px 10px", borderRadius: 16, cursor: "pointer", border: type === t.id ? `2px solid ${t.color}` : `1px solid ${C.border}`, background: type === t.id ? t.color + "18" : C.white, color: type === t.id ? t.color : C.textSec, fontWeight: type === t.id ? 700 : 500 }}>
+            {t.icon} {t.label}
+          </button>
+        ))}
+      </div>
+      <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="What did you observe? Why does it matter?" rows={2} style={{ ...inputSt, resize: "vertical", marginBottom: 6 }} />
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input value={author} onChange={e => setAuthor(e.target.value)} placeholder="Your name" style={{ ...inputSt, maxWidth: 160 }} />
+        <Btn size="sm" variant="accent" onClick={submit} disabled={!note.trim()}>Save</Btn>
+      </div>
+    </div>
+  );
+}
+
+function AnnotationLog({ annotations, signalKey, onDelete }) {
+  const filtered = signalKey ? annotations.filter(a => a.signalKey === signalKey) : annotations;
+  if (!filtered.length) return null;
+  const sorted = [...filtered].sort((a, b) => b.ts - a.ts);
+  return (
+    <div style={{ marginTop: 8 }}>
+      {sorted.slice(0, 10).map(ann => {
+        const tp = ANNOTATION_TYPES.find(t => t.id === ann.type) || ANNOTATION_TYPES[4];
+        return (
+          <div key={ann.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "6px 0", borderBottom: `1px solid ${C.borderLight}` }}>
+            <span style={{ color: tp.color, fontSize: 12, flexShrink: 0, marginTop: 1 }}>{tp.icon}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ ...font.sans, fontSize: 11, color: C.text }}>{ann.note}</div>
+              <div style={{ ...font.sans, fontSize: 10, color: C.textMuted }}>{tp.label} · {ann.author || "Team"} · {new Date(ann.isoDate).toLocaleDateString()}{ann.signalLabel ? ` · ${ann.signalLabel}` : ""}</div>
+            </div>
+            {onDelete && <button onClick={() => onDelete(ann.id)} style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted, fontSize: 12, flexShrink: 0 }}>✕</button>}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function zoomedYDomain(values) {
@@ -1509,6 +1898,16 @@ function PcaobSignalPanel({ onDataChanged }) {
           <div style={{...font.sans,fontSize:11,color:C.textMuted,lineHeight:1.5,padding:"8px 12px",background:C.nested,borderRadius:8,marginBottom:8}}>
             <strong style={{color:C.text}}>Investment thesis:</strong> When Big 4 and regional firm deficiency rates converge, it signals that AI-powered audit tooling is democratizing — smaller firms are closing the quality gap through technology adoption. A narrowing gap (&lt;15pp) is a leading indicator of broad-based AI infrastructure spend across the professional services vertical. Current gap: <strong style={{color:analysis.gap < 15 ? C.green : C.amber}}>{analysis.gap}pp</strong>.
           </div>
+          <div style={{...font.sans,fontSize:11,color:C.textSec,lineHeight:1.5,padding:"8px 12px",background:C.cyanBg,borderRadius:8,marginBottom:8,border:`1px solid ${C.cyan}22`}}>
+            <strong style={{color:C.cyan}}>Lead/Lag: 12–24 months.</strong> PCAOB inspections are annual/triennial with 6–12 month publication delays. Deficiency rate changes reflect technology adoption that happened 1–2 years prior. This is a <em>confirmation signal</em>, not a leading indicator — but it's almost certainly unpriced because no one tracks it systematically.
+          </div>
+          <div style={{...font.sans,fontSize:11,color:C.textSec,lineHeight:1.5,padding:"8px 12px",background:C.nested,borderRadius:8,marginBottom:8}}>
+            <strong style={{color:C.text}}>What movements mean:</strong><br/>
+            <span style={{color:C.green,fontWeight:600}}>Gap narrowing &lt;15pp:</span> AI audit tools are leveling quality across firm tiers. Regional firms investing in technology = broad-based professional services AI spend. Bullish for audit tech vendors (Workiva, Wolters Kluwer, CaseWare).<br/>
+            <span style={{color:C.amber,fontWeight:600}}>Gap stable 15–30pp:</span> Big 4 maintaining tech advantage. AI adoption concentrated among top firms. Neutral — watch for acceleration.<br/>
+            <span style={{color:C.red,fontWeight:600}}>Gap widening &gt;30pp:</span> Technology is increasing the quality divide, not closing it. Smaller firms falling behind. AI audit tools may be too expensive/complex for smaller firms — bearish for broad adoption thesis.<br/>
+            <span style={{color:C.blue,fontWeight:600}}>All tiers declining together:</span> The strongest signal. When <em>all</em> firm tiers improve simultaneously, it indicates systemic technology adoption across the profession. Deficiency rates dropped from 46% to 39% in 2024 — first decline in 4 years.
+          </div>
           <button onClick={()=>setExpanded(!expanded)} style={{...font.sans,fontSize:11,color:C.textSec,background:"none",border:"none",cursor:"pointer",padding:0}}>
             {expanded ? "▾ Hide firm details" : "▸ Show firm details by year"}
           </button>
@@ -1587,12 +1986,37 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
         </div>
 
         {info&&(
-          <Expandable title={showInfo?"Hide methodology & investment implications":"Show methodology & investment implications"}>
-            <div style={{padding:"10px 14px",background:C.white,borderRadius:10,border:`1px solid ${C.borderLight}`}}>
-              <div style={{fontSize:12,color:C.textSec,lineHeight:1.6,marginBottom:8}}>{info.how}</div>
+          <Expandable title="Show methodology, lead/lag timing & signal interpretation guide">
+            <div style={{padding:"10px 14px",background:C.white,borderRadius:10,border:`1px solid ${C.borderLight}`,display:"flex",flexDirection:"column",gap:10}}>
+              <div style={{fontSize:12,color:C.textSec,lineHeight:1.6}}>{info.how}</div>
+              {info.leadLag&&(
+                <div style={{fontSize:12,lineHeight:1.6,padding:"10px 12px",background:C.cyanBg,borderRadius:8,border:`1px solid ${C.cyan}22`,color:C.text}}>
+                  <span style={{fontWeight:700,color:C.cyan,display:"block",marginBottom:2}}>Lead/Lag Timing</span>{info.leadLag}
+                </div>
+              )}
               <div style={{fontSize:12,color:C.amber,lineHeight:1.6,padding:"10px 12px",background:C.amberBg,borderRadius:8,border:`1px solid ${C.amber}22`}}>
                 <span style={{fontWeight:700,display:"block",marginBottom:2}}>Investment Implication</span>{info.investment}
               </div>
+              {info.movements&&(
+                <div style={{marginTop:4}}>
+                  <div style={{...font.sans,fontSize:11,fontWeight:700,color:C.text,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>What Movements Mean</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {Object.entries(info.movements).map(([k,m])=>{
+                      const sevColor = k.includes("strongUp")||k.includes("enterprisePattern")||k.includes("titleShift") ? C.green : k.includes("moderateUp")||k.includes("languageShift") ? C.blue : k.includes("flat")||k.includes("plateau") ? C.textMuted : k.includes("decline")||k.includes("strongDown") ? C.red : C.amber;
+                      return (
+                        <div key={k} style={{padding:"10px 12px",background:sevColor+"06",border:`1px solid ${sevColor}18`,borderRadius:8}}>
+                          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                            <span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:sevColor,flexShrink:0}}/>
+                            <span style={{...font.sans,fontSize:12,fontWeight:700,color:C.text}}>{m.label}</span>
+                          </div>
+                          <div style={{...font.sans,fontSize:11.5,color:C.textSec,lineHeight:1.55,marginBottom:6}}>{m.meaning}</div>
+                          <div style={{...font.sans,fontSize:11,color:sevColor,lineHeight:1.5,fontWeight:600,paddingLeft:14,borderLeft:`2px solid ${sevColor}44`}}>{m.marketImpact}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </Expandable>
         )}
@@ -1803,7 +2227,7 @@ function HuggingFaceLeaderboard({onDataChanged}) {
   return (
     <Card style={{padding:0,overflow:"hidden"}} className="fade-in-slow">
       <div style={{padding:"18px 22px 14px",background:C.white}}>
-        <SectionHeader icon={<IcoC name="database" size={18} color={C.blue}/>} title="Hugging Face Leaderboard" subtitle="Open-source model adoption across major AI companies. Download volume = developer ecosystem gravity."
+        <SectionHeader icon={<IcoC name="database" size={18} color={C.blue}/>} title="Hugging Face Leaderboard" subtitle="Open-source model adoption across major AI companies. Download volume = developer ecosystem gravity. Lead time: 3–9 months before enterprise deployment revenue."
           badge={<Badge color={C.green} bg={C.greenBg} size="sm">Public API</Badge>}
           right={<>
             {data?.timestamp&&<span style={{...font.sans,fontSize:11,color:C.textMuted}}>{timeAgo(data.timestamp)}</span>}
@@ -1811,6 +2235,35 @@ function HuggingFaceLeaderboard({onDataChanged}) {
             <Btn variant="primary" size="sm" onClick={doFetch} disabled={isL}>{isL?<><Spinner size={12} color="#fff"/> Fetching</>:"Refresh"}</Btn>
           </>}
         />
+        <Expandable title="Show lead/lag timing & signal interpretation guide">
+          <div style={{padding:"10px 14px",background:C.white,borderRadius:10,border:`1px solid ${C.borderLight}`,display:"flex",flexDirection:"column",gap:8}}>
+            <div style={{fontSize:12,lineHeight:1.6,padding:"10px 12px",background:C.cyanBg,borderRadius:8,border:`1px solid ${C.cyan}22`,color:C.text}}>
+              <span style={{fontWeight:700,color:C.cyan,display:"block",marginBottom:2}}>Lead/Lag: 3–9 months</span>
+              Hugging Face downloads track developer experimentation and early production deployment of open-source models. Enterprise deployment follows 1–3 quarters after download surges, as companies move from testing to production. Cloud providers embedding HF models (Azure AI Foundry: 1.7M+ models, Google Cloud CDN: 2M+ models) compress this lag.
+            </div>
+            <div style={{...font.sans,fontSize:11,fontWeight:700,color:C.text,textTransform:"uppercase",letterSpacing:"0.05em",marginTop:4}}>What Movements Mean</div>
+            <div style={{padding:"8px 12px",background:C.green+"06",border:`1px solid ${C.green}18`,borderRadius:8}}>
+              <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:3}}>Download leader changes position</div>
+              <div style={{...font.sans,fontSize:11.5,color:C.textSec,lineHeight:1.55,marginBottom:4}}>When a new organization overtakes the download leader, it signals a platform shift. Meta's Llama led with 23.2% of downloads by late 2025, but Qwen reached 20% — market fragmentation means enterprises are diversifying away from single-vendor dependence.</div>
+              <div style={{...font.sans,fontSize:11,color:C.green,lineHeight:1.5,fontWeight:600,paddingLeft:14,borderLeft:`2px solid ${C.green}44`}}>Bullish for infrastructure-agnostic tooling vendors. Bearish for platforms locked to a single model family. Revenue impact in 2–4 quarters.</div>
+            </div>
+            <div style={{padding:"8px 12px",background:C.blue+"06",border:`1px solid ${C.blue}18`,borderRadius:8}}>
+              <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:3}}>Broad download acceleration across all orgs</div>
+              <div style={{...font.sans,fontSize:11.5,color:C.textSec,lineHeight:1.55,marginBottom:4}}>When all tracked organizations see rising downloads simultaneously, the open-source AI market is expanding structurally. This happened in 2025 when open models reached parity with proprietary systems on most enterprise tasks at 5–25x lower cost.</div>
+              <div style={{...font.sans,fontSize:11,color:C.blue,lineHeight:1.5,fontWeight:600,paddingLeft:14,borderLeft:`2px solid ${C.blue}44`}}>Bullish for the entire open-source AI ecosystem. Inference compute demand rises. Enterprise deployment revenue for model-hosting platforms in 2–3 quarters.</div>
+            </div>
+            <div style={{padding:"8px 12px",background:C.amber+"06",border:`1px solid ${C.amber}18`,borderRadius:8}}>
+              <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:3}}>Single org spiking while others flat</div>
+              <div style={{...font.sans,fontSize:11.5,color:C.textSec,lineHeight:1.55,marginBottom:4}}>A new model release from one org capturing developer attention. Often follows a benchmark result or viral demo. Check if the spike sustains beyond 2 weeks — transient spikes are hype, sustained shifts indicate genuine capability advantage.</div>
+              <div style={{...font.sans,fontSize:11,color:C.amber,lineHeight:1.5,fontWeight:600,paddingLeft:14,borderLeft:`2px solid ${C.amber}44`}}>Wait for confirmation. If sustained 3+ weeks, the org has a real moat. If transient, ignore. Revenue impact only from sustained shifts.</div>
+            </div>
+            <div style={{padding:"8px 12px",background:C.red+"06",border:`1px solid ${C.red}18`,borderRadius:8}}>
+              <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:3}}>Download volume declining across the board</div>
+              <div style={{...font.sans,fontSize:11.5,color:C.textSec,lineHeight:1.55,marginBottom:4}}>Enterprise and developer interest in open-source models is waning. Could indicate: (a) proprietary models pulling ahead in capability, (b) regulatory concerns, or (c) seasonal patterns (holiday periods).</div>
+              <div style={{...font.sans,fontSize:11,color:C.red,lineHeight:1.5,fontWeight:600,paddingLeft:14,borderLeft:`2px solid ${C.red}44`}}>Bearish for open-source model platforms. Check if proprietary API usage (Claude, GPT) is rising simultaneously — if yes, the build-vs-buy equation has shifted toward buy.</div>
+            </div>
+          </div>
+        </Expandable>
 
         {/* Top 3 podium */}
         {top3.length>=3&&(
@@ -2266,7 +2719,8 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
         3. Go to <strong>Email Templates</strong> → Create template with these variables:<br/>
         <span style={{fontFamily:"monospace",fontSize:10,background:C.white,padding:"2px 6px",borderRadius:4,marginLeft:12}}>{"{{to_email}}"}</span> (To field),
         <span style={{fontFamily:"monospace",fontSize:10,background:C.white,padding:"2px 6px",borderRadius:4}}>{"{{subject}}"}</span> (Subject field),
-        <span style={{fontFamily:"monospace",fontSize:10,background:C.white,padding:"2px 6px",borderRadius:4}}>{"{{report_content}}"}</span> (Body)<br/>
+        <span style={{fontFamily:"monospace",fontSize:10,background:C.white,padding:"2px 6px",borderRadius:4}}>{"{{report_content}}"}</span> (plain text + ASCII charts),
+        optional <span style={{fontFamily:"monospace",fontSize:10,background:C.white,padding:"2px 6px",borderRadius:4}}>{"{{report_html}}"}</span> (full HTML with inline SVG graphs — use in template body as HTML if your provider allows)<br/>
         4. Copy your IDs below:
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:6}}>
@@ -2334,9 +2788,9 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
       {[
         { icon: "briefcase", color: C.cyan, title: "Job Postings (TheirStack)", desc: "Counts AI-related job postings matching your keywords across US employers. Tracks hiring volume, language stage classification (exploration vs. deployment), and historical trends back to 2021. Requires TheirStack API key." },
-        { icon: "trendUp", color: C.blue, title: "Google Trends (SerpAPI)", desc: "Measures relative search interest (0\u2013100) for your keywords on Google. Computes momentum vs. 4-week rolling average. Can backfill 5 years of weekly data in a single API call. Requires SerpAPI key." },
-        { icon: "code", color: C.green, title: "GitHub Repos", desc: "Counts active repositories matching your keywords that had pushes in the last 30 days. Tracks open-source ecosystem growth as a leading indicator of enterprise adoption (6\u201318 month lead). Can backfill monthly repo counts back to 2021. Requires GitHub PAT." },
-        { icon: "bot", color: C.purple, title: "Claude Code Attribution", desc: "Counts GitHub commits with 'Co-Authored-By: Claude' signatures in the past 7 days. Measures real AI coding tool penetration into production workflows. Can backfill monthly counts from Jan 2023. Requires GitHub PAT." },
+        { icon: "trendUp", color: C.blue, title: "Google Trends (SerpAPI)", desc: "Measures relative search interest (0\u2013100) for your keywords on Google. Computes momentum vs. 4-week rolling average. Backfills 12 months of weekly data in a single API call. Leads enterprise procurement by 3\u20139 months. Requires SerpAPI key." },
+        { icon: "code", color: C.green, title: "GitHub Repos", desc: "Counts active repositories matching your keywords with pushes in the last 30 days. Tracks open-source ecosystem growth \u2014 leads enterprise adoption by 6\u201318 months. Backfills monthly repo counts for the past year. Requires GitHub PAT." },
+        { icon: "bot", color: C.purple, title: "Claude Code Attribution", desc: "Counts GitHub commits with 'Co-Authored-By: Claude' signatures in the past 7 days. The most real-time signal \u2014 0\u20133 month lead on AI platform revenue. Backfills monthly counts for the past year. Requires GitHub PAT." },
         { icon: "database", color: C.amber, title: "Hugging Face Leaderboard", desc: "Tracks model download volumes across major AI companies (OpenAI, Google, Meta, Microsoft, etc.) from the Hugging Face API. Measures supply-side AI capability growth. No API key required \u2014 public API." },
         { icon: "barChart", color: C.orange, title: "Composite Scoring & Stages", desc: "Combines all signals into a weighted composite score (0\u2013100) per vertical. Classifies each into adoption stages: Watchlist \u2192 Validating \u2192 Rolling Out \u2192 Committed. Weights are adjustable in settings." },
       ].map((item, i) => (
@@ -2373,12 +2827,13 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
     <div style={{...font.sans,fontSize:13,fontWeight:700,color:C.text,marginBottom:8}}>Required API keys (set in .env file)</div>
     <div style={{...font.sans,fontSize:11,color:C.textSec,lineHeight:1.7,fontFamily:"monospace",background:C.nested,padding:"14px 18px",borderRadius:10,marginBottom:8}}>
       VITE_THEIRSTACK_KEY=your-key &nbsp;&nbsp;<span style={{color:C.textMuted}}># theirstack.com — job posting data</span><br/>
+      VITE_THEIRSTACK_MOCK=true &nbsp;&nbsp;<span style={{color:C.textMuted}}># optional — force demo job data even if a key is set</span><br/>
       VITE_SERPAPI_KEY=your-key &nbsp;&nbsp;<span style={{color:C.textMuted}}># serpapi.com — Google Trends data</span><br/>
       VITE_GITHUB_PAT=your-pat &nbsp;&nbsp;<span style={{color:C.textMuted}}># github.com — repos, commits, cloud sync</span><br/>
       VITE_ANTHROPIC_API_KEY=your-key &nbsp;&nbsp;<span style={{color:C.textMuted}}># anthropic.com — weekly AI report</span>
     </div>
     <div style={{...font.sans,fontSize:11,color:C.textMuted}}>
-      Only TheirStack, SerpAPI, and GitHub PAT are needed for core tracking. Anthropic is optional (for the AI weekly report). Hugging Face data is free and requires no key.
+      Without VITE_THEIRSTACK_KEY, job counts and backfills use realistic simulated series so charts and briefs still work. Anthropic is optional (for the AI weekly report). Hugging Face data is free and requires no key.
     </div>
   </div>);
 
@@ -2418,6 +2873,8 @@ export default function App() {
   const [historyProgress,setHistoryProgress]=useState({active:false,verticalId:null,current:0,total:0,label:""});
   const [crossCorr,setCrossCorr]=useState(()=>ld(crossCorrKey(),[]));
   const [patternNotes,setPatternNotes]=useState({});
+  const [annotations,setAnnotations]=useState(()=>getAnnotations());
+  const [showAnnotationForm,setShowAnnotationForm]=useState(null);
   const [historyOutdated,setHistoryOutdated]=useState({});
   const [githubWatchlists,setGithubWatchlists]=useState({});
   const [githubSelectedVert,setGithubSelectedVert]=useState(null);
@@ -2432,6 +2889,7 @@ export default function App() {
   const [briefHistory,setBriefHistory]=useState([]);
   const [briefDiffMode,setBriefDiffMode]=useState(false);
   const [briefBaseForDiff,setBriefBaseForDiff]=useState("");
+  const [briefSnapshot,setBriefSnapshot]=useState(null);
   const [mailingList,setMailingList]=useState(()=>ld("mailing_list",[]));
   const [emailSending,setEmailSending]=useState(false);
   const [emailStatus,setEmailStatus]=useState(null);
@@ -2474,6 +2932,7 @@ export default function App() {
       setBriefWeek(wk);
       setBriefContent(cur.content_markdown);
       setBriefBaseForDiff(cur.first_content_markdown || cur.content_markdown);
+      setBriefSnapshot(cur.data_snapshot || null);
     }
     const rows = [];
     for (let i = 0; i < localStorage.length; i++) {
@@ -2643,7 +3102,11 @@ export default function App() {
     const source = configRef.current.sources.find(s => s.id === "theirstack");
     if (!source) throw new Error("TheirStack source not configured");
     const cfg = source.apiConfig;
-    const key = resolveKey(source, configRef.current.apiKeys);
+    const keys = configRef.current.apiKeys;
+    if (resolveTheirStackMocking(source, keys)) {
+      return mockTheirStackCountForRange(vertical, gte, lte);
+    }
+    const key = resolveKey(source, keys);
     if (!key) throw new Error("Missing TheirStack API key in .env");
     const kw = vertical.keywords?.theirstack || {};
     const body = JSON.parse(cfg.bodyTemplate || "{}");
@@ -2671,9 +3134,19 @@ export default function App() {
     const kw = vertical.keywords?.google_trends?.keywords;
     const q = Array.isArray(kw) ? kw.filter(Boolean).join(",") : (kw || "");
     if (!q) throw new Error("No keywords");
-    const url = `/api/google-trends?engine=google_trends&data_type=TIMESERIES&q=${encodeURIComponent(q)}&date=today+5-y&api_key=${key}`;
+    const url = `/api/google-trends?engine=google_trends&data_type=TIMESERIES&q=${encodeURIComponent(q)}&date=today+12-m&api_key=${key}`;
     let res;
-    try { res = await fetch(url); } catch { res = await fetch(`/serpapi/search.json?engine=google_trends&data_type=TIMESERIES&q=${encodeURIComponent(q)}&date=today+5-y&api_key=${key}`); }
+    try {
+      res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch {
+      try {
+        res = await fetch(`/serpapi/search.json?engine=google_trends&data_type=TIMESERIES&q=${encodeURIComponent(q)}&date=today+12-m&api_key=${key}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      } catch {
+        res = await fetch(`https://serpapi.com/search.json?engine=google_trends&data_type=TIMESERIES&q=${encodeURIComponent(q)}&date=today+12-m&api_key=${key}`);
+      }
+    }
     if (res.status === 402) throw new Error("API credits exhausted");
     if (!res.ok) { let detail=""; try{const j=await res.clone().json();detail=j.error||"";}catch{} throw new Error(detail || `SerpAPI HTTP ${res.status}`); }
     const json = await res.json();
@@ -2693,16 +3166,19 @@ export default function App() {
     if (sourceId === "github_repos") {
       const kw = vertical.keywords?.github_repos?.keywords;
       const terms = Array.isArray(kw) ? kw.filter(Boolean).join("+") : (kw || "");
-      q = `${terms}+created:${gte}..${lte}`;
-      const res = await fetch(`https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&per_page=1`, { headers });
+      if (!terms) return 0;
+      q = `${terms}+pushed:${gte}..${lte}`;
+      const res = await fetch(`https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&sort=updated&per_page=1`, { headers });
       if (res.status === 403 || res.status === 429) throw new Error("GitHub rate limited");
+      if (res.status === 422) return 0;
       if (!res.ok) throw new Error(`GitHub HTTP ${res.status}`);
       const json = await res.json();
       return json.total_count || 0;
     } else if (sourceId === "claude_attrib") {
       q = `"Co-Authored-By: Claude"+committer-date:${gte}..${lte}`;
-      const res = await fetch(`https://api.github.com/search/commits?q=${encodeURIComponent(q)}&per_page=1`, { headers });
+      const res = await fetch(`https://api.github.com/search/commits?q=${encodeURIComponent(q)}&sort=committer-date&per_page=1`, { headers: { ...headers, Accept: "application/vnd.github.cloak-preview+json" } });
       if (res.status === 403 || res.status === 429) throw new Error("GitHub rate limited");
+      if (res.status === 422) return 0;
       if (!res.ok) throw new Error(`GitHub HTTP ${res.status}`);
       const json = await res.json();
       return json.total_count || 0;
@@ -2737,7 +3213,7 @@ export default function App() {
     }
 
     if (sourceId === "google_trends") {
-      setHistoryProgress({ active: true, verticalId, current: 0, total: 1, label: `Backfilling ${vert.name} Google Trends (5yr)...` });
+      setHistoryProgress({ active: true, verticalId, current: 0, total: 1, label: `Backfilling ${vert.name} Google Trends (1yr)...` });
       try {
         const points = await fetchGoogleTrendsHistory(vert);
         const recorded = [];
@@ -2762,7 +3238,7 @@ export default function App() {
     }
 
     if (sourceId === "github_repos" || sourceId === "claude_attrib") {
-      const startDate = sourceId === "claude_attrib" ? "2023-01-01" : HIST_START;
+      const startDate = HIST_START;
       const months = monthIntervals(startDate, new Date());
       setHistoryProgress({ active: true, verticalId, current: 0, total: months.length, label: `Backfilling ${vert.name} ${sourceId === "github_repos" ? "GitHub Repos" : "Claude Attribution"}...` });
       const recorded = [];
@@ -2860,8 +3336,8 @@ export default function App() {
     if (!vert) return;
     const source = configRef.current.sources.find(s => s.id === "theirstack");
     if (!source) return;
-    const key = resolveKey(source, configRef.current.apiKeys);
-    if (!key) return;
+    const keys = configRef.current.apiKeys;
+    if (!resolveTheirStackMocking(source, keys) && !resolveKey(source, keys)) return;
     const kh = hashKeywordsForVertical(vert);
     const existing = tsHistoryByVertical[verticalId];
     const numWeeks = existing ? 8 : 12;
@@ -2901,7 +3377,7 @@ export default function App() {
     const pat=resolveGitPat();if(pat)debouncedSyncToGist(pat);
   }, [resolveGitPat]);
 
-  const sendReportEmail = useCallback(async (content, week) => {
+  const sendReportEmail = useCallback(async (content, week, snapshot = null) => {
     if (!mailingList.length) { setEmailStatus("No recipients — add emails in the Mailing List tab"); setTimeout(()=>setEmailStatus(null), 4000); return; }
     if (!content) { setEmailStatus("No report content to send"); setTimeout(()=>setEmailStatus(null), 4000); return; }
     const emailCfg = ld("emailjs_config", null);
@@ -2912,7 +3388,11 @@ export default function App() {
     }
     setEmailSending(true);
     let sent = 0, failed = 0, lastErr = "";
-    const trimmedContent = content.length > 40000 ? content.slice(0, 40000) + "\n\n[Report truncated for email delivery]" : content;
+    const asciiBlock = buildBriefAsciiCharts(snapshot);
+    const plainBundle = content + asciiBlock;
+    const trimmedContent = plainBundle.length > 40000 ? plainBundle.slice(0, 40000) + "\n\n[Report truncated for email delivery]" : plainBundle;
+    const reportHtml = briefEmailHtmlDocument(week, snapshot, content, false, "");
+    const trimmedHtml = reportHtml.length > 52000 ? reportHtml.slice(0, 52000) + "<p>…</p></div></body></html>" : reportHtml;
     for (let i = 0; i < mailingList.length; i++) {
       setEmailStatus(`Sending ${i + 1}/${mailingList.length}...`);
       try {
@@ -2927,6 +3407,7 @@ export default function App() {
               to_email: mailingList[i],
               subject: `AI Demand Signal Weekly Report — ${week}`,
               report_content: trimmedContent,
+              report_html: trimmedHtml,
               week: week,
             },
           }),
@@ -3036,6 +3517,10 @@ export default function App() {
     const wk = weekKeyFromDate(new Date());
     const dq = [];
     const cfg = configRef.current;
+    const tsSrc0 = cfg.sources.find((s) => s.id === "theirstack");
+    if (tsSrc0 && resolveTheirStackMocking(tsSrc0, cfg.apiKeys)) {
+      dq.push("TheirStack job counts are simulated (no API key, or VITE_THEIRSTACK_MOCK enabled). Replace with a live key when ready.");
+    }
 
     const buildTimeSeries = (hist) => {
       if (!hist?.length) return null;
@@ -3205,9 +3690,17 @@ export default function App() {
     const maxComposite = verticalsCtx.length ? Math.max(...verticalsCtx.map(v=>v.composite_score)) : 0;
     const minComposite = verticalsCtx.length ? Math.min(...verticalsCtx.map(v=>v.composite_score)) : 0;
 
+    const fingerprint = JSON.stringify(Object.keys(signalResults).sort().map((k) => [k, signalResults[k]?.count ?? 0]));
+
     const ctx = {
       generated_at: new Date().toISOString(),
       week: wk,
+      fingerprint,
+      report_calendar: {
+        iso_week_id: wk,
+        generated_at: new Date().toISOString(),
+        instruction: "Anchor macro and news commentary to the calendar window around generated_at. Separate verified facts from plausible mechanisms.",
+      },
       total_verticals_tracked: verticalsCtx.length,
       composite_score_summary: { average: avgComposite, highest: maxComposite, lowest: minComposite, spread: maxComposite - minComposite },
       verticals: verticalsCtx,
@@ -3222,8 +3715,14 @@ export default function App() {
         hf_download_trend: hfTimeSeries,
       },
       data_quality_flags: [...new Set(dq)].slice(0, 15),
+      signal_interpretation_guide: {
+        theirstack: { leadLag: SOURCE_INFO.theirstack.leadLag, investment: SOURCE_INFO.theirstack.investment },
+        google_trends: { leadLag: SOURCE_INFO.google_trends.leadLag, investment: SOURCE_INFO.google_trends.investment },
+        github_repos: { leadLag: SOURCE_INFO.github_repos.leadLag, investment: SOURCE_INFO.github_repos.investment },
+        claude_attrib: { leadLag: SOURCE_INFO.claude_attrib.leadLag, investment: SOURCE_INFO.claude_attrib.investment },
+      },
     };
-    return trimPayloadSize(ctx, 20000);
+    return trimPayloadSize(ctx, 22000);
   }, [composites, signalResults, githubHistoryByVertical, tsHistoryByVertical, crossCorr]);
 
   const generateBrief = useCallback(async () => {
@@ -3238,24 +3737,39 @@ export default function App() {
       tmr = setInterval(() => setBriefProgressSec((s) => Math.min(60, s + 1)), 1000);
       const apiKey = ENV_KEYS.anthropic;
       if (!apiKey) throw new Error("Missing VITE_ANTHROPIC_API_KEY");
-      const systemPrompt = `You are the Head of AI Demand Intelligence at a technology-focused hedge fund. Every week you produce the team's definitive AI adoption intelligence report — the single document the entire investment team (PMs, analysts, traders, risk) reads Monday morning to calibrate their AI thesis and position sizing.
+      const systemPrompt = `You are the Head of AI Demand Intelligence at a technology-focused hedge fund managing $2B+ in AI-exposed positions. Every week you produce the team's definitive report — the single document the entire investment team reads Monday morning to calibrate thesis and sizing.
 
-YOUR ANALYTICAL IDENTITY:
-- You think like a quant who can write like a journalist. Numbers first, narrative second, but the narrative must be compelling enough that a PM remembers it in a meeting.
-- You are obsessed with RATES OF CHANGE, not levels. A job count of 5,000 is meaningless alone — is it up 40% from baseline? Flat for 3 months? Decelerating from +60% growth?
-- You think in SECOND DERIVATIVES. If hiring growth was +30% last period and +15% this period, growth is decelerating even though the number is rising. This distinction matters enormously for position timing.
-- You hunt for DIVERGENCES between signals — when hiring says one thing and open-source activity says another, that gap is the most valuable signal in the dataset. Divergences reveal timing mismatches that create alpha.
-- You have INTELLECTUAL HONESTY: when data is thin, you say so. When a signal is ambiguous, you present both interpretations. You never manufacture drama from noise, and you never present a weak signal as strong.
-- You connect SUPPLY SIDE (Hugging Face model downloads, open-source repos, developer activity) to DEMAND SIDE (enterprise hiring, budget signals, Google search interest) to build a complete picture of the AI adoption cycle.
+YOUR ANALYTICAL FRAMEWORK:
+- Numbers first, narrative second. Every claim must cite a specific metric, rate of change, or comparison.
+- RATES OF CHANGE matter more than levels. A count of 5,000 means nothing — is it up 40% from baseline? Flat for 3 months? Decelerating from +60%?
+- SECOND DERIVATIVES are the real signal. If growth was +30% last period and +15% this period, growth is decelerating even though the number rises. This determines position timing.
+- DIVERGENCES between signals are the highest-alpha intelligence. When hiring says one thing and developer activity says another, that gap reveals timing mismatches.
+- INTELLECTUAL HONESTY: thin data gets flagged. Ambiguous signals get both interpretations. Never manufacture drama from noise.
+
+SIGNAL TIMING KNOWLEDGE (use for predictions):
+- Job Postings: Lead vendor revenue by 2-4 quarters (6-12 months). Hiring intent → procurement (1-2Q) → contract (1Q) → revenue (1Q). Title shifts from strategy→engineering roles compress this to 3-6 months.
+- Google Trends: 1-4 weeks for volatility. 3-9 months for procurement impact. Spikes predict trading volume within 1-2 weeks. Sustained rises indicate pipeline building over 2 quarters.
+- GitHub Repos: 6-18 months lead. OSS maturity → enterprise evaluation → procurement. Longest lead but highest structural conviction. Language shifts (Python→TypeScript) signal production readiness.
+- Claude Code Attribution: 0-3 months. Most real-time signal. Directly reflects current AI tool adoption. Revenue impact for coding platforms is same-quarter. Compute demand impact within 1 quarter.
+- Hugging Face Downloads: 3-12 months. Open-source model adoption leads enterprise deployment decisions. Download concentration shifts signal vendor market share changes 2-4 quarters ahead.
+- PCAOB Deficiency Convergence: 12-24 months. When Big 4 and regional firm deficiency rates converge, AI audit tooling is democratizing — leading indicator of broad professional services AI spend.
+
+MARKET CONTEXT (illustrative baseline — refresh with live facts when you have them):
+- AI coding tools at 73% daily enterprise usage (up from 41% in 2025). Claude Code at 69% market share.
+- S&P 500 Software Index RSI hit 18 — most oversold since 1990. SaaS stocks down 15-30% YTD despite 16.8% projected 2026 earnings growth.
+- Enterprise IT spending growing 3.6% in 2026. AI capex doubling to $660-690B but hiring decoupled from spend.
+- Only 37.4% of workers use generative AI on the job despite tool availability. 90% of AI job postings from just 1% of companies.
+
+DESK RESEARCH & MACRO (this dashboard has no live web search — reason carefully from your knowledge):
+- Anchor commentary to report_calendar.generated_at and the ISO week in the payload.
+- Connect labor market themes (hiring freezes vs AI-skilled demand), rates/credit, mega-cap tech & AI capex, and enterprise software budget cycles to the DIRECTION and INFLECTION of each signal. Use explicit epistemic hygiene: label links as "consistent with," "plausible channel," or "speculative" — do not claim causation without evidence.
+- If data_quality_flags mention simulated TheirStack jobs, say so once; still interpret momentum and divergences vs Google Trends, GitHub, and Claude attribution.
 
 WRITING RULES:
-- This report goes to the ENTIRE team: PMs who want the bottom line, analysts who want the detail, traders who want timing signals, and risk managers who want to know what could go wrong. Write for all of them.
-- Plain prose. No filler. Never write "it is worth noting," "interestingly," "it remains to be seen," "moving forward," or any corporate-speak.
-- Every sentence must contain a number, a comparison, a rate of change, or a forward-looking implication. Kill any sentence that fails this test.
-- Vary sentence length. Use short declarative sentences for high-conviction calls. Use longer sentences when nuance requires it.
-- When you cite a metric, always provide context: vs. previous period, vs. baseline, vs. all-time high, or vs. another vertical. Raw numbers in isolation are banned.
-- Use precise language: "accelerating" means the rate of increase is itself increasing. "Surging" means >30% growth. "Plateauing" means <5% change. Do not use these words loosely.
-- Be specific about timeframes: "over the last 3 observations" not "recently."`;
+- Plain prose. No corporate-speak ("it is worth noting," "interestingly," "moving forward" are banned).
+- Every sentence must contain a number, comparison, rate of change, or forward-looking implication.
+- Use precise language: "accelerating" = rate of increase increasing. "Surging" = >30%. "Plateauing" = <5%.
+- Be specific about timeframes. "Over the last 3 observations" not "recently."`;
 
       const userPrompt = `═══════════════════════════════════════════════════════════════
 WEEKLY AI DEMAND SIGNAL INTELLIGENCE — RAW DATA PAYLOAD
@@ -3265,139 +3779,110 @@ Week: ${ctx.week} | Generated: ${ctx.generated_at}
 ${JSON.stringify(ctx, null, 1)}
 
 ═══════════════════════════════════════════════════════════════
-ANALYSIS MANDATE
-═══════════════════════════════════════════════════════════════
-
-This report will be sent to the entire investment team Monday morning. It must be comprehensive enough that every team member — from the PM making allocation calls to the junior analyst building models — gets actionable intelligence from it.
-
-REQUIRED ANALYTICAL PASSES (apply to every vertical and every signal with time series data):
-
-PASS 1 — TREND CHARACTERIZATION
-For each signal's time series: classify as RISING, FALLING, RANGE-BOUND, or VOLATILE. Quantify the slope using rolling_momentum_5pt_pct and pct_change_vs_previous. Note consecutive_increases or consecutive_decreases — streaks matter for confidence.
-
-PASS 2 — SECOND-DERIVATIVE ANALYSIS
-Compare rolling_momentum_3pt_pct to rolling_momentum_5pt_pct: if the shorter window shows stronger growth than the longer one, momentum is ACCELERATING. If weaker, it's DECELERATING. Use the acceleration_signal field. This is the most forward-looking indicator — it tells you what's about to happen.
-
-PASS 3 — ANOMALY FLAGGING
-Flag any signal where z_score_current exceeds ±1.5 — these are statistically unusual readings. Check is_at_all_time_high and is_near_all_time_low. An all-time high in a metric that matters is a headline item. Look at the historical anomaly_z_score from theirstack_historical too.
-
-PASS 4 — DIVERGENCE DETECTION (HIGHEST ALPHA)
-The divergence_signals array provides pre-computed divergences, but go deeper:
-- Compare job_postings trajectory vs. google_trends trajectory for each vertical. When enterprise hiring moves opposite to public search interest, it reveals a timing gap between institutional and retail awareness.
-- Compare job_postings trajectory vs. github_repos trajectory. Hiring without open-source activity = buy-not-build strategy. Open-source surge without hiring = experimentation, not deployment.
-- Compare claude_code_attribution trends to overall github_repos. Rising Claude attribution as a share of total GitHub activity signals AI-assisted development entering production, not just experimentation.
-- Cross-vertical: if one vertical's jobs are surging while another's plateau, that's sector rotation within AI spend — not a decline in AI, but a shift in WHERE it's being deployed. This is critical for sector-level positioning.
-
-PASS 5 — SUPPLY-DEMAND NEXUS
-Use the ai_supply_side data (Hugging Face downloads, model counts) to assess: is the SUPPLY of AI capability (models, tools, infrastructure) growing faster or slower than DEMAND signals (hiring, enterprise search interest)? Supply outpacing demand = commoditization pressure on AI vendors. Demand outpacing supply = pricing power and potential bottleneck opportunities.
-
-PASS 6 — CROSS-VERTICAL PATTERN RECOGNITION
-Use lag_leader_relationships to identify which verticals lead the AI adoption cycle. A vertical that consistently leads by 2-3 months is your early warning system. Multiple verticals moving together (systemic_wave) vs. diverging tells you if this is a rising tide or sector-picking market.
-
-PASS 7 — REGIME CLASSIFICATION
-For each vertical, assign ONE regime label:
-- ACCELERATING: Growth rate itself increasing (positive acceleration_signal, 3pt momentum > 5pt momentum)
-- STEADY_GROWTH: Consistent positive growth, stable rate (momentum 5-25%, low acceleration)  
-- PLATEAUING: Growth stalling (<5% momentum, near-zero acceleration)
-- DECELERATING: Still growing but growth rate falling (positive level, negative acceleration)
-- CONTRACTING: Absolute decline (negative momentum)
-- BOTTOMING: Was declining, now stabilizing or showing inflection (negative 5pt momentum but positive 3pt)
-- INFLECTING_UP: Clear reversal from decline/plateau to growth (acceleration turning sharply positive)
-
-═══════════════════════════════════════════════════════════════
-OUTPUT FORMAT — USE THIS EXACT STRUCTURE
+OUTPUT — USE THIS EXACT STRUCTURE
 ═══════════════════════════════════════════════════════════════
 
 AI DEMAND SIGNAL WEEKLY INTELLIGENCE REPORT
 Week of ${ctx.week}
 Generated: ${ctx.generated_at} | ${ctx.total_verticals_tracked} verticals tracked
-Composite Score Range: ${ctx.composite_score_summary?.lowest || 0} – ${ctx.composite_score_summary?.highest || 0} (avg ${ctx.composite_score_summary?.average || 0})
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+KEY TAKEAWAYS
+(Exactly 5 bullets. Each ≤18 words. Each bullet must include at least one number, percent, or comparative.)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+VISUAL TREND STRIPS
+For EVERY vertical, one line using Unicode blocks ▁▂▃▄▅▆▇█ only (no other chart libs):
+- Build Jobs strip from theirstack_historical.recent_monthly[].count OR signals.job_postings.time_series.recent_values[].value
+- Build Trends strip from signals.google_trends.time_series.recent_values[].value
+Format: [Vertical] | Jobs: [strip] | Trends: [strip]
+If a series has <2 points, write "insufficient points" instead of a strip.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+MACRO & EXTERNAL CONTEXT (DESK RESEARCH — IMPLICATIONS, NOT HEADLINES)
+Relative to generated_at / ISO week:
+- LAST ~7 DAYS: 3 bullets — typical macro/tech narrative themes; each bullet ties to a specific metric in the payload and states a plausible transmission channel (e.g., "If credit spreads widened, job-posting velocity in X vertical could reflect…").
+- LAST ~30 DAYS: 3 bullets — labor, rates expectations, enterprise IT / SaaS sentiment, AI capex narrative; each maps to at least one signal movement.
+- BROADER ECONOMY: 3 bullets — unemployment / JOLTS style framing, productivity & automation debate, semiconductor–cloud–model vendor chain; explain how each could bias hiring vs search vs OSS activity.
+Use "consistent with / plausible / speculative" language. Do not fabricate specific headline events or exact unemployment prints unless they are widely known for that period; prefer thematic framing.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 EXECUTIVE SUMMARY
-(3-4 sentences maximum. What is the single most important development this week? What changed vs. last week? What should the team be paying attention to? End with a one-sentence directional call. This must be sharp enough to open a Monday morning meeting with.)
+(3-4 sentences. The single most important development. What changed vs last week. One-sentence directional call sharp enough to open a Monday meeting.)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 REGIME DASHBOARD
-(Table format — one line per vertical:
-[Vertical] | [REGIME] | Composite: [score] | Jobs: [count] ([pct]% vs prev) | Trends: [index] | Repos: [count] | Key driver: [one phrase])
+(Table: [Vertical] | [REGIME: ACCELERATING/STEADY_GROWTH/PLATEAUING/DECELERATING/CONTRACTING/BOTTOMING/INFLECTING_UP] | Composite: [score] | Jobs: [count] ([pct]% chg) | Trends: [index] | Repos: [count] | Key driver)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-NOTABLE SHIFTS & INFLECTIONS
-(This is the highest-alpha section. Only include genuinely significant movements — if nothing moved meaningfully, state "No material inflections detected this week" and move on. Do NOT manufacture drama from noise.
-
-For each real shift:
-- WHAT: Which metric, which vertical, what magnitude of change
-- SO WHAT: Why this matters for AI demand thesis and positioning
-- WHAT NEXT: What would confirm this signal next week vs. what would invalidate it
-- CONFIDENCE: HIGH / MEDIUM / LOW based on data quality and signal strength)
+NARRATIVE FLOW (READ ORDER)
+One short paragraph explaining how a PM should read this memo top-to-bottom (what to skim vs what to read slowly).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-DIVERGENCE ANALYSIS
-(The most valuable intelligence in this report. Where are different signals telling contradictory stories?
+SIGNAL MOVEMENT ANALYSIS
+For each metric with meaningful movement:
+- WHAT moved, by how much, in what vertical
+- WHY it matters: use the timing knowledge above. Job postings +30% → vendor revenue inflection in 2-4Q. Claude attribution surging → compute demand THIS quarter. Google Trends spike → procurement pipeline building over next 2Q.
+- CONFIDENCE: HIGH/MEDIUM/LOW
 
-For each divergence:
-- THE GAP: Which signals disagree, by how much
-- THE INTERPRETATION: What the gap implies about the AI adoption stage (e.g., "budget commitment without developer narrative" or "developer experimentation without enterprise buying")
-- THE TRADE: What investment positioning this divergence suggests
-- THE RESOLUTION: How will this divergence likely resolve — which signal will prove right? What timeframe?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Also analyze cross-vertical divergences: if healthcare AI hiring surges while manufacturing AI plateaus, what does that imply about the nature of current AI spend?)
+DIVERGENCE ANALYSIS (HIGHEST ALPHA)
+For each divergence between signals:
+- THE GAP: Which signals disagree, magnitude
+- THE INTERPRETATION: What adoption phase mismatch this reveals (e.g., "CIO mandate without developer adoption" = budget committed but tools not yet deployed; resolution: jobs lead, repos follow in 2-3 months)
+- THE TRADE: Specific positioning this divergence suggests
+- RESOLUTION TIMELINE: When and how will this resolve? Which signal is leading?
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+INVESTMENT PREDICTIONS (NEW — THIS IS THE KEY SECTION)
+Make 3-5 specific, falsifiable predictions based on signal analysis. Be pragmatic and reasonable — ground every prediction in the data. Use the signal timing knowledge.
+
+For each prediction:
+- PREDICTION: A specific, testable claim about what will happen and when
+- SUPPORTING EVIDENCE: Which signals point to this outcome, with specific numbers
+- TIMING: When this should materialize (use the lead/lag framework — jobs lead revenue by 2-4Q, search leads procurement by 2-3Q, etc.)
+- AFFECTED SECTORS/THEMES: Which areas of the market this impacts (AI infrastructure, cloud compute, professional services, SaaS platforms, semiconductor, etc.)
+- CONFIDENCE: HIGH/MEDIUM/LOW with brief justification
+- WHAT WOULD INVALIDATE: Specific data point that would reverse this prediction
+
+Example predictions (use as format guide, not content):
+- "Enterprise AI hiring in [vertical] will drive a procurement cycle reaching vendor revenue by Q3 2026, based on +30% WoW job posting growth sustained over 4 weeks and title mix shifting toward implementation roles."
+- "Open-source model download concentration shifting from [provider A] to [provider B] on Hugging Face signals market share rotation that will appear in cloud provider earnings in 2-3 quarters."
+- "The divergence between rising search interest and flat hiring in [vertical] will resolve bearishly — this is awareness without budget commitment, and search should decline within 8 weeks."
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 VERTICAL DEEP DIVES
-(One comprehensive paragraph per vertical. This is the detailed section for analysts who need to update their models.
-
-For each vertical, synthesize:
-- Current signal levels with context (vs. baseline, vs. peak, vs. average)
-- Momentum and acceleration across all available signals
-- Historical context from theirstack_historical: where is this vertical vs. its all-time trajectory? Is it above/below baseline? Near a peak?
-- Divergences within this vertical's signal set
-- Pipeline stage and what it implies about the adoption timeline
-- One-sentence forward view: what do you expect to see in the next 2-4 weeks based on current trajectory?
-- One-sentence risk: what would invalidate the current read on this vertical?)
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-CROSS-VERTICAL INTELLIGENCE
-(Two paragraphs.
-
-Paragraph 1 — DEMAND SIDE: Are verticals moving in concert (systemic AI wave) or diverging (sector rotation)? Which vertical leads the pack and by how many months? What does the composite score spread tell you — is the market broadening (converging scores) or concentrating (widening spread)? Any lead-lag relationships with investable implications?
-
-Paragraph 2 — SUPPLY-DEMAND NEXUS: Connect Hugging Face data (model downloads, which orgs lead) to the demand signals. Is model supply (downloads growing, more models being published) outpacing or lagging enterprise adoption? Which AI providers are gaining vs. losing share in the model ecosystem? What does Claude Code attribution tell you about AI-native development practices entering the mainstream?)
+(One paragraph per vertical: signal levels with context, momentum, divergences, forward view, key risk.)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ACTIONABLE RECOMMENDATIONS
-(Exactly 5, numbered. This section is read by PMs making real allocation decisions.
+(5 recommendations ordered by conviction. Each must include: SIGNAL driving it, ACTION (be concrete — "increase exposure," "initiate position," "reduce allocation"), CONVICTION, TIMEFRAME, INVALIDATION trigger.)
 
-Each recommendation must include:
-1. THE SIGNAL: Which specific data point or pattern drives this call
-2. THE ACTION: Be concrete — "increase exposure to [sector/theme]," "initiate position in [area]," "reduce allocation to [area]," "hedge [risk]." Not "monitor" — PMs can monitor without your help.
-3. CONVICTION: HIGH / MEDIUM / LOW
-4. TIMEFRAME: Is this a next-week tactical call or a multi-month structural view?
-5. INVALIDATION: What specific data point next week would cause you to reverse this call?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Order from highest to lowest conviction.)
+INTERPRETATION & IMPLICATIONS
+For each major trend direction (up / flat / down) in jobs, trends, repos, and Claude attribution: state what it would imply for (1) near-term vendor revenue, (2) 2–4 quarter positioning, (3) tail risks if the trend reverses.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 RISK FACTORS & CONTRARIAN VIEW
-(Two parts:
-
-RISKS: What could make the current AI demand picture misleading? Consider: data staleness, sample bias in job postings, Google Trends vs. real demand, open-source activity not reflecting enterprise decisions. Be specific about which conclusions above are most vulnerable to data quality issues.
-
-CONTRARIAN TAKE: In 2-3 sentences, argue AGAINST the prevailing direction of your own analysis. If your read is bullish, what's the bear case from this same data? If bearish, where's the bull case hiding? This forces intellectual honesty and gives the team a structured way to pressure-test the thesis.)
+RISKS: What could make the AI demand picture misleading? Which conclusions rest on thin data?
+CONTRARIAN TAKE: 2-3 sentences arguing against your own analysis. If bullish, what's the bear case? If bearish, where's the bull case?
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-DATA CONFIDENCE ASSESSMENT
-(Brief. Grade overall data quality A/B/C/D. Flag any verticals where multiple signals are stale or missing. Note the observation_span_days for key time series — a 7-day span has very different reliability than a 90-day span. Flag if any conclusions above rest on thin data.)`;
+DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
 
 
       const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -3410,7 +3895,7 @@ DATA CONFIDENCE ASSESSMENT
         },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 6000,
+          max_tokens: 12000,
           system: systemPrompt,
           messages: [{ role: "user", content: userPrompt }],
         }),
@@ -3433,6 +3918,7 @@ DATA CONFIDENCE ASSESSMENT
       localStorage.setItem(BRIEF_LAST_KEY, toStore.generated_at);
       setBriefContent(text);
       setBriefBaseForDiff(toStore.first_content_markdown || text);
+      setBriefSnapshot(ctx);
       pruneOldBriefs(12);
       const rows = [];
       for (let i = 0; i < localStorage.length; i++) {
@@ -3454,6 +3940,7 @@ DATA CONFIDENCE ASSESSMENT
       localStorage.setItem(BRIEF_LAST_KEY, toStore.generated_at);
       setBriefContent(offline);
       setBriefBaseForDiff(offline);
+      setBriefSnapshot(ctx);
       alert(`Claude unavailable: ${e.message}\nGenerated offline data summary instead.`);
     } finally {
       if (tmr) clearInterval(tmr);
@@ -3470,8 +3957,9 @@ DATA CONFIDENCE ASSESSMENT
       for(const src of cfg.sources.filter(s=>s.enabled&&resolveKey(s,cfg.apiKeys))){await fetchIfStale(src);await sleep(500);}
       if(!autoHistoryFetchedRef.current){
         autoHistoryFetchedRef.current=true;
-        const tsKey=resolveKey(cfg.sources.find(s=>s.id==="theirstack")||{},cfg.apiKeys);
-        if(tsKey){
+        const tsSrc=cfg.sources.find(s=>s.id==="theirstack")||{};
+        const tsActive=resolveTheirStackMocking(tsSrc,cfg.apiKeys)||resolveKey(tsSrc,cfg.apiKeys);
+        if(tsActive){
           for(const v of cfg.verticals){
             const existing=ld(historyLatestKey(v.id),null);
             const stale=!existing?.generatedAt||((Date.now()-new Date(existing.generatedAt).getTime())>24*3600000);
@@ -3672,7 +4160,7 @@ DATA CONFIDENCE ASSESSMENT
             </div>
             {briefHistory.map((b)=>(
               <div key={b.key} style={{padding:"10px 10px",border:`1px solid ${C.borderLight}`,borderRadius:10,marginBottom:8,cursor:"pointer"}}
-                onClick={()=>{setBriefWeek(b.week);setBriefContent(b.content_markdown||"");setBriefBaseForDiff(b.first_content_markdown||b.content_markdown||"");setBriefOpen(true);setBriefHistoryOpen(false);}}>
+                onClick={()=>{setBriefWeek(b.week);setBriefContent(b.content_markdown||"");setBriefBaseForDiff(b.first_content_markdown||b.content_markdown||"");setBriefSnapshot(b.data_snapshot||null);setBriefOpen(true);setBriefHistoryOpen(false);}}>
                 <div style={{fontSize:12,fontWeight:700,color:C.text}}>{b.week}</div>
                 <div style={{fontSize:11,color:C.textMuted}}>{new Date(b.generated_at).toLocaleString()}</div>
               </div>
@@ -3693,15 +4181,14 @@ DATA CONFIDENCE ASSESSMENT
               <label style={{display:"flex",alignItems:"center",gap:4,fontSize:12,color:C.textSec}}><input type="checkbox" checked={briefDiffMode} onChange={e=>setBriefDiffMode(e.target.checked)} /> Show Changes</label>
               <Btn size="sm" onClick={()=>navigator.clipboard?.writeText(briefContent || "")}>Copy as Markdown</Btn>
               <Btn size="sm" onClick={()=>navigator.clipboard?.writeText((briefContent || "").replace(/[#*_`>-]/g,""))}>Copy as Plain Text</Btn>
-              <Btn size="sm" variant={mailingList.length>0?"primary":"default"} disabled={emailSending||!briefContent} onClick={()=>sendReportEmail(briefContent,briefWeek)}>
+              <Btn size="sm" variant={mailingList.length>0?"primary":"default"} disabled={emailSending||!briefContent} onClick={()=>sendReportEmail(briefContent,briefWeek,briefSnapshot)}>
                 {emailSending ? <><Spinner size={11} color="#fff"/> Sending</> : <><IcoC name="mail" size={12} color={mailingList.length>0?"#fff":C.textSec}/> Email to Team ({mailingList.length})</>}
               </Btn>
               {emailStatus && <span style={{...font.sans,fontSize:11,color:emailStatus.startsWith("Failed")?C.red:emailStatus.startsWith("Sent")?C.green:C.textSec}}>{emailStatus}</span>}
               <Btn size="sm" onClick={()=>{
-                const htmlBody = briefDiffMode ? paragraphDiffHtml(briefBaseForDiff, briefContent) : `<pre style="white-space:pre-wrap;font:16px/1.65 Georgia,serif;color:#1a1d26">${escapeHtml(briefContent)}</pre>`;
                 const w = window.open("", "_blank");
                 if (!w) return;
-                w.document.write(`<!doctype html><html><head><title>Weekly Brief ${briefWeek}</title><style>body{margin:40px;font-family:Georgia,serif;color:#1a1d26}h1{font-size:22px}@media print{body{margin:16mm}}</style></head><body>${htmlBody}</body></html>`);
+                w.document.write(briefEmailHtmlDocument(briefWeek, briefSnapshot, briefContent || "", briefDiffMode, briefBaseForDiff));
                 w.document.close();
               }}>Open in New Tab</Btn>
               <Btn size="sm" variant="ghost" onClick={()=>setBriefOpen(false)}>Close</Btn>
@@ -3727,6 +4214,7 @@ DATA CONFIDENCE ASSESSMENT
                   ) : (
                     <pre style={{whiteSpace:"pre-wrap",margin:0,fontFamily:"Georgia, serif"}}>{briefContent}</pre>
                   )}
+                  {briefSnapshot ? <BriefSnapshotCharts ctx={briefSnapshot} /> : null}
                 </div>
               </div>
             )}
