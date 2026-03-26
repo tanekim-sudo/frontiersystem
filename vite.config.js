@@ -98,11 +98,6 @@ export default defineConfig(({ mode }) => {
             return '/search.json?' + params.toString();
           },
         },
-        '/api/pcaob': {
-          target: 'https://pcaobus.org',
-          changeOrigin: true,
-          rewrite: () => '/docs/default-source/generated-reports/inspecton-reports-json.json?sfvrsn=da1a11cd_987',
-        },
         // Optional: Python FastAPI (rays_tracker + SQLite) — not used by /api/labor (Vercel uses Node).
         '/rays-tracker': {
           target: 'http://127.0.0.1:8765',

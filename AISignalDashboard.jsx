@@ -1747,189 +1747,6 @@ function OverlayChart({ selectedKeys, allHistories, sources, verticals }) {
   );
 }
 
-// ── PCAOB AUDIT DEFICIENCY SIGNAL ────────────────────────────────────────────
-
-const PCAOB_PROXY_URL = "/api/pcaob";
-const PCAOB_DIRECT_URL = "https://pcaobus.org/docs/default-source/generated-reports/inspecton-reports-json.json?sfvrsn=da1a11cd_987";
-const BIG4_NETWORKS = ["Deloitte Touche Tohmatsu Limited", "Ernst & Young Global Limited", "KPMG International Cooperative", "PricewaterhouseCoopers International Limited"];
-const NEXT_TIER_NETWORKS = ["BDO International Limited", "RSM International Ltd", "Grant Thornton International Ltd", "Mazars Group", "Baker Tilly International Limited", "Crowe Global", "Moore Global Network Limited", "Nexia International Limited", "HLB International Limited"];
-
-function classifyFirmTier(globalNetwork, company) {
-  if (!globalNetwork) {
-    if (/^(Deloitte|Ernst|EY|KPMG|PricewaterhouseCoopers|PwC)\b/i.test(company)) return "Big 4";
-    if (/^(BDO|RSM|Grant Thornton|Mazars|Baker Tilly|Crowe|Moore|Nexia|HLB|Forvis)\b/i.test(company)) return "Next Tier";
-    return "Regional";
-  }
-  if (BIG4_NETWORKS.some(n => globalNetwork.includes(n))) return "Big 4";
-  if (NEXT_TIER_NETWORKS.some(n => globalNetwork.includes(n))) return "Next Tier";
-  return "Regional";
-}
-
-function PcaobSignalPanel({ onDataChanged }) {
-  const [rawData, setRawData] = useState(() => ld("pcaob_raw", null));
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [expanded, setExpanded] = useState(false);
-
-  const fetchData = useCallback(async () => {
-    setLoading(true); setError(null);
-    try {
-      let res;
-      try {
-        res = await fetch(PCAOB_PROXY_URL, { headers: { Accept: "application/json" } });
-        if (!res.ok) throw new Error(`Proxy ${res.status}`);
-      } catch {
-        res = await fetch(PCAOB_DIRECT_URL, { headers: { Accept: "application/json" } });
-      }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      sv("pcaob_raw", json);
-      sv("pcaob_fetched_at", new Date().toISOString());
-      setRawData(json);
-      if (onDataChanged) onDataChanged();
-    } catch (e) { setError(e.message); }
-    setLoading(false);
-  }, [onDataChanged]);
-
-  const analysis = useMemo(() => {
-    if (!rawData || !Array.isArray(rawData)) return null;
-    const withRate = rawData.filter(r => r.PartIADeficiencyRate != null && r.InspectionYear);
-    const byYear = {};
-    withRate.forEach(r => {
-      const yr = String(r.InspectionYear);
-      const tier = classifyFirmTier(r.GlobalNetwork, r.Company);
-      if (!byYear[yr]) byYear[yr] = { "Big 4": { total: 0, deficient: 0, audits: 0, defAudits: 0 }, "Next Tier": { total: 0, deficient: 0, audits: 0, defAudits: 0 }, Regional: { total: 0, deficient: 0, audits: 0, defAudits: 0 } };
-      byYear[yr][tier].total++;
-      const rate = parseFloat(r.PartIADeficiencyRate);
-      if (rate > 0) byYear[yr][tier].deficient++;
-      byYear[yr][tier].audits += parseInt(r.TotalAuditsReviewed || 0);
-      byYear[yr][tier].defAudits += parseInt(r.AuditsWithPartIADeficiencies || 0);
-    });
-    const years = Object.keys(byYear).sort();
-    const chartData = years.map(yr => {
-      const row = { year: yr };
-      ["Big 4", "Next Tier", "Regional"].forEach(tier => {
-        const d = byYear[yr][tier];
-        row[tier] = d.audits > 0 ? Math.round((d.defAudits / d.audits) * 100) : 0;
-        row[`${tier}_firms`] = d.total;
-        row[`${tier}_audits`] = d.audits;
-      });
-      return row;
-    });
-    const latestYear = years[years.length - 1];
-    const prevYear = years.length >= 2 ? years[years.length - 2] : null;
-    const convergence = [];
-    if (prevYear) {
-      ["Big 4", "Next Tier", "Regional"].forEach(tier => {
-        const curr = chartData.find(r => r.year === latestYear)?.[tier] || 0;
-        const prev = chartData.find(r => r.year === prevYear)?.[tier] || 0;
-        convergence.push({ tier, current: curr, previous: prev, delta: curr - prev });
-      });
-    }
-    const big4Latest = chartData.find(r => r.year === latestYear)?.["Big 4"] || 0;
-    const regionalLatest = chartData.find(r => r.year === latestYear)?.["Regional"] || 0;
-    const gap = regionalLatest - big4Latest;
-    return { chartData, years, byYear, latestYear, convergence, gap, totalReports: withRate.length };
-  }, [rawData]);
-
-  const fetchedAt = ld("pcaob_fetched_at", null);
-
-  return (
-    <Card style={{borderLeft:`4px solid ${C.orange}`}}>
-      <SectionHeader
-        icon={<IcoC name="shield" size={18} color={C.orange}/>}
-        title="PCAOB Audit Deficiency Signal"
-        subtitle="Convergence of deficiency rates across firm tiers = AI audit tooling adoption. Novel, unpriced demand proxy."
-        badge={analysis ? <Badge color={C.orange} bg={C.orange+"15"}>{analysis.totalReports} reports</Badge> : null}
-      />
-      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
-        <Btn size="sm" variant="primary" onClick={fetchData} disabled={loading}>
-          {loading ? "Fetching..." : rawData ? "Refresh Data" : "Load PCAOB Data"}
-        </Btn>
-        {fetchedAt && <span style={{...font.sans,fontSize:10,color:C.textMuted}}>Last fetched: {new Date(fetchedAt).toLocaleDateString()}</span>}
-      </div>
-      {error && <div style={{...font.sans,fontSize:12,color:C.red,marginBottom:8}}>Error: {error}</div>}
-      {analysis && (
-        <>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:16}}>
-            {analysis.convergence.map(c => (
-              <div key={c.tier} style={{padding:"12px 14px",background:C.nested,borderRadius:10,textAlign:"center"}}>
-                <div style={{...font.sans,fontSize:11,fontWeight:600,color:C.textMuted,marginBottom:4}}>{c.tier}</div>
-                <div style={{...font.mono,fontSize:22,fontWeight:800,color:c.delta > 0 ? C.red : c.delta < 0 ? C.green : C.text}}>{c.current}%</div>
-                <div style={{...font.sans,fontSize:10,color:c.delta > 0 ? C.red : C.green}}>
-                  {c.delta > 0 ? "↑" : c.delta < 0 ? "↓" : "→"} {Math.abs(c.delta)}pp vs {analysis.years[analysis.years.length-2]}
-                </div>
-              </div>
-            ))}
-            <div style={{padding:"12px 14px",background:analysis.gap < 15 ? C.green+"12" : C.nested,borderRadius:10,textAlign:"center",border:analysis.gap < 15 ? `1px solid ${C.green}30` : "none"}}>
-              <div style={{...font.sans,fontSize:11,fontWeight:600,color:C.textMuted,marginBottom:4}}>Tier Gap</div>
-              <div style={{...font.mono,fontSize:22,fontWeight:800,color:analysis.gap < 15 ? C.green : C.amber}}>{analysis.gap}pp</div>
-              <div style={{...font.sans,fontSize:10,color:C.textMuted}}>Regional – Big 4</div>
-            </div>
-          </div>
-          <div style={{width:"100%",height:220,marginBottom:8}}>
-            <ResponsiveContainer>
-              <ComposedChart data={analysis.chartData} margin={{top:8,right:16,bottom:8,left:8}}>
-                <XAxis dataKey="year" tick={{fontSize:11,fill:C.textMuted}} />
-                <YAxis tick={{fontSize:10,fill:C.textMuted}} width={35} domain={[0,100]} label={{value:"Deficiency %",angle:-90,position:"insideLeft",style:{fontSize:9,fill:C.textMuted}}}/>
-                <Tooltip contentStyle={{...font.sans,fontSize:12,background:C.white,border:`1px solid ${C.border}`,borderRadius:10}} formatter={(v,name)=>[`${v}%`,name]}/>
-                <Legend wrapperStyle={{fontSize:11,...font.sans}} />
-                <Line type="monotone" dataKey="Big 4" stroke={C.blue} strokeWidth={2.5} dot={{r:4}} />
-                <Line type="monotone" dataKey="Next Tier" stroke={C.amber} strokeWidth={2.5} dot={{r:4}} />
-                <Line type="monotone" dataKey="Regional" stroke={C.red} strokeWidth={2.5} dot={{r:4}} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-          <div style={{...font.sans,fontSize:11,color:C.textMuted,lineHeight:1.5,padding:"8px 12px",background:C.nested,borderRadius:8,marginBottom:8}}>
-            <strong style={{color:C.text}}>Investment thesis:</strong> When Big 4 and regional firm deficiency rates converge, it signals that AI-powered audit tooling is democratizing — smaller firms are closing the quality gap through technology adoption. A narrowing gap (&lt;15pp) is a leading indicator of broad-based AI infrastructure spend across the professional services vertical. Current gap: <strong style={{color:analysis.gap < 15 ? C.green : C.amber}}>{analysis.gap}pp</strong>.
-          </div>
-          <div style={{...font.sans,fontSize:11,color:C.textSec,lineHeight:1.5,padding:"8px 12px",background:C.cyanBg,borderRadius:8,marginBottom:8,border:`1px solid ${C.cyan}22`}}>
-            <strong style={{color:C.cyan}}>Lead/Lag: 12–24 months.</strong> PCAOB inspections are annual/triennial with 6–12 month publication delays. Deficiency rate changes reflect technology adoption that happened 1–2 years prior. This is a <em>confirmation signal</em>, not a leading indicator — but it's almost certainly unpriced because no one tracks it systematically.
-          </div>
-          <div style={{...font.sans,fontSize:11,color:C.textSec,lineHeight:1.5,padding:"8px 12px",background:C.nested,borderRadius:8,marginBottom:8}}>
-            <strong style={{color:C.text}}>What movements mean:</strong><br/>
-            <span style={{color:C.green,fontWeight:600}}>Gap narrowing &lt;15pp:</span> AI audit tools are leveling quality across firm tiers. Regional firms investing in technology = broad-based professional services AI spend. Bullish for audit tech vendors (Workiva, Wolters Kluwer, CaseWare).<br/>
-            <span style={{color:C.amber,fontWeight:600}}>Gap stable 15–30pp:</span> Big 4 maintaining tech advantage. AI adoption concentrated among top firms. Neutral — watch for acceleration.<br/>
-            <span style={{color:C.red,fontWeight:600}}>Gap widening &gt;30pp:</span> Technology is increasing the quality divide, not closing it. Smaller firms falling behind. AI audit tools may be too expensive/complex for smaller firms — bearish for broad adoption thesis.<br/>
-            <span style={{color:C.blue,fontWeight:600}}>All tiers declining together:</span> The strongest signal. When <em>all</em> firm tiers improve simultaneously, it indicates systemic technology adoption across the profession. Deficiency rates dropped from 46% to 39% in 2024 — first decline in 4 years.
-          </div>
-          <button onClick={()=>setExpanded(!expanded)} style={{...font.sans,fontSize:11,color:C.textSec,background:"none",border:"none",cursor:"pointer",padding:0}}>
-            {expanded ? "▾ Hide firm details" : "▸ Show firm details by year"}
-          </button>
-          {expanded && (
-            <div style={{marginTop:8,maxHeight:300,overflowY:"auto"}}>
-              <table style={{width:"100%",borderCollapse:"collapse",...font.sans,fontSize:11}}>
-                <thead>
-                  <tr>
-                    <th style={{textAlign:"left",padding:"6px 8px",borderBottom:`2px solid ${C.border}`,color:C.textMuted}}>Year</th>
-                    <th style={{textAlign:"left",padding:"6px 8px",borderBottom:`2px solid ${C.border}`,color:C.textMuted}}>Tier</th>
-                    <th style={{textAlign:"right",padding:"6px 8px",borderBottom:`2px solid ${C.border}`,color:C.textMuted}}>Firms</th>
-                    <th style={{textAlign:"right",padding:"6px 8px",borderBottom:`2px solid ${C.border}`,color:C.textMuted}}>Audits</th>
-                    <th style={{textAlign:"right",padding:"6px 8px",borderBottom:`2px solid ${C.border}`,color:C.textMuted}}>Def. Rate</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {analysis.chartData.slice().reverse().flatMap(row =>
-                    ["Big 4", "Next Tier", "Regional"].map(tier => (
-                      <tr key={`${row.year}_${tier}`}>
-                        <td style={{padding:"4px 8px",borderBottom:`1px solid ${C.borderLight}`,...font.mono}}>{row.year}</td>
-                        <td style={{padding:"4px 8px",borderBottom:`1px solid ${C.borderLight}`}}>{tier}</td>
-                        <td style={{padding:"4px 8px",borderBottom:`1px solid ${C.borderLight}`,textAlign:"right",...font.mono}}>{row[`${tier}_firms`]}</td>
-                        <td style={{padding:"4px 8px",borderBottom:`1px solid ${C.borderLight}`,textAlign:"right",...font.mono}}>{row[`${tier}_audits`]}</td>
-                        <td style={{padding:"4px 8px",borderBottom:`1px solid ${C.borderLight}`,textAlign:"right",...font.mono,fontWeight:700,color:row[tier]>50?C.red:row[tier]>25?C.amber:C.green}}>{row[tier]}%</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </>
-      )}
-    </Card>
-  );
-}
-
 /** Chicago Fed xlsx + FRED — national macro, charts, multi-year history (FRED needs server key). */
 function LaborMacroPanel({ onAfterLoad }) {
   const [laborOverview, setLaborOverview] = useState(null);
@@ -3081,7 +2898,6 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
       {[
         { title: "Historical Backfill", desc: "Every signal source has a Backfill button. TheirStack queries monthly job counts from Jan 2021. Google Trends fetches 5 years of weekly data in one call. GitHub counts repos/commits per month going back to 2021 (or 2023 for Claude). All historical data is stored permanently." },
         { title: "Growth Charts & Signal Divergence Overlay", desc: "Every metric records a data point on each refresh, building a persistent time-series graph. Click the chart icon to see growth trends. Select 2–4 signals across verticals and metric types to overlay them on a normalized 0–100 scale. The system automatically detects divergences (e.g., job postings rising while API wrapper traffic drops = CIO mandate without real adoption) — these are your actual investment signals." },
-        { title: "PCAOB Audit Deficiency Signal", desc: "A novel, likely unpriced demand proxy. Fetches structured inspection data from pcaobus.org and computes audit deficiency rates by firm tier (Big 4 vs Next Tier vs Regional). When the gap between tiers converges, it signals that AI audit tooling is democratizing quality — a leading indicator of broad professional services AI infrastructure spend. Click 'Load PCAOB Data' to fetch the latest reports." },
         { title: "AI-Powered Divergence Analysis", desc: "When you overlay 2+ signals, the system uses z-score statistics (1.5σ threshold) and Pearson correlation to detect when historically co-moving signals diverge. Click 'AI Interpret' to have Claude generate a narrative explaining what the divergence means for investment timing (e.g., 'RFP spike → jobs lag → budget confirm' pattern detection)." },
         { title: "AI-Powered Weekly Intelligence Report", desc: "Uses Claude (Anthropic API) to synthesize all dashboard data into a comprehensive investment memo. Includes regime classification, inflection detection, divergence analysis, cross-vertical intelligence, and 5 actionable recommendations with conviction levels. Requires Anthropic API key." },
         { title: "Cloud Persistence", desc: "All data automatically syncs to a private GitHub Gist so it is shared across all team members and survives redeploys. Requires GitHub PAT with gist scope." },
@@ -4078,8 +3894,6 @@ SIGNAL TIMING KNOWLEDGE (use for predictions):
 - GitHub Repos: 6-18 months lead. OSS maturity → enterprise evaluation → procurement. Longest lead but highest structural conviction. Language shifts (Python→TypeScript) signal production readiness.
 - Claude Code Attribution: 0-3 months. Most real-time signal. Directly reflects current AI tool adoption. Revenue impact for coding platforms is same-quarter. Compute demand impact within 1 quarter.
 - Hugging Face Downloads: 3-12 months. Open-source model adoption leads enterprise deployment decisions. Download concentration shifts signal vendor market share changes 2-4 quarters ahead.
-- PCAOB Deficiency Convergence: 12-24 months. When Big 4 and regional firm deficiency rates converge, AI audit tooling is democratizing — leading indicator of broad professional services AI spend.
-
 MACRO IN THE PAYLOAD (when macro_labor_context is present):
 - Treat Chicago Fed / FRED as **national regime context**, usually **lagging or coincident** relative to hiring, search, repos, and Claude attribution. They explain *environment*, not a second headline score.
 - Do **not** invent a unified "macro heat" or single composite index. Instead, name **specific pairs or triplets** of series (e.g. JOLTS vs. job-posting momentum; claims vs. Claude; sentiment vs. trends) and discuss **alignment or tension** with explicit uncertainty.
@@ -4513,11 +4327,6 @@ DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
         {/* ─── Hugging Face ─── */}
         <div style={{marginBottom:28}}>
           <HuggingFaceLeaderboard onDataChanged={()=>{const pat=resolveGitPat();if(pat)debouncedSyncToGist(pat,3000);}}/>
-        </div>
-
-        {/* ─── PCAOB Audit Deficiency ─── */}
-        <div style={{marginBottom:28}}>
-          <PcaobSignalPanel onDataChanged={()=>{const pat=resolveGitPat();if(pat)debouncedSyncToGist(pat,3000);}}/>
         </div>
 
         {/* ─── Pipeline Pressure ─── */}
