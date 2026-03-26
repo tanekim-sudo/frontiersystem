@@ -64,6 +64,7 @@ function shouldMirrorIdentityKeyToGist(k) {
   if (k === "annotations" || k === "annotation_author") return true;
   if (k === "hf_lb") return true;
   if (k.startsWith(`${HSPFX}github_watchlist_`)) return true;
+  if (k.startsWith(`${HSPFX}github_live_`) || k.startsWith(`${HSPFX}github_history_`)) return true;
   if (k === `${HSPFX}crosscorr`) return true;
   if (k.startsWith(`${HSPFX}patterns_`)) return true;
   if (k.startsWith(`${HSPFX}history_latest_`) || k.startsWith(`${HSPFX}weekly_latest_`)) return true;
