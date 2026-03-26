@@ -49,6 +49,16 @@ function signalStoreSecret() {
   }
 }
 
+/** When set (with server DATABASE_URL + DASHBOARD_STORE_SECRET), Postgres is the canonical cloud store. */
+function databaseStoreSecret() {
+  try {
+    const v = import.meta.env.VITE_DASHBOARD_STORE_SECRET;
+    return v && String(v).trim() ? String(v).trim() : "";
+  } catch {
+    return "";
+  }
+}
+
 /** Prefer env so preview deploys / cleared storage still bind to the same Gist. */
 function effectiveGistId() {
   const envId = envSignalGistId();
@@ -86,7 +96,7 @@ function sv(k, d) {
   try { localStorage.setItem(PFX + k, JSON.stringify(d)); } catch {}
   if (shouldMirrorIdentityKeyToGist(k)) {
     const pat = _resolveGitPat();
-    if (pat || signalStoreSecret()) debouncedSyncToGist(pat, 4500);
+    if (pat || signalStoreSecret() || databaseStoreSecret()) debouncedSyncToGist(pat, 4500);
   }
 }
 
@@ -208,6 +218,65 @@ async function syncToSignalStoreProxy() {
   } catch {}
 }
 
+async function syncFromDatabaseProxy() {
+  const secret = databaseStoreSecret();
+  if (!secret) return false;
+  try {
+    const res = await fetch("/api/dashboard-state", { headers: { Authorization: `Bearer ${secret}` } });
+    if (res.status === 404) {
+      try {
+        const j = await res.json();
+        if (j.empty) return false;
+      } catch {
+        return false;
+      }
+      return false;
+    }
+    if (!res.ok) return false;
+    const j = await res.json();
+    if (j.data && typeof j.data === "object") {
+      loadAllData(j.data);
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+async function syncToDatabaseProxy() {
+  if (!_cloudInitDone) return;
+  const secret = databaseStoreSecret();
+  if (!secret) return;
+  const data = getAllData();
+  const localKeys = Object.keys(data);
+  const localCfg = data.config;
+  const localEmpty = !localCfg || !localCfg.verticals || localCfg.verticals.length === 0;
+  const localThin = localKeys.length < 3;
+  if (localEmpty || localThin) {
+    try {
+      const chk = await fetch("/api/dashboard-state", { headers: { Authorization: `Bearer ${secret}` } });
+      if (!chk.ok && chk.status !== 404) return;
+      if (chk.ok) {
+        const j = await chk.json();
+        const cloud = j.data;
+        if (cloud && typeof cloud === "object") {
+          const cloudKeys = Object.keys(cloud);
+          if (cloud.config?.verticals?.length > 0) return;
+          if (cloudKeys.length > localKeys.length + 5) return;
+        }
+      }
+    } catch {
+      return;
+    }
+  }
+  try {
+    await fetch("/api/dashboard-state", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ data }),
+    });
+  } catch {}
+}
+
 let _syncDebounce = null;
 let _cloudInitDone = false;
 function debouncedSyncToGist(pat, delayMs = 5000) {
@@ -217,6 +286,7 @@ function debouncedSyncToGist(pat, delayMs = 5000) {
 }
 
 async function syncToGist(pat) {
+  if (databaseStoreSecret()) return syncToDatabaseProxy();
   if (signalStoreSecret()) return syncToSignalStoreProxy();
   if (!pat) return;
   if (!_cloudInitDone) return;
@@ -263,6 +333,10 @@ async function syncToGist(pat) {
 }
 
 async function syncFromGist(pat) {
+  if (databaseStoreSecret()) {
+    const ok = await syncFromDatabaseProxy();
+    if (ok) return true;
+  }
   if (signalStoreSecret()) return syncFromSignalStoreProxy();
   if (!pat) return false;
   let gistId = effectiveGistId();
@@ -3085,7 +3159,7 @@ export default function App() {
   useEffect(()=>{
     if(!cloudSyncDoneRef.current) return;
     sv("config",config);
-    const pat=resolveGitPat();if(pat||signalStoreSecret())debouncedSyncToGist(pat);
+    const pat=resolveGitPat();if(pat||signalStoreSecret()||databaseStoreSecret())debouncedSyncToGist(pat);
   },[config]);
   useEffect(()=>{if(addingGroup&&addRef.current)addRef.current.focus();},[addingGroup]);
   useEffect(() => {
@@ -3187,7 +3261,7 @@ export default function App() {
   }, [resolveGitPat]);
 
   const doCloudSync=useCallback(async(direction)=>{
-    const pat=resolveGitPat();if(!pat&&!signalStoreSecret())return;
+    const pat=resolveGitPat();if(!pat&&!signalStoreSecret()&&!databaseStoreSecret())return;
     setCloudStatus(direction==="up"?"saving…":"loading…");
     try{
       if(direction==="up"){await syncToGist(pat);lastSyncRef.current=Date.now();}
@@ -3202,9 +3276,16 @@ export default function App() {
     let cancelled=false;
     (async()=>{
       const pat=resolveGitPat();
-      if(pat||signalStoreSecret()){setCloudStatus("loading…");try{await syncFromGist(pat);if(!cancelled){setConfig(ld("config",buildDefaultConfig()));setMailingList(ld("mailing_list",[]));}}catch{}if(!cancelled){setCloudStatus("idle");lastSyncRef.current=Date.now();}}
+      if(pat||signalStoreSecret()||databaseStoreSecret()){setCloudStatus("loading…");try{await syncFromGist(pat);if(!cancelled){setConfig(ld("config",buildDefaultConfig()));setMailingList(ld("mailing_list",[]));}}catch{}if(!cancelled){setCloudStatus("idle");lastSyncRef.current=Date.now();}}
       await new Promise(r=>setTimeout(r,100));
       if(!cancelled){cloudSyncDoneRef.current=true;_cloudInitDone=true;}
+      if (!cancelled) {
+        const primed = getAllData();
+        if (!primed.config || Object.keys(primed).length < 2) {
+          const fallbackCfg = ld("config", buildDefaultConfig());
+          try { localStorage.setItem(PFX + "config", JSON.stringify(fallbackCfg)); } catch {}
+        }
+      }
       const cached={};const cfg=ld("config",buildDefaultConfig());
       (cfg.verticals||[]).forEach(v=>{(cfg.sources||[]).forEach(src=>{
         const key=`${v.id}_${src.id}`;
@@ -3241,8 +3322,8 @@ export default function App() {
   },[]);
 
   useEffect(()=>{
-    const id=setInterval(()=>{const pat=resolveGitPat();if(signalStoreSecret()||pat)syncToGist(pat).catch(()=>{});},120000);
-    const onUnload=()=>{if(!_cloudInitDone)return;const sec=signalStoreSecret();if(sec){const data=getAllData();try{fetch("/api/signal-store",{method:"POST",headers:{Authorization:`Bearer ${sec}`,"Content-Type":"application/json"},body:JSON.stringify({data}),keepalive:true});}catch(e){}return;}const pat=resolveGitPat();if(pat){const data=getAllData();const gistId=effectiveGistId();if(gistId){const body=JSON.stringify({files:{"signal-data.json":{content:JSON.stringify(data)}}});try{fetch(`https://api.github.com/gists/${gistId}`,{method:"PATCH",headers:{Authorization:`Bearer ${pat}`,"Content-Type":"application/json"},body,keepalive:true});}catch(e){}}}};
+    const id=setInterval(()=>{const pat=resolveGitPat();if(signalStoreSecret()||pat||databaseStoreSecret())syncToGist(pat).catch(()=>{});},120000);
+    const onUnload=()=>{if(!_cloudInitDone)return;const db=databaseStoreSecret();if(db){const data=getAllData();try{fetch("/api/dashboard-state",{method:"POST",headers:{Authorization:`Bearer ${db}`,"Content-Type":"application/json"},body:JSON.stringify({data}),keepalive:true});}catch(e){}return;}const sec=signalStoreSecret();if(sec){const data=getAllData();try{fetch("/api/signal-store",{method:"POST",headers:{Authorization:`Bearer ${sec}`,"Content-Type":"application/json"},body:JSON.stringify({data}),keepalive:true});}catch(e){}return;}const pat=resolveGitPat();if(pat){const data=getAllData();const gistId=effectiveGistId();if(gistId){const body=JSON.stringify({files:{"signal-data.json":{content:JSON.stringify(data)}}});try{fetch(`https://api.github.com/gists/${gistId}`,{method:"PATCH",headers:{Authorization:`Bearer ${pat}`,"Content-Type":"application/json"},body,keepalive:true});}catch(e){}}}};
     window.addEventListener("beforeunload",onUnload);
     return()=>{clearInterval(id);window.removeEventListener("beforeunload",onUnload);};
   },[resolveGitPat]);
@@ -3267,7 +3348,7 @@ export default function App() {
       setLoading(p=>({...p,[key]:false}));await sleep(300);
     }
     setLoading(p=>({...p,[sourceId]:false}));
-    const pat=resolveGitPat();if(pat||signalStoreSecret())debouncedSyncToGist(pat,3000);
+    const pat=resolveGitPat();if(pat||signalStoreSecret()||databaseStoreSecret())debouncedSyncToGist(pat,3000);
   },[resolveGitPat]);
 
   const refreshAll=useCallback(async()=>{
@@ -3479,7 +3560,7 @@ export default function App() {
       setHistoryProgress({ active: false, verticalId: null, current: 0, total: 0, label: "" });
       return;
     }
-    const pat=resolveGitPat();if(pat||signalStoreSecret())debouncedSyncToGist(pat,2000);
+    const pat=resolveGitPat();if(pat||signalStoreSecret()||databaseStoreSecret())debouncedSyncToGist(pat,2000);
   }, [fetchGoogleTrendsHistory, fetchGitHubCountInRange, resolveGitPat]);
 
   const loadFullHistory = useCallback(async (verticalId, force = false) => {
@@ -3536,7 +3617,7 @@ export default function App() {
     });
     setPatternNotes(ld(patternNoteKey(verticalId), {}));
     setHistoryProgress({active:false,verticalId:null,current:0,total:0,label:""});
-    const pat=resolveGitPat();if(pat||signalStoreSecret())debouncedSyncToGist(pat,2000);
+    const pat=resolveGitPat();if(pat||signalStoreSecret()||databaseStoreSecret())debouncedSyncToGist(pat,2000);
   }, [fetchTheirStackCountInRange, recomputeCrossCorr, resolveGitPat]);
 
   const autoFetchRecentHistory = useCallback(async (verticalId) => {
@@ -3582,7 +3663,7 @@ export default function App() {
   const updateMailingList = useCallback((emails) => {
     setMailingList(emails);
     sv("mailing_list", emails);
-    const pat=resolveGitPat();if(pat||signalStoreSecret())debouncedSyncToGist(pat);
+    const pat=resolveGitPat();if(pat||signalStoreSecret()||databaseStoreSecret())debouncedSyncToGist(pat);
   }, [resolveGitPat]);
 
   const sendReportEmail = useCallback(async (content, week, snapshot = null) => {
@@ -4206,7 +4287,7 @@ DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
     } finally {
       if (tmr) clearInterval(tmr);
       setBriefLoading(false);
-      const pat=resolveGitPat();if(pat||signalStoreSecret())debouncedSyncToGist(pat,2000);
+      const pat=resolveGitPat();if(pat||signalStoreSecret()||databaseStoreSecret())debouncedSyncToGist(pat,2000);
     }
   }, [buildBriefContext, resolveGitPat]);
 
@@ -4295,17 +4376,17 @@ DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
 
         <div style={{...font.sans,fontSize:12,color:C.textSec,lineHeight:1.55,marginBottom:16,padding:"12px 16px",background:C.white,border:`1px solid ${C.borderLight}`,borderRadius:12}}>
           <strong style={{color:C.text}}>Where your data lives:</strong> groups, history, and settings are cached in <strong>this browser</strong> for speed. Your canonical backup should be cloud: either the server store (recommended) or a private GitHub Gist.
-          {!resolveGitPat() && !signalStoreSecret() && (
-            <span> Add <code style={{fontSize:11}}>VITE_SIGNAL_STORE_SECRET</code> + server env (see <code style={{fontSize:11}}>.env.example</code>) for production-grade sync, or <code style={{fontSize:11}}>VITE_GITHUB_PAT</code> for browser→Gist. Use the cloud icons to save / restore.</span>
+          {!resolveGitPat() && !signalStoreSecret() && !databaseStoreSecret() && (
+            <span> Add <code style={{fontSize:11}}>VITE_DASHBOARD_STORE_SECRET</code> + <code style={{fontSize:11}}>DATABASE_URL</code> (Supabase) for canonical Postgres storage, or <code style={{fontSize:11}}>VITE_SIGNAL_STORE_SECRET</code> for Gist via server, or <code style={{fontSize:11}}>VITE_GITHUB_PAT</code> for browser→Gist. See <code style={{fontSize:11}}>.env.example</code>.</span>
           )}
-          {(resolveGitPat() || signalStoreSecret()) && (
-            <span> Cloud sync is configured — data restores on new browsers and deploys. Prefer the server store for hedge-fund use (PAT never ships to the browser).</span>
+          {(resolveGitPat() || signalStoreSecret() || databaseStoreSecret()) && (
+            <span> Cloud sync is configured — data restores on new browsers and deploys. Postgres (Supabase) is preferred when <code style={{fontSize:11}}>VITE_DASHBOARD_STORE_SECRET</code> is set.</span>
           )}
         </div>
 
         {/* ─── Settings (always visible, collapsed by default) ─── */}
         <div style={{marginBottom:20}}>
-          <InlineSettings config={config} setConfig={setConfig} githubWatchlists={githubWatchlists} setGithubWatchlists={setGithubWatchlists} mailingList={mailingList} onUpdateMailingList={updateMailingList} onCloudSync={()=>{const pat=resolveGitPat();if(pat||signalStoreSecret())debouncedSyncToGist(pat);}}/>
+          <InlineSettings config={config} setConfig={setConfig} githubWatchlists={githubWatchlists} setGithubWatchlists={setGithubWatchlists} mailingList={mailingList} onUpdateMailingList={updateMailingList} onCloudSync={()=>{const pat=resolveGitPat();if(pat||signalStoreSecret()||databaseStoreSecret())debouncedSyncToGist(pat);}}/>
         </div>
 
         {/* ─── Empty state prompt ─── */}
@@ -4387,7 +4468,7 @@ DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
           <LaborMacroPanel
             onAfterLoad={() => {
               const pat = resolveGitPat();
-              if (pat || signalStoreSecret()) debouncedSyncToGist(pat, 4000);
+              if (pat || signalStoreSecret() || databaseStoreSecret()) debouncedSyncToGist(pat, 4000);
             }}
           />
         </div>
@@ -4408,7 +4489,7 @@ DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
 
         {/* ─── Hugging Face ─── */}
         <div style={{marginBottom:28}}>
-          <HuggingFaceLeaderboard onDataChanged={()=>{const pat=resolveGitPat();if(pat||signalStoreSecret())debouncedSyncToGist(pat,3000);}}/>
+          <HuggingFaceLeaderboard onDataChanged={()=>{const pat=resolveGitPat();if(pat||signalStoreSecret()||databaseStoreSecret())debouncedSyncToGist(pat,3000);}}/>
         </div>
 
         {/* ─── Alerts ─── */}

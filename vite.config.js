@@ -179,10 +179,110 @@ function signalStoreApiDevPlugin() {
   };
 }
 
+/** Serves /api/dashboard-state during `vite` dev (Postgres via DATABASE_URL). */
+function dashboardStateApiDevPlugin() {
+  return {
+    name: 'dashboard-state-api-dev',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        const pathOnly = (req.url || '').split('?')[0];
+        if (pathOnly !== '/api/dashboard-state') return next();
+
+        if (req.method === 'OPTIONS') {
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+          res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+          res.statusCode = 204;
+          res.end();
+          return;
+        }
+
+        if (req.method !== 'GET' && req.method !== 'POST' && req.method !== 'PUT') {
+          res.statusCode = 405;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: 'Method not allowed' }));
+          return;
+        }
+
+        const readBody = () =>
+          new Promise((resolve, reject) => {
+            let b = '';
+            req.on('data', (c) => {
+              b += c;
+            });
+            req.on('end', () => resolve(b));
+            req.on('error', reject);
+          });
+
+        const bodyStr = req.method === 'GET' ? '' : await readBody();
+        let bodyObj = {};
+        if (bodyStr) {
+          try {
+            bodyObj = JSON.parse(bodyStr);
+          } catch {
+            bodyObj = {};
+          }
+        }
+
+        const mode = server.config.mode;
+        const rootEnv = loadEnv(mode, process.cwd(), '');
+        const prev = {
+          DATABASE_URL: process.env.DATABASE_URL,
+          DASHBOARD_STORE_SECRET: process.env.DASHBOARD_STORE_SECRET,
+        };
+        process.env.DATABASE_URL = rootEnv.DATABASE_URL || '';
+        process.env.DASHBOARD_STORE_SECRET = rootEnv.DASHBOARD_STORE_SECRET || '';
+
+        const mockReq = {
+          method: req.method,
+          headers: req.headers,
+          body: bodyObj,
+        };
+
+        const mockRes = {
+          statusCode: 200,
+          status(code) {
+            this.statusCode = code;
+            return this;
+          },
+          json(obj) {
+            if (!res.headersSent) {
+              res.setHeader('Access-Control-Allow-Origin', '*');
+              res.setHeader('Content-Type', 'application/json');
+              res.statusCode = this.statusCode;
+              res.end(JSON.stringify(obj));
+            }
+          },
+          end(chunk) {
+            if (!res.headersSent) {
+              res.statusCode = this.statusCode;
+              res.end(chunk ?? '');
+            }
+          },
+        };
+
+        try {
+          const { default: handler } = await import('./api/dashboard-state.js');
+          await handler(mockReq, mockRes);
+        } catch (e) {
+          if (!res.headersSent) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: e.message || String(e) }));
+          }
+        } finally {
+          process.env.DATABASE_URL = prev.DATABASE_URL;
+          process.env.DASHBOARD_STORE_SECRET = prev.DASHBOARD_STORE_SECRET;
+        }
+      });
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
-    plugins: [react(), laborApiDevPlugin(), signalStoreApiDevPlugin()],
+    plugins: [react(), laborApiDevPlugin(), signalStoreApiDevPlugin(), dashboardStateApiDevPlugin()],
     server: {
       open: true,
       port: 5173,
