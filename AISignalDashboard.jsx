@@ -1275,12 +1275,6 @@ function MetricCard({icon,label,value,unit,sublabel,desc,color,trend,onClick}){
   </div>);
 }
 
-function GaugeSVG({value,size=90,color}){
-  const cx=size/2,cy=size/2+5,r=size/2-10,s=Math.PI*.8,e=Math.PI*.2,tot=2*Math.PI-(s-e),va=s-(value/100)*tot;
-  const arc=(a,b)=>{const x1=cx+r*Math.cos(a),y1=cy-r*Math.sin(a),x2=cx+r*Math.cos(b),y2=cy-r*Math.sin(b);return`M ${x1} ${y1} A ${r} ${r} 0 ${Math.abs(a-b)>Math.PI?1:0} ${a>b?1:0} ${x2} ${y2}`;};
-  return <svg width={size} height={size-4} viewBox={`0 0 ${size} ${size-4}`}><path d={arc(s,e)} fill="none" stroke={C.border} strokeWidth={6} strokeLinecap="round"/><path d={arc(s,va)} fill="none" stroke={color||C.cyan} strokeWidth={6} strokeLinecap="round"/><text x={cx} y={cy-2} textAnchor="middle" fill={C.text} style={{...font.mono,fontSize:22,fontWeight:800}}>{value}</text><text x={cx} y={cy+13} textAnchor="middle" fill={C.textMuted} style={{...font.sans,fontSize:8,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em"}}>SCORE</text></svg>;
-}
-
 function ChipEditor({items,onChange,color=C.textMuted,placeholder="Add…"}){
   const[adding,setAdding]=useState(false);const[text,setText]=useState("");const ref=useRef(null);
   useEffect(()=>{if(adding&&ref.current)ref.current.focus();},[adding]);
@@ -2430,38 +2424,6 @@ function HuggingFaceLeaderboard({onDataChanged}) {
       </div>
     </Card>
   );
-}
-
-// ── COMPOSITE CARDS (redesigned) ─────────────────────────────────────────────
-
-function CompositeCards({verticals,composites,stageTaxonomy}){
-  return(<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:16}}>
-    {verticals.map(v=>{
-      const comp=composites[v.id]||{score:0,breakdown:{}};const stage=resolveStage(comp.score,stageTaxonomy);
-      const isHot=stage.index>=stageTaxonomy.length-1;
-      return(<Card key={v.id} className={`metric-card ${isHot?"glow":""}`} style={{display:"flex",flexDirection:"column",alignItems:"stretch",gap:12,borderTop:`4px solid ${v.color||C.cyan}`,borderColor:isHot?stage.color:undefined}}>
-        <div style={{display:"flex",justifyContent:"space-between",width:"100%",alignItems:"center"}}>
-          <span style={{...font.sans,fontSize:15,fontWeight:700,color:C.text}}>{v.name}</span>
-          <Badge color={stage.color} bg={stage.color+"18"} size="lg">{stage.name}</Badge>
-        </div>
-        <div style={{display:"flex",justifyContent:"center"}}><GaugeSVG value={comp.score} size={90} color={v.color||C.cyan}/></div>
-        <div style={{...font.sans,fontSize:12,color:C.textSec,textAlign:"center",lineHeight:1.5,padding:"0 4px"}}>
-          <strong style={{color:C.text}}>Composite (0–100)</strong> blends enabled signals below for this theme—higher = stronger cross-signal AI demand, not a stock price.
-        </div>
-        <div style={{...font.sans,fontSize:12,color:C.textMuted,textAlign:"center",lineHeight:1.45}}>{stage.description}</div>
-        <div style={{width:"100%",marginTop:2}}>{Object.entries(comp.breakdown).map(([sid,b])=>(
-          <div key={sid} style={{marginBottom:12}}>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{...font.sans,fontSize:11,fontWeight:600,color:C.textMuted,flex:"0 1 44%",textAlign:"right",lineHeight:1.25}}>{b.source.name}</span>
-              <div style={{flex:1,height:5,background:C.nested,borderRadius:3,overflow:"hidden",minWidth:0}}><div style={{width:`${b.score}%`,height:"100%",background:v.color||C.cyan,borderRadius:3,transition:"width .4s ease"}}/></div>
-              <span style={{...font.mono,fontSize:11,fontWeight:700,color:C.text,width:30,textAlign:"right",flexShrink:0}}>{b.score}</span>
-            </div>
-            <div style={{...font.sans,fontSize:11,color:C.textSec,lineHeight:1.45,marginTop:6,paddingLeft:"46%",paddingRight:4}}>{SOURCE_METRIC_BLURB[sid] || "Adds to the blended score from live or historical signals."}</div>
-          </div>
-        ))}</div>
-      </Card>);
-    })}
-  </div>);
 }
 
 // ── ALERT FEED (redesigned) ──────────────────────────────────────────────────
@@ -4327,11 +4289,6 @@ DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
         {/* ─── Hugging Face ─── */}
         <div style={{marginBottom:28}}>
           <HuggingFaceLeaderboard onDataChanged={()=>{const pat=resolveGitPat();if(pat)debouncedSyncToGist(pat,3000);}}/>
-        </div>
-
-        {/* ─── Pipeline Pressure ─── */}
-        <div style={{marginBottom:28}}>
-          <CompositeCards verticals={config.verticals} composites={composites} stageTaxonomy={config.stageTaxonomy}/>
         </div>
 
         {/* ─── Alerts ─── */}
