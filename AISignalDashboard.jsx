@@ -7,6 +7,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, ComposedChart, Bar, Area, ReferenceLine, ReferenceDot } from "recharts";
 
 const PFX = "sid_v3_";
+const HSPFX = "aitracker_";
 const C = {
   bg: "#f7f8fa", white: "#fff", nested: "#f1f3f6", border: "#e1e4ea", borderLight: "#eceef3",
   text: "#1a1d26", textSec: "#4b5163", textMuted: "#8b92a5",
@@ -29,8 +30,68 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const GIST_ID_KEY = PFX + "gist_id";
 
+function envSignalGistId() {
+  try {
+    const v = import.meta.env.VITE_SIGNAL_DATA_GIST_ID;
+    return v && String(v).trim() ? String(v).trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Prefer env so preview deploys / cleared storage still bind to the same Gist. */
+function effectiveGistId() {
+  const envId = envSignalGistId();
+  if (envId) {
+    try { localStorage.setItem(GIST_ID_KEY, envId); } catch {}
+    return envId;
+  }
+  try {
+    return localStorage.getItem(GIST_ID_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+let _resolveGitPat = () => "";
+function setGitPatResolver(fn) {
+  _resolveGitPat = typeof fn === "function" ? fn : () => "";
+}
+
+/** Debounced cloud save after edits — excludes heavy history keys (backfill spam). */
+function shouldMirrorIdentityKeyToGist(k) {
+  if (k === "config" || k === "mailing_list" || k === "emailjs_config") return true;
+  if (k === "annotations" || k === "annotation_author") return true;
+  if (k === "hf_lb") return true;
+  if (k.startsWith(`${HSPFX}github_watchlist_`)) return true;
+  if (k === `${HSPFX}crosscorr`) return true;
+  if (k.startsWith(`${HSPFX}patterns_`)) return true;
+  if (k.startsWith(`${HSPFX}history_latest_`) || k.startsWith(`${HSPFX}weekly_latest_`)) return true;
+  return false;
+}
+
 function ld(k, fb) { try { const r = localStorage.getItem(PFX + k); return r ? JSON.parse(r) : fb; } catch { return fb; } }
-function sv(k, d) { try { localStorage.setItem(PFX + k, JSON.stringify(d)); } catch {} }
+function sv(k, d) {
+  try { localStorage.setItem(PFX + k, JSON.stringify(d)); } catch {}
+  if (shouldMirrorIdentityKeyToGist(k)) {
+    const pat = _resolveGitPat();
+    if (pat) debouncedSyncToGist(pat, 4500);
+  }
+}
+
+async function findSignalDataGistId(pat) {
+  const marker = "Signal Intelligence Dashboard";
+  for (let page = 1; page <= 25; page++) {
+    const res = await fetch(`https://api.github.com/gists?per_page=100&page=${page}`, { headers: { Authorization: `Bearer ${pat}` } });
+    if (!res.ok) break;
+    const gists = await res.json();
+    if (!Array.isArray(gists) || gists.length === 0) break;
+    const found = gists.find((g) => g.description?.includes(marker) && g.files["signal-data.json"]);
+    if (found) return found.id;
+    if (gists.length < 100) break;
+  }
+  return null;
+}
 
 function getAllData() {
   const data = {};
@@ -94,7 +155,7 @@ async function syncToGist(pat) {
   const localEmpty = !localCfg || !localCfg.verticals || localCfg.verticals.length === 0;
   const localThin = localKeys.length < 3;
   if (localEmpty || localThin) {
-    const gistId = localStorage.getItem(GIST_ID_KEY);
+    const gistId = effectiveGistId();
     if (gistId) {
       try {
         const chk = await fetch(`https://api.github.com/gists/${gistId}`, { headers: { Authorization: `Bearer ${pat}` } });
@@ -111,13 +172,14 @@ async function syncToGist(pat) {
       } catch {}
     }
   }
-  const gistId = localStorage.getItem(GIST_ID_KEY);
+  const gistId = effectiveGistId();
   const body = { description: "Signal Intelligence Dashboard — persistent data store", public: false, files: { "signal-data.json": { content: JSON.stringify(data) } } };
 
   try {
     if (gistId) {
       const res = await fetch(`https://api.github.com/gists/${gistId}`, { method: "PATCH", headers: { Authorization: `Bearer ${pat}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok && res.status === 404) {
+        if (envSignalGistId()) return;
         localStorage.removeItem(GIST_ID_KEY);
         return syncToGist(pat);
       }
@@ -130,16 +192,16 @@ async function syncToGist(pat) {
 
 async function syncFromGist(pat) {
   if (!pat) return false;
-  const gistId = localStorage.getItem(GIST_ID_KEY);
+  let gistId = effectiveGistId();
   if (!gistId) {
     try {
-      const res = await fetch("https://api.github.com/gists?per_page=50", { headers: { Authorization: `Bearer ${pat}` } });
-      if (!res.ok) return false;
-      const gists = await res.json();
-      const found = gists.find(g => g.description?.includes("Signal Intelligence Dashboard") && g.files["signal-data.json"]);
-      if (found) { localStorage.setItem(GIST_ID_KEY, found.id); return syncFromGist(pat); }
-    } catch {}
-    return false;
+      const discovered = await findSignalDataGistId(pat);
+      if (!discovered) return false;
+      localStorage.setItem(GIST_ID_KEY, discovered);
+      gistId = discovered;
+    } catch {
+      return false;
+    }
   }
   try {
     const res = await fetch(`https://api.github.com/gists/${gistId}`, { headers: { Authorization: `Bearer ${pat}` } });
@@ -228,7 +290,6 @@ function getCacheStats() { let c=0,s=0; for(let i=0;i<localStorage.length;i++){c
 // ── HISTORICAL ENGINE ────────────────────────────────────────────────────────
 
 const HIST_START = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
-const HSPFX = "aitracker_";
 
 function hashKeywordsForVertical(vertical) {
   const ks = Object.values(vertical.keywords || {}).flatMap((obj) =>
@@ -3047,6 +3108,11 @@ export default function App() {
     return fromCfg || "";
   },[config.apiKeys]);
 
+  useEffect(() => {
+    setGitPatResolver(() => resolveGitPat());
+    return () => setGitPatResolver(() => "");
+  }, [resolveGitPat]);
+
   const doCloudSync=useCallback(async(direction)=>{
     const pat=resolveGitPat();if(!pat)return;
     setCloudStatus(direction==="up"?"saving…":"loading…");
@@ -3103,7 +3169,7 @@ export default function App() {
 
   useEffect(()=>{
     const id=setInterval(()=>{const pat=resolveGitPat();if(pat)syncToGist(pat).catch(()=>{});},120000);
-    const onUnload=()=>{if(!_cloudInitDone)return;const pat=resolveGitPat();if(pat){const data=getAllData();const gistId=localStorage.getItem(GIST_ID_KEY);if(gistId){const body=JSON.stringify({files:{"signal-data.json":{content:JSON.stringify(data)}}});try{fetch(`https://api.github.com/gists/${gistId}`,{method:"PATCH",headers:{Authorization:`Bearer ${pat}`,"Content-Type":"application/json"},body,keepalive:true});}catch(e){}}}};
+    const onUnload=()=>{if(!_cloudInitDone)return;const pat=resolveGitPat();if(pat){const data=getAllData();const gistId=effectiveGistId();if(gistId){const body=JSON.stringify({files:{"signal-data.json":{content:JSON.stringify(data)}}});try{fetch(`https://api.github.com/gists/${gistId}`,{method:"PATCH",headers:{Authorization:`Bearer ${pat}`,"Content-Type":"application/json"},body,keepalive:true});}catch(e){}}}};
     window.addEventListener("beforeunload",onUnload);
     return()=>{clearInterval(id);window.removeEventListener("beforeunload",onUnload);};
   },[resolveGitPat]);
