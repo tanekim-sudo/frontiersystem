@@ -1263,18 +1263,6 @@ function SectionHeader({icon,title,subtitle,right,badge}){
   </div>);
 }
 
-function MetricCard({icon,label,value,unit,sublabel,desc,color,trend,onClick}){
-  return(<div className="metric-card" onClick={onClick} style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:14,padding:"16px 20px",cursor:onClick?"pointer":"default",borderLeft:`4px solid ${color||C.cyan}`,boxShadow:"0 1px 3px rgba(0,0,0,.04)"}}>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-      <div style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:600,color:C.textMuted,textTransform:"uppercase",letterSpacing:"0.05em",...font.sans}}>{icon}{label}</div>
-      {trend!=null&&<Badge color={trend>=0?C.green:C.red} bg={trend>=0?C.greenBg:C.redBg} size="sm">{trend>=0?"+":""}{trend}%</Badge>}
-    </div>
-    <div style={{...font.mono,fontSize:28,fontWeight:800,color:color||C.text,letterSpacing:"-0.03em",lineHeight:1}}>{value}{unit&&<span style={{fontSize:14,fontWeight:500,color:C.textMuted,marginLeft:4}}>{unit}</span>}</div>
-    {sublabel&&<div style={{...font.sans,fontSize:11,color:C.textMuted,marginTop:6}}>{sublabel}</div>}
-    {desc&&<div style={{...font.sans,fontSize:12,color:C.textSec,marginTop:10,lineHeight:1.5,paddingTop:10,borderTop:`1px solid ${C.borderLight}`}}>{desc}</div>}
-  </div>);
-}
-
 function ChipEditor({items,onChange,color=C.textMuted,placeholder="Add…"}){
   const[adding,setAdding]=useState(false);const[text,setText]=useState("");const ref=useRef(null);
   useEffect(()=>{if(adding&&ref.current)ref.current.focus();},[adding]);
@@ -4095,8 +4083,6 @@ DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
   const[,tick]=useState(0);useEffect(()=>{const t=setInterval(()=>tick(n=>n+1),10000);return()=>clearInterval(t);},[]);
 
   const anyLoading=Object.values(loading).some(Boolean);
-  const hasData=Object.keys(signalResults).length>0;
-  const showSummaryStrip=hasData||config.verticals.length>0;
   const currentWeekKey = weekKeyFromDate(new Date());
   const signalFingerprint = useMemo(() => JSON.stringify(Object.keys(signalResults).sort().map(k => [k, signalResults[k]?.count || 0])), [signalResults]);
   const lastBriefObj = useMemo(() => { try { return JSON.parse(localStorage.getItem(briefStorageKey(currentWeekKey)) || "null"); } catch { return null; } }, [currentWeekKey, briefContent]);
@@ -4113,17 +4099,6 @@ DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
     const changed = JSON.stringify(lastBriefObj?.data_snapshot?.fingerprint || "") !== JSON.stringify(signalFingerprint);
     return olderThan5d || changed;
   }, [canGenerateBrief, lastBriefObj, signalFingerprint]);
-
-  const summaryMetrics=useMemo(()=>{
-    const m={jobs:0,trends:0,repos:0,claude:0};
-    Object.entries(signalResults).forEach(([k,v])=>{
-      if(k.includes("theirstack"))m.jobs+=(v.count||0);
-      if(k.includes("google_trends"))m.trends=Math.max(m.trends,v.count||0);
-      if(k.includes("github_repos"))m.repos+=(v.count||0);
-      if(k.includes("claude_attrib"))m.claude+=(v.count||0);
-    });
-    return m;
-  },[signalResults]);
 
   return(
     <div style={{background:"#f0f2f5",minHeight:"100vh",...font.sans}}>
@@ -4193,16 +4168,6 @@ DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
               <Btn variant="primary" size="md" onClick={()=>{if(newGroupName.trim()){addGroup(newGroupName.trim());setNewGroupName("");}}}>Create Group</Btn>
             </div>
           </Card>
-        )}
-
-        {/* ─── Summary metrics ─── */}
-        {showSummaryStrip&&(
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12,marginBottom:24}} className="fade-in">
-            <MetricCard icon={<IcoC name="briefcase" size={13} color={C.cyan}/>} label="Job Postings" value={summaryMetrics.jobs.toLocaleString()} sublabel="Matching positions (30d)" desc={SOURCE_METRIC_BLURB.theirstack} color={C.cyan}/>
-            <MetricCard icon={<IcoC name="trendUp" size={13} color={C.blue}/>} label="Search Interest" value={summaryMetrics.trends} sublabel="Relative interest (0–100)" desc={SOURCE_METRIC_BLURB.google_trends} color={C.blue}/>
-            <MetricCard icon={<IcoC name="code" size={13} color={C.green}/>} label="Active Repos" value={summaryMetrics.repos.toLocaleString()} sublabel="GitHub repos (30d push)" desc={SOURCE_METRIC_BLURB.github_repos} color={C.green}/>
-            <MetricCard icon={<IcoC name="bot" size={13} color={C.purple}/>} label="AI Commits" value={summaryMetrics.claude.toLocaleString()} sublabel="Claude-attributed (7d)" desc={SOURCE_METRIC_BLURB.claude_attrib} color={C.purple}/>
-          </div>
         )}
 
         {/* ─── Group bar ─── */}
