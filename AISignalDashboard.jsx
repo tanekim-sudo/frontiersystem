@@ -999,20 +999,32 @@ function fillTemplate(tpl, vars) {
 }
 
 async function githubApiErrorMessage(res) {
+  const retryAfter = res.headers?.get?.("retry-after");
+  const reset = res.headers?.get?.("x-ratelimit-reset");
+  const remaining = res.headers?.get?.("x-ratelimit-remaining");
+  let resetHint = "";
+  if (retryAfter) resetHint = ` Retry after ${retryAfter}s.`;
+  else if (reset) {
+    const t = parseInt(reset, 10);
+    if (!Number.isNaN(t)) resetHint = ` Resets ~${new Date(t * 1000).toLocaleString(undefined, { hour: "numeric", minute: "2-digit", timeZoneName: "short" })}.`;
+  }
+  if (remaining !== null && remaining !== "") resetHint += ` Requests left (this window): ${remaining}.`;
+  const patHint = " Confirm VITE_GITHUB_PAT in .env, restart dev server / redeploy. Space out Refresh and Backfill; Search API has strict per-minute caps.";
+
   let msg = "";
   try {
     const j = await res.clone().json();
     msg = String(j.message || "").toLowerCase();
   } catch {}
-  if (res.status === 401) return "Invalid or expired GitHub token";
-  if (res.status === 429) return "GitHub API rate limited — retry in a few minutes";
+  if (res.status === 401) return "Invalid or expired GitHub token." + resetHint;
+  if (res.status === 429) return "GitHub API rate limited (429)." + resetHint + patHint;
   if (res.status === 403) {
-    if (msg.includes("rate limit") || msg.includes("abuse") || msg.includes("too many") || msg.includes("quota"))
-      return "GitHub API rate limited (403) — wait or use a PAT with higher limits";
+    if (msg.includes("rate limit") || msg.includes("abuse") || msg.includes("too many") || msg.includes("quota") || msg.includes("throttl"))
+      return "GitHub API rate limited (403)." + resetHint + patHint;
     if (msg.includes("sso")) return "GitHub SSO required — authorize your PAT for the org";
-    return "GitHub denied the request (403) — check PAT scopes and org access";
+    return "GitHub denied the request (403) — check PAT scopes and org access." + resetHint;
   }
-  return msg ? `GitHub: ${msg.slice(0, 120)}` : `GitHub HTTP ${res.status}`;
+  return (msg ? `GitHub: ${msg.slice(0, 120)}` : `GitHub HTTP ${res.status}`) + resetHint;
 }
 
 async function callSource(source, vertical, configKeys) {
@@ -1242,9 +1254,9 @@ function Btn({children,onClick,disabled,variant="default",size="md",style:sx,...
   };
   return <button onClick={onClick} disabled={disabled} style={{...base,...vs[variant],...sx}} {...r}>{children}</button>;
 }
-function Badge({children,color=C.textSec,bg,size="sm"}){
+function Badge({children,color=C.textSec,bg,size="sm",...rest}){
   const sz=size==="lg"?{padding:"4px 12px",fontSize:12}:{padding:"3px 9px",fontSize:10.5};
-  return <span style={{display:"inline-flex",alignItems:"center",gap:4,...sz,borderRadius:999,fontWeight:700,...font.sans,background:bg||color+"14",color,whiteSpace:"nowrap",letterSpacing:"0.02em",textTransform:"uppercase"}}>{children}</span>;
+  return <span {...rest} style={{display:"inline-flex",alignItems:"center",gap:4,...sz,borderRadius:999,fontWeight:700,...font.sans,background:bg||color+"14",color,whiteSpace:"nowrap",letterSpacing:"0.02em",textTransform:"uppercase"}}>{children}</span>;
 }
 function Spinner({size=14,color:cl=C.cyan}){ return <svg width={size} height={size} viewBox="0 0 24 24" style={{animation:"spin .7s linear infinite",flexShrink:0}}><circle cx="12" cy="12" r="10" fill="none" stroke={C.border} strokeWidth="3"/><path d="M12 2 a10 10 0 0 1 10 10" fill="none" stroke={cl} strokeWidth="3" strokeLinecap="round"/></svg>; }
 function Card({children,style:sx,className,hover}){ return <div className={className} style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:14,padding:20,boxShadow:"0 1px 3px rgba(0,0,0,.04)",...sx}}>{children}</div>; }
@@ -1363,6 +1375,21 @@ const SOURCE_METRIC_BLURB = {
   githubHistorical:
     "GitHub depth: historical repo/watchlist signal so OSS traction affects the score, not just one snapshot.",
 };
+
+/** Movement-pattern text for weekly brief only (removed from dashboard methodology UI). */
+function buildSignalMovementInterpretationForBrief() {
+  const out = {};
+  for (const [id, info] of Object.entries(SOURCE_INFO)) {
+    if (!info?.movements) continue;
+    out[id] = Object.entries(info.movements).map(([key, m]) => ({
+      key,
+      label: m.label,
+      meaning: m.meaning,
+      market_impact: m.marketImpact,
+    }));
+  }
+  return out;
+}
 
 // ── SIGNAL HISTORY CHART ─────────────────────────────────────────────────────
 
@@ -2050,26 +2077,9 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
               <div style={{fontSize:12,color:C.amber,lineHeight:1.6,padding:"10px 12px",background:C.amberBg,borderRadius:8,border:`1px solid ${C.amber}22`}}>
                 <span style={{fontWeight:700,display:"block",marginBottom:2}}>Investment Implication</span>{info.investment}
               </div>
-              {info.movements&&(
-                <div style={{marginTop:4}}>
-                  <div style={{...font.sans,fontSize:11,fontWeight:700,color:C.text,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>What Movements Mean</div>
-                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                    {Object.entries(info.movements).map(([k,m])=>{
-                      const sevColor = k.includes("strongUp")||k.includes("enterprisePattern")||k.includes("titleShift") ? C.green : k.includes("moderateUp")||k.includes("languageShift") ? C.blue : k.includes("flat")||k.includes("plateau") ? C.textMuted : k.includes("decline")||k.includes("strongDown") ? C.red : C.amber;
-                      return (
-                        <div key={k} style={{padding:"10px 12px",background:sevColor+"06",border:`1px solid ${sevColor}18`,borderRadius:8}}>
-                          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
-                            <span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:sevColor,flexShrink:0}}/>
-                            <span style={{...font.sans,fontSize:12,fontWeight:700,color:C.text}}>{m.label}</span>
-                          </div>
-                          <div style={{...font.sans,fontSize:11.5,color:C.textSec,lineHeight:1.55,marginBottom:6}}>{m.meaning}</div>
-                          <div style={{...font.sans,fontSize:11,color:sevColor,lineHeight:1.5,fontWeight:600,paddingLeft:14,borderLeft:`2px solid ${sevColor}44`}}>{m.marketImpact}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+              <div style={{fontSize:11,color:C.textMuted,lineHeight:1.5}}>
+                Detailed “what this movement means” patterns (spikes, plateaus, divergences) are attached to the <strong>Generate Brief</strong> data only—see payload <code style={{fontSize:10}}>signal_movement_interpretation</code>.
+              </div>
             </div>
           </Expandable>
         )}
@@ -2116,7 +2126,7 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                 {/* Big metric value */}
                 <div style={{width:120,textAlign:"center",flexShrink:0}}>
                   {isL ? <Spinner size={18}/> :
-                   err ? <Badge color={C.red} bg={C.redBg} size="sm">{err.slice(0,25)}</Badge> :
+                   err ? <Badge color={C.red} bg={C.redBg} size="sm" title={err}>{err.length > 42 ? `${err.slice(0, 39)}…` : err}</Badge> :
                    res ? <div>
                      <div style={{...font.mono,fontSize:22,fontWeight:800,color:C.text,letterSpacing:"-0.03em"}}>{(res.count||0).toLocaleString()}</div>
                      {trend!=null&&<Badge color={trend>=0?C.green:C.red} bg={trend>=0?C.greenBg:C.redBg} size="sm">{trend>=0?"+":""}{trend}%</Badge>}
@@ -3321,7 +3331,7 @@ export default function App() {
           break;
         }
         setHistoryProgress({ active: true, verticalId, current: i + 1, total: weeks.length, label: `Backfilling ${vert.name} ${sourceId === "github_repos" ? "repos" : "Claude"} (${i + 1}/${weeks.length})...` });
-        await sleep(2200);
+        await sleep(4500);
       }
       if (recorded.length > 0) {
         sv(histCacheKey, { version: 2, generatedAt: new Date().toISOString(), points: recorded });
@@ -3780,8 +3790,9 @@ export default function App() {
         github_repos: { leadLag: SOURCE_INFO.github_repos.leadLag, investment: SOURCE_INFO.github_repos.investment },
         claude_attrib: { leadLag: SOURCE_INFO.claude_attrib.leadLag, investment: SOURCE_INFO.claude_attrib.investment },
       },
+      signal_movement_interpretation: buildSignalMovementInterpretationForBrief(),
     };
-    return trimPayloadSize(ctx, 22000);
+    return trimPayloadSize(ctx, 28000);
   }, [composites, signalResults, githubHistoryByVertical, tsHistoryByVertical, crossCorr]);
 
   const generateBrief = useCallback(async () => {
@@ -3817,7 +3828,7 @@ export default function App() {
         ...baseCtx,
         macro_labor_context: macro_labor_context || { note: "No macro snapshot returned." },
       },
-      26000,
+      32000,
     );
     const wk = ctx.week || weekKeyFromDate(new Date());
     setBriefWeek(wk);
@@ -3844,6 +3855,11 @@ SIGNAL TIMING KNOWLEDGE (use for predictions):
 - GitHub Repos: 6-18 months lead. OSS maturity → enterprise evaluation → procurement. Longest lead but highest structural conviction. Language shifts (Python→TypeScript) signal production readiness.
 - Claude Code Attribution: 0-3 months. Most real-time signal. Directly reflects current AI tool adoption. Revenue impact for coding platforms is same-quarter. Compute demand impact within 1 quarter.
 - Hugging Face Downloads: 3-12 months. Open-source model adoption leads enterprise deployment decisions. Download concentration shifts signal vendor market share changes 2-4 quarters ahead.
+
+MOVEMENT PATTERNS (payload key signal_movement_interpretation):
+- The dashboard no longer shows long "What Movements Mean" copy per source. That full guide is **only** in the JSON under signal_movement_interpretation (label, meaning, market_impact per pattern).
+- When you discuss WoW changes, momentum, spikes, plateaus, or divergences for jobs, trends, repos, or Claude attribution, **map the data to the closest pattern(s)** and briefly cite implications (meaning + market_impact) where it sharpens the thesis—not as filler.
+
 MACRO IN THE PAYLOAD (when macro_labor_context is present):
 - Treat Chicago Fed / FRED as **national regime context**, usually **lagging or coincident** relative to hiring, search, repos, and Claude attribution. They explain *environment*, not a second headline score.
 - Do **not** invent a unified "macro heat" or single composite index. Instead, name **specific pairs or triplets** of series (e.g. JOLTS vs. job-posting momentum; claims vs. Claude; sentiment vs. trends) and discuss **alignment or tension** with explicit uncertainty.
