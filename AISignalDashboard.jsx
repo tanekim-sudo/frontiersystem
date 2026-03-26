@@ -947,7 +947,7 @@ const DEFAULT_SOURCES = [
     apiConfig: { endpoint: "https://api.github.com/search/repositories", method: "GET", authType: "bearer", authHeader: "", proxyPrefix: "", bodyTemplate: "q={{keywords}}+pushed:>{{since30d}}&sort=updated&per_page=5" },
     responsePaths: { countPath: "total_count", itemsPath: "items", titleField: "full_name", bodyField: "description" } },
   { id: "claude_attrib", name: "Claude Code Attribution", type: "count", weight: 0.2, cadence: "weekly", enabled: true,
-    apiConfig: { endpoint: "https://api.github.com/search/commits", method: "GET", authType: "bearer", authHeader: "", proxyPrefix: "", bodyTemplate: 'q="Co-Authored-By: Claude"+committer-date:>{{since7d}}&sort=committer-date&order=desc&per_page=1' },
+    apiConfig: { endpoint: "https://api.github.com/search/commits", method: "GET", authType: "bearer", authHeader: "", proxyPrefix: "", bodyTemplate: 'q="Co-Authored-By: Claude"+committer-date:{{since7d}}..{{today}}&sort=committer-date&order=desc&per_page=1' },
     responsePaths: { countPath: "total_count", itemsPath: "items", titleField: "commit.message", bodyField: "" } },
 ];
 
@@ -998,10 +998,28 @@ function fillTemplate(tpl, vars) {
   return out;
 }
 
+async function githubApiErrorMessage(res) {
+  let msg = "";
+  try {
+    const j = await res.clone().json();
+    msg = String(j.message || "").toLowerCase();
+  } catch {}
+  if (res.status === 401) return "Invalid or expired GitHub token";
+  if (res.status === 429) return "GitHub API rate limited — retry in a few minutes";
+  if (res.status === 403) {
+    if (msg.includes("rate limit") || msg.includes("abuse") || msg.includes("too many") || msg.includes("quota"))
+      return "GitHub API rate limited (403) — wait or use a PAT with higher limits";
+    if (msg.includes("sso")) return "GitHub SSO required — authorize your PAT for the org";
+    return "GitHub denied the request (403) — check PAT scopes and org access";
+  }
+  return msg ? `GitHub: ${msg.slice(0, 120)}` : `GitHub HTTP ${res.status}`;
+}
+
 async function callSource(source, vertical, configKeys) {
   const cfg = source.apiConfig, vkw = vertical.keywords?.[source.id] || {};
+  const today = new Date().toISOString().slice(0, 10);
   const since30d = new Date(Date.now()-30*86400000).toISOString().slice(0,10), since7d = new Date(Date.now()-7*86400000).toISOString().slice(0,10);
-  const tv = { ...vkw, since30d, since7d };
+  const tv = { ...vkw, since30d, since7d, today };
   if (vkw.keywords) tv.keywords = Array.isArray(vkw.keywords) ? vkw.keywords.filter(Boolean).join(",") : vkw.keywords;
   if (vkw.titleKeywords) tv.titleKeywords = vkw.titleKeywords;
   if (vkw.descriptionKeywords) tv.descriptionKeywords = vkw.descriptionKeywords;
@@ -1062,7 +1080,21 @@ async function callSource(source, vertical, configKeys) {
       throw new Error("Network error — check connection");
     }
   }
-  if (res.status===401||res.status===403) throw new Error("Invalid API key");
+  const isGitHubSource = source.id === "github_repos" || source.id === "claude_attrib";
+  if (isGitHubSource && (res.status === 401 || res.status === 403 || res.status === 429)) {
+    throw new Error(await githubApiErrorMessage(res));
+  }
+  if (source.id === "theirstack" && !resolveTheirStackMocking(source, configKeys) && (res.status === 402 || res.status === 429)) {
+    const lte = new Date().toISOString().slice(0, 10);
+    const gte = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const count = mockTheirStackCountForRange(vertical, gte, lte);
+    const sample = Math.min(25, Math.max(5, Math.ceil(count / 50)));
+    return {
+      metadata: { total_results: count },
+      data: buildMockTheirStackJobItems(sample, vertical),
+    };
+  }
+  if (!isGitHubSource && (res.status===401||res.status===403)) throw new Error("Invalid API key");
   if (res.status===402) throw new Error("API credits exhausted");
   if (res.status===429) throw new Error("Rate limited");
   if (res.status===400) { let detail=""; try{const j=await res.clone().json();detail=j.error||"";}catch{} throw new Error(detail ? `Bad request: ${detail.slice(0,60)}` : "Bad request — check keywords"); }
@@ -1472,13 +1504,26 @@ function SignalHistoryChart({ signalKey, color, label }) {
   const data = raw.map(p => ({ ...p, _ts: new Date(p.isoDate || p.ts).getTime() })).sort((a,b)=>a._ts-b._ts);
   const showDots = data.length <= 60;
   const yDomain = zoomedYDomain(data.map(d => d.value));
-  const pctChange = data.length >= 2 ? (((data[data.length-1].value - data[0].value) / Math.max(data[0].value, 1)) * 100) : 0;
+  const vals = data.map(d => d.value);
+  let pctChange = data.length >= 2 ? (((data[data.length - 1].value - data[0].value) / Math.max(data[0].value, 1)) * 100) : 0;
+  let pctNote = null;
+  const hi = Math.max(...vals), lo = Math.min(...vals);
+  if (data.length >= 6 && lo > 0 && hi / lo > 50) {
+    const k = Math.max(2, Math.floor(data.length * 0.2));
+    const earlyMean = mean(vals.slice(0, k));
+    const lateMean = mean(vals.slice(-k));
+    if (earlyMean > 0) {
+      pctChange = ((lateMean - earlyMean) / earlyMean) * 100;
+      pctNote = "early vs late avg";
+    }
+  }
   return (
     <div style={{ width: "100%", height: 160 }}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
         <span style={{...font.sans,fontSize:10,color:C.textMuted}}>{data.length} data points since {formatChartDateShort(data[0]?.isoDate)}</span>
-        <span style={{...font.mono,fontSize:10,fontWeight:700,color:pctChange > 0 ? C.green : pctChange < 0 ? C.red : C.textMuted}}>{pctChange > 0 ? "+" : ""}{pctChange.toFixed(1)}% overall</span>
+        <span style={{...font.mono,fontSize:10,fontWeight:700,color:pctChange > 0 ? C.green : pctChange < 0 ? C.red : C.textMuted}} title={pctNote || "First point vs last point"}>{pctChange > 0 ? "+" : ""}{pctChange.toFixed(1)}%{pctNote ? " *" : ""} overall</span>
       </div>
+      {pctNote && <div style={{...font.sans,fontSize:9,color:C.textMuted,textAlign:"right",marginBottom:4,lineHeight:1.3}}>* {pctNote}: used when the first points are on a different scale than recent data (run Backfill to align windows).</div>}
       <ResponsiveContainer>
         <LineChart data={data} margin={{ top:8,right:16,bottom:8,left:8 }}>
           <XAxis dataKey="_ts" type="number" scale="time" domain={["dataMin","dataMax"]}
@@ -2308,8 +2353,8 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                       <IcoC name="layers" size={13} color={C.textSec}/> Backfill Jobs
                     </Btn>
                   )}
-                  {source.id !== "theirstack" && hist.length < 5 && (
-                    <Btn variant="default" size="sm" onClick={()=>onBackfillSignal?.(v.id, source.id)} disabled={historyProgress?.active} title={`Backfill ${source.name} historical data`}>
+                  {(source.id === "google_trends" || source.id === "github_repos" || source.id === "claude_attrib") && (
+                    <Btn variant="default" size="sm" onClick={()=>onBackfillSignal?.(v.id, source.id)} disabled={historyProgress?.active} title={source.id === "google_trends" ? "Backfill ~12 months of Google Trends (needs SerpAPI key)" : source.id === "github_repos" ? "Rebuild history: 30-day repo counts sampled weekly (matches Refresh)" : "Rebuild history: 7-day Claude counts sampled weekly (matches Refresh)"}>
                       <IcoC name="layers" size={13} color={C.textSec}/> Backfill
                     </Btn>
                   )}
@@ -3353,7 +3398,9 @@ export default function App() {
       headers: { Accept: "application/json", "Content-Type": "application/json", Authorization: `Bearer ${key}` },
       body: JSON.stringify(body),
     });
-    if (res.status === 402) throw new Error("API credits exhausted (402)");
+    if (res.status === 402 || res.status === 429) {
+      return mockTheirStackCountForRange(vertical, gte, lte);
+    }
     if (!res.ok) throw new Error(`TheirStack HTTP ${res.status}`);
     const json = await res.json();
     return Number(json?.metadata?.total_results || 0);
@@ -3400,17 +3447,20 @@ export default function App() {
       if (!terms) return 0;
       q = `${terms}+pushed:${gte}..${lte}`;
       const res = await fetch(`https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&sort=updated&per_page=1`, { headers });
-      if (res.status === 403 || res.status === 429) throw new Error("GitHub rate limited");
       if (res.status === 422) return 0;
-      if (!res.ok) throw new Error(`GitHub HTTP ${res.status}`);
+      if (!res.ok) throw new Error(await githubApiErrorMessage(res));
       const json = await res.json();
       return json.total_count || 0;
     } else if (sourceId === "claude_attrib") {
-      q = `"Co-Authored-By: Claude"+committer-date:${gte}..${lte}`;
+      const vkw = vertical.keywords?.claude_attrib || {};
+      const extraKw = Array.isArray(vkw.keywords) ? vkw.keywords.filter(Boolean) : [];
+      const base = extraKw.length > 0
+        ? `"Co-Authored-By: Claude"+${extraKw.map(k => `"${k}"`).join("+")}`
+        : `"Co-Authored-By: Claude"`;
+      q = `${base}+committer-date:${gte}..${lte}`;
       const res = await fetch(`https://api.github.com/search/commits?q=${encodeURIComponent(q)}&sort=committer-date&per_page=1`, { headers: { ...headers, Accept: "application/vnd.github.cloak-preview+json" } });
-      if (res.status === 403 || res.status === 429) throw new Error("GitHub rate limited");
       if (res.status === 422) return 0;
-      if (!res.ok) throw new Error(`GitHub HTTP ${res.status}`);
+      if (!res.ok) throw new Error(await githubApiErrorMessage(res));
       const json = await res.json();
       return json.total_count || 0;
     }
@@ -3428,9 +3478,9 @@ export default function App() {
     if (!vert) return;
     cancelHistoryRef.current = false;
     const signalKey = `${verticalId}_${sourceId}`;
-    const histCacheKey = `backfill_${signalKey}`;
+    const histCacheKey = `backfill_v2_${signalKey}`;
     const cached = ld(histCacheKey, null);
-    if (cached?.points?.length > 5) {
+    if (cached?.version === 2 && cached?.points?.length > 8) {
       cached.points.forEach(p => {
         const h = ld(`hist_${signalKey}`, []);
         if (!h.some(x => x.isoDate === p.isoDate)) {
@@ -3459,7 +3509,7 @@ export default function App() {
             sv(`hist_${signalKey}`, h);
           }
         });
-        sv(histCacheKey, { generatedAt: new Date().toISOString(), points: recorded });
+        sv(histCacheKey, { version: 2, generatedAt: new Date().toISOString(), points: recorded });
         setAllHistories(prev => ({ ...prev, [signalKey]: getSignalHistory(signalKey) }));
       } catch (e) {
         setErrors(prev => ({ ...prev, [signalKey]: e.message }));
@@ -3469,34 +3519,46 @@ export default function App() {
     }
 
     if (sourceId === "github_repos" || sourceId === "claude_attrib") {
-      const startDate = HIST_START;
-      const months = monthIntervals(startDate, new Date());
-      setHistoryProgress({ active: true, verticalId, current: 0, total: months.length, label: `Backfilling ${vert.name} ${sourceId === "github_repos" ? "GitHub Repos" : "Claude Attribution"}...` });
+      const weeks = weekIntervals(78, new Date());
+      setHistoryProgress({ active: true, verticalId, current: 0, total: weeks.length, label: `Backfilling ${vert.name} ${sourceId === "github_repos" ? "GitHub Repos (30d windows)" : "Claude (7d windows)"}...` });
       const recorded = [];
-      for (let i = 0; i < months.length; i++) {
+      for (let i = 0; i < weeks.length; i++) {
         if (cancelHistoryRef.current) break;
-        const m = months[i];
+        const w = weeks[i];
         try {
-          const count = await fetchGitHubCountInRange(vert, sourceId, m.gte, m.lte);
-          const ts = new Date(m.gte + "T00:00:00Z").getTime();
-          const entry = { ts, isoDate: new Date(ts).toISOString(), value: count, date: m.key };
+          let count;
+          let gteR = w.gte;
+          let lteR = w.lte;
+          if (sourceId === "github_repos") {
+            const lteD = new Date(w.lte + "T12:00:00Z");
+            const gteD = new Date(lteD);
+            gteD.setUTCDate(gteD.getUTCDate() - 29);
+            gteR = gteD.toISOString().slice(0, 10);
+            lteR = w.lte;
+            count = await fetchGitHubCountInRange(vert, sourceId, gteR, lteR);
+          } else {
+            count = await fetchGitHubCountInRange(vert, sourceId, w.gte, w.lte);
+          }
+          const ts = new Date(w.lte + "T12:00:00Z").getTime();
+          const entry = { ts, isoDate: new Date(ts).toISOString(), value: count, date: w.key };
           recorded.push(entry);
           const h = ld(`hist_${signalKey}`, []);
-          if (!h.some(x => Math.abs(x.ts - ts) < 86400000 * 15)) {
+          if (!h.some(x => Math.abs(x.ts - ts) < 86400000 * 4)) {
             h.push(entry);
             h.sort((a, b) => a.ts - b.ts);
             if (h.length > 500) h.splice(0, h.length - 500);
             sv(`hist_${signalKey}`, h);
           }
         } catch (e) {
-          if (e.message?.includes("rate limited")) { await sleep(60000); i--; continue; }
+          if (e.message?.includes("rate limit")) { await sleep(60000); i--; continue; }
+          setErrors(prev => ({ ...prev, [signalKey]: e.message }));
           break;
         }
-        setHistoryProgress({ active: true, verticalId, current: i + 1, total: months.length, label: `Backfilling ${vert.name} ${sourceId === "github_repos" ? "GitHub Repos" : "Claude Attribution"} (${i + 1}/${months.length})...` });
+        setHistoryProgress({ active: true, verticalId, current: i + 1, total: weeks.length, label: `Backfilling ${vert.name} ${sourceId === "github_repos" ? "repos" : "Claude"} (${i + 1}/${weeks.length})...` });
         await sleep(2200);
       }
       if (recorded.length > 0) {
-        sv(histCacheKey, { generatedAt: new Date().toISOString(), points: recorded });
+        sv(histCacheKey, { version: 2, generatedAt: new Date().toISOString(), points: recorded });
         setAllHistories(prev => ({ ...prev, [signalKey]: getSignalHistory(signalKey) }));
       }
       setHistoryProgress({ active: false, verticalId: null, current: 0, total: 0, label: "" });
