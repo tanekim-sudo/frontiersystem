@@ -1231,7 +1231,7 @@ function SectionHeader({icon,title,subtitle,right,badge}){
   </div>);
 }
 
-function MetricCard({icon,label,value,unit,sublabel,color,trend,onClick}){
+function MetricCard({icon,label,value,unit,sublabel,desc,color,trend,onClick}){
   return(<div className="metric-card" onClick={onClick} style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:14,padding:"16px 20px",cursor:onClick?"pointer":"default",borderLeft:`4px solid ${color||C.cyan}`,boxShadow:"0 1px 3px rgba(0,0,0,.04)"}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
       <div style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:600,color:C.textMuted,textTransform:"uppercase",letterSpacing:"0.05em",...font.sans}}>{icon}{label}</div>
@@ -1239,6 +1239,7 @@ function MetricCard({icon,label,value,unit,sublabel,color,trend,onClick}){
     </div>
     <div style={{...font.mono,fontSize:28,fontWeight:800,color:color||C.text,letterSpacing:"-0.03em",lineHeight:1}}>{value}{unit&&<span style={{fontSize:14,fontWeight:500,color:C.textMuted,marginLeft:4}}>{unit}</span>}</div>
     {sublabel&&<div style={{...font.sans,fontSize:11,color:C.textMuted,marginTop:6}}>{sublabel}</div>}
+    {desc&&<div style={{...font.sans,fontSize:12,color:C.textSec,marginTop:10,lineHeight:1.5,paddingTop:10,borderTop:`1px solid ${C.borderLight}`}}>{desc}</div>}
   </div>);
 }
 
@@ -1331,6 +1332,22 @@ const SOURCE_INFO = {
       enterprisePattern: { label: "Weekday/weekend ratio shifts toward weekdays", meaning: "Enterprise adoption signal. When attribution concentrates on weekdays, it means companies — not hobbyists — are driving usage. Enterprise seats are 3–5x more valuable than individual developer seats.", marketImpact: "Bullish for enterprise revenue. Enterprise contracts are larger, stickier, and have expansion potential. This pattern shift precedes seat count acceleration in earnings reports by 1 quarter." },
     },
   },
+};
+
+/** Short, visible blurbs for all teammates — what the number is and how it ties to AI demand. */
+const SOURCE_METRIC_BLURB = {
+  theirstack:
+    "Live hiring demand: counts US job posts matching your keywords (titles + descriptions). Rising volume usually means more AI headcount budget and vendor spend over the next several quarters.",
+  google_trends:
+    "Search attention, not revenue: Google’s 0–100 index for your keywords vs their own past peak. Shows awareness and research — often before budgets lock in, but can outpace actual hiring.",
+  github_repos:
+    "Builder activity: public repos matching your themes with pushes in the last 30 days. More activity usually means developers experimenting — often months ahead of enterprise rollouts.",
+  claude_attrib:
+    "Real tool usage: GitHub commits in the last 7 days co-authored by Claude. A fast read on whether AI coding assistants are embedded in day-to-day engineering.",
+  historical:
+    "TheirStack history blend: hiring momentum and anomalies from monthly job data — sharpens the composite when backfill has run.",
+  githubHistorical:
+    "GitHub depth: historical repo/watchlist signal so OSS traction affects the score, not just one snapshot.",
 };
 
 // ── SIGNAL HISTORY CHART ─────────────────────────────────────────────────────
@@ -1681,108 +1698,6 @@ function OverlayChart({ selectedKeys, allHistories, sources, verticals }) {
           )}
         </div>
       )}
-    </Card>
-  );
-}
-
-// ── STAGE PROGRESSION HEATMAP ────────────────────────────────────────────────
-
-function StageHeatmap({ verticals, composites, stageTaxonomy, signalResults, sources }) {
-  const stages = stageTaxonomy || DEFAULT_STAGE_TAXONOMY;
-
-  const heatData = useMemo(() => {
-    if (!verticals.length) return [];
-    return verticals.map(v => {
-      const comp = composites[v.id] || { score: 0, breakdown: {} };
-      const currentStage = resolveStage(comp.score, stages);
-      const signals = {};
-      sources.filter(s => s.enabled).forEach(src => {
-        const res = signalResults[`${v.id}_${src.id}`];
-        signals[src.id] = res?.count || 0;
-      });
-      const stageHeat = stages.map((stg, si) => {
-        const isCurrentOrPast = si <= currentStage.index;
-        const isCurrent = si === currentStage.index;
-        const progressInStage = isCurrent
-          ? Math.min(1, Math.max(0, (comp.score - stg.min) / Math.max(1, (stg.max||100) - stg.min)))
-          : isCurrentOrPast ? 1 : 0;
-        return { stage: stg, heat: progressInStage, isCurrent, isPast: isCurrentOrPast && !isCurrent };
-      });
-      return { vertical: v, score: comp.score, currentStage, stageHeat, signals };
-    });
-  }, [verticals, composites, stages, signalResults, sources]);
-
-  const heatColor = (heat, isCurrent) => {
-    if (heat === 0) return C.nested;
-    if (isCurrent) return `rgba(2, 132, 199, ${0.15 + heat * 0.65})`;
-    return `rgba(15, 123, 85, ${0.1 + heat * 0.3})`;
-  };
-
-  if (!heatData.length) return null;
-
-  return (
-    <Card style={{ marginBottom: 20 }}>
-      <SectionHeader icon={<IcoC name="barChart" size={18} color={C.cyan}/>} title="Stage Progression Heatmap" subtitle="Portfolio-level view of AI adoption progression. Scan all verticals in 30 seconds." badge={<Badge color={C.cyan} bg={C.cyanBg}>{verticals.length} verticals</Badge>}/>
-      <div style={{overflowX:"auto"}}>
-        <table style={{width:"100%",borderCollapse:"collapse",...font.sans,fontSize:12}}>
-          <thead>
-            <tr>
-              <th style={{textAlign:"left",padding:"10px 14px",borderBottom:`2px solid ${C.border}`,fontWeight:700,color:C.text,minWidth:130}}>Vertical</th>
-              <th style={{textAlign:"center",padding:"10px 8px",borderBottom:`2px solid ${C.border}`,fontWeight:600,color:C.textMuted,width:60}}>Score</th>
-              {stages.map(stg => (
-                <th key={stg.name} style={{textAlign:"center",padding:"10px 8px",borderBottom:`2px solid ${C.border}`,fontWeight:600,color:C.textMuted,minWidth:110}}>
-                  {stg.name}
-                  <div style={{fontSize:9,fontWeight:400,color:C.textMuted,marginTop:2}}>{stg.min}–{stg.max||100}</div>
-                </th>
-              ))}
-              <th style={{textAlign:"center",padding:"10px 8px",borderBottom:`2px solid ${C.border}`,fontWeight:600,color:C.textMuted,minWidth:90}}>Signals</th>
-            </tr>
-          </thead>
-          <tbody>
-            {heatData.map(row => (
-              <tr key={row.vertical.id}>
-                <td style={{padding:"10px 14px",borderBottom:`1px solid ${C.borderLight}`,fontWeight:600,color:C.text}}>
-                  <div style={{display:"flex",alignItems:"center",gap:8}}>
-                    <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:row.vertical.color||C.cyan,flexShrink:0}}/>
-                    {row.vertical.name}
-                  </div>
-                </td>
-                <td style={{textAlign:"center",padding:"10px 8px",borderBottom:`1px solid ${C.borderLight}`}}>
-                  <span style={{...font.mono,fontSize:16,fontWeight:800,color:row.currentStage.color||C.text}}>{row.score}</span>
-                </td>
-                {row.stageHeat.map((sh, si) => (
-                  <td key={si} style={{textAlign:"center",padding:"6px 8px",borderBottom:`1px solid ${C.borderLight}`}}>
-                    <div style={{
-                      padding:"8px 6px",borderRadius:8,
-                      background:heatColor(sh.heat, sh.isCurrent),
-                      border:sh.isCurrent?`2px solid ${C.cyan}`:`1px solid ${sh.heat>0?C.border+"60":"transparent"}`,
-                      transition:"all .3s",
-                    }}>
-                      {sh.isCurrent && <div style={{fontSize:10,fontWeight:700,color:C.cyan}}>ACTIVE</div>}
-                      {sh.isPast && <div style={{fontSize:10,fontWeight:600,color:C.green}}>PASSED</div>}
-                      {!sh.isCurrent && !sh.isPast && sh.heat === 0 && <div style={{fontSize:10,color:C.textMuted}}>—</div>}
-                      <div style={{fontSize:9,color:sh.heat>0?C.textSec:C.textMuted,marginTop:2}}>{Math.round(sh.heat*100)}%</div>
-                    </div>
-                  </td>
-                ))}
-                <td style={{padding:"6px 8px",borderBottom:`1px solid ${C.borderLight}`}}>
-                  <div style={{display:"flex",flexDirection:"column",gap:2}}>
-                    {sources.filter(s=>s.enabled).map(src => {
-                      const val = row.signals[src.id] || 0;
-                      return val > 0 ? (
-                        <div key={src.id} style={{display:"flex",justifyContent:"space-between",gap:4,fontSize:10,color:C.textSec}}>
-                          <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:50}}>{src.name.split(" ")[0]}</span>
-                          <span style={{...font.mono,fontWeight:600}}>{val.toLocaleString()}</span>
-                        </div>
-                      ) : null;
-                    })}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
     </Card>
   );
 }
@@ -2269,7 +2184,6 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                 <Badge color={C.textMuted} size="sm">{source.cadence}</Badge>
                 {demoTheirStack && <Badge color={C.cyan} bg={C.cyanBg} size="sm" title="No TheirStack API key — counts are deterministic estimates from your keywords">Demo estimates</Badge>}
               </div>
-              {info&&<div style={{fontSize:12,color:C.textMuted,marginTop:3,maxWidth:500}}>{info.metric}</div>}
             </div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -2314,6 +2228,15 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
               )}
             </div>
           </Expandable>
+        )}
+        {info && (
+          <div style={{ marginTop: 14, padding: "12px 16px", background: "#f4f7fb", borderRadius: 10, border: `1px solid ${C.borderLight}` }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>For the team — what this number means</div>
+            <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.55, maxWidth: 920 }}>
+              {SOURCE_METRIC_BLURB[source.id] || info.metric}
+            </div>
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 8, lineHeight: 1.45 }}>Technical: {info.metric}</div>
+          </div>
         )}
       </div>
 
@@ -2654,18 +2577,26 @@ function CompositeCards({verticals,composites,stageTaxonomy}){
     {verticals.map(v=>{
       const comp=composites[v.id]||{score:0,breakdown:{}};const stage=resolveStage(comp.score,stageTaxonomy);
       const isHot=stage.index>=stageTaxonomy.length-1;
-      return(<Card key={v.id} className={`metric-card ${isHot?"glow":""}`} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10,borderTop:`4px solid ${v.color||C.cyan}`,borderColor:isHot?stage.color:undefined}}>
+      return(<Card key={v.id} className={`metric-card ${isHot?"glow":""}`} style={{display:"flex",flexDirection:"column",alignItems:"stretch",gap:12,borderTop:`4px solid ${v.color||C.cyan}`,borderColor:isHot?stage.color:undefined}}>
         <div style={{display:"flex",justifyContent:"space-between",width:"100%",alignItems:"center"}}>
           <span style={{...font.sans,fontSize:15,fontWeight:700,color:C.text}}>{v.name}</span>
           <Badge color={stage.color} bg={stage.color+"18"} size="lg">{stage.name}</Badge>
         </div>
-        <GaugeSVG value={comp.score} size={90} color={v.color||C.cyan}/>
-        <div style={{...font.sans,fontSize:12,color:C.textMuted,textAlign:"center",lineHeight:1.4}}>{stage.description}</div>
-        <div style={{width:"100%",marginTop:4}}>{Object.entries(comp.breakdown).map(([sid,b])=>(<div key={sid} style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
-          <span style={{...font.sans,fontSize:11,fontWeight:600,color:C.textMuted,width:90,textAlign:"right",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{b.source.name}</span>
-          <div style={{flex:1,height:5,background:C.nested,borderRadius:3,overflow:"hidden"}}><div style={{width:`${b.score}%`,height:"100%",background:v.color||C.cyan,borderRadius:3,transition:"width .4s ease"}}/></div>
-          <span style={{...font.mono,fontSize:11,fontWeight:700,color:C.text,width:28,textAlign:"right"}}>{b.score}</span>
-        </div>))}</div>
+        <div style={{display:"flex",justifyContent:"center"}}><GaugeSVG value={comp.score} size={90} color={v.color||C.cyan}/></div>
+        <div style={{...font.sans,fontSize:12,color:C.textSec,textAlign:"center",lineHeight:1.5,padding:"0 4px"}}>
+          <strong style={{color:C.text}}>Composite (0–100)</strong> blends enabled signals below for this theme—higher = stronger cross-signal AI demand, not a stock price.
+        </div>
+        <div style={{...font.sans,fontSize:12,color:C.textMuted,textAlign:"center",lineHeight:1.45}}>{stage.description}</div>
+        <div style={{width:"100%",marginTop:2}}>{Object.entries(comp.breakdown).map(([sid,b])=>(
+          <div key={sid} style={{marginBottom:12}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{...font.sans,fontSize:11,fontWeight:600,color:C.textMuted,flex:"0 1 44%",textAlign:"right",lineHeight:1.25}}>{b.source.name}</span>
+              <div style={{flex:1,height:5,background:C.nested,borderRadius:3,overflow:"hidden",minWidth:0}}><div style={{width:`${b.score}%`,height:"100%",background:v.color||C.cyan,borderRadius:3,transition:"width .4s ease"}}/></div>
+              <span style={{...font.mono,fontSize:11,fontWeight:700,color:C.text,width:30,textAlign:"right",flexShrink:0}}>{b.score}</span>
+            </div>
+            <div style={{...font.sans,fontSize:11,color:C.textSec,lineHeight:1.45,marginTop:6,paddingLeft:"46%",paddingRight:4}}>{SOURCE_METRIC_BLURB[sid] || "Adds to the blended score from live or historical signals."}</div>
+          </div>
+        ))}</div>
       </Card>);
     })}
   </div>);
@@ -3105,7 +3036,6 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
       {[
         { title: "Historical Backfill", desc: "Every signal source has a Backfill button. TheirStack queries monthly job counts from Jan 2021. Google Trends fetches 5 years of weekly data in one call. GitHub counts repos/commits per month going back to 2021 (or 2023 for Claude). All historical data is stored permanently." },
         { title: "Growth Charts & Signal Divergence Overlay", desc: "Every metric records a data point on each refresh, building a persistent time-series graph. Click the chart icon to see growth trends. Select 2–4 signals across verticals and metric types to overlay them on a normalized 0–100 scale. The system automatically detects divergences (e.g., job postings rising while API wrapper traffic drops = CIO mandate without real adoption) — these are your actual investment signals." },
-        { title: "Stage Progression Heatmap", desc: "A matrix view where rows are your verticals and columns are the 4 adoption stages (Watchlist → Validating → Rolling Out → Committed). Each cell is colored by how hot that signal is, letting investors scan the entire portfolio in 30 seconds." },
         { title: "PCAOB Audit Deficiency Signal", desc: "A novel, likely unpriced demand proxy. Fetches structured inspection data from pcaobus.org and computes audit deficiency rates by firm tier (Big 4 vs Next Tier vs Regional). When the gap between tiers converges, it signals that AI audit tooling is democratizing quality — a leading indicator of broad professional services AI infrastructure spend. Click 'Load PCAOB Data' to fetch the latest reports." },
         { title: "AI-Powered Divergence Analysis", desc: "When you overlay 2+ signals, the system uses z-score statistics (1.5σ threshold) and Pearson correlation to detect when historically co-moving signals diverge. Click 'AI Interpret' to have Claude generate a narrative explaining what the divergence means for investment timing (e.g., 'RFP spike → jobs lag → budget confirm' pattern detection)." },
         { title: "AI-Powered Weekly Intelligence Report", desc: "Uses Claude (Anthropic API) to synthesize all dashboard data into a comprehensive investment memo. Includes regime classification, inflection detection, divergence analysis, cross-vertical intelligence, and 5 actionable recommendations with conviction levels. Requires Anthropic API key." },
@@ -4430,10 +4360,10 @@ DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
         {/* ─── Summary metrics ─── */}
         {showSummaryStrip&&(
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12,marginBottom:24}} className="fade-in">
-            <MetricCard icon={<IcoC name="briefcase" size={13} color={C.cyan}/>} label="Job Postings" value={summaryMetrics.jobs.toLocaleString()} sublabel="Matching positions (30d)" color={C.cyan}/>
-            <MetricCard icon={<IcoC name="trendUp" size={13} color={C.blue}/>} label="Search Interest" value={summaryMetrics.trends} sublabel="Relative interest (0–100)" color={C.blue}/>
-            <MetricCard icon={<IcoC name="code" size={13} color={C.green}/>} label="Active Repos" value={summaryMetrics.repos.toLocaleString()} sublabel="GitHub repos (30d push)" color={C.green}/>
-            <MetricCard icon={<IcoC name="bot" size={13} color={C.purple}/>} label="AI Commits" value={summaryMetrics.claude.toLocaleString()} sublabel="Claude-attributed (7d)" color={C.purple}/>
+            <MetricCard icon={<IcoC name="briefcase" size={13} color={C.cyan}/>} label="Job Postings" value={summaryMetrics.jobs.toLocaleString()} sublabel="Matching positions (30d)" desc={SOURCE_METRIC_BLURB.theirstack} color={C.cyan}/>
+            <MetricCard icon={<IcoC name="trendUp" size={13} color={C.blue}/>} label="Search Interest" value={summaryMetrics.trends} sublabel="Relative interest (0–100)" desc={SOURCE_METRIC_BLURB.google_trends} color={C.blue}/>
+            <MetricCard icon={<IcoC name="code" size={13} color={C.green}/>} label="Active Repos" value={summaryMetrics.repos.toLocaleString()} sublabel="GitHub repos (30d push)" desc={SOURCE_METRIC_BLURB.github_repos} color={C.green}/>
+            <MetricCard icon={<IcoC name="bot" size={13} color={C.purple}/>} label="AI Commits" value={summaryMetrics.claude.toLocaleString()} sublabel="Claude-attributed (7d)" desc={SOURCE_METRIC_BLURB.claude_attrib} color={C.purple}/>
           </div>
         )}
 
@@ -4532,13 +4462,6 @@ DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
         <div style={{marginBottom:28}}>
           <CompositeCards verticals={config.verticals} composites={composites} stageTaxonomy={config.stageTaxonomy}/>
         </div>
-
-        {/* ─── Stage Progression Heatmap ─── */}
-        {config.verticals.length > 0 && (
-          <div style={{marginBottom:28}}>
-            <StageHeatmap verticals={config.verticals} composites={composites} stageTaxonomy={config.stageTaxonomy} signalResults={signalResults} sources={config.sources}/>
-          </div>
-        )}
 
         {/* ─── Alerts ─── */}
         {alerts.length>0&&(
