@@ -229,9 +229,13 @@ function dashboardStateApiDevPlugin() {
         const prev = {
           DATABASE_URL: process.env.DATABASE_URL,
           DASHBOARD_STORE_SECRET: process.env.DASHBOARD_STORE_SECRET,
+          SUPABASE_URL: process.env.SUPABASE_URL,
+          SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
         };
         process.env.DATABASE_URL = rootEnv.DATABASE_URL || '';
         process.env.DASHBOARD_STORE_SECRET = rootEnv.DASHBOARD_STORE_SECRET || '';
+        process.env.SUPABASE_URL = rootEnv.SUPABASE_URL || '';
+        process.env.SUPABASE_SERVICE_ROLE_KEY = rootEnv.SUPABASE_SERVICE_ROLE_KEY || '';
 
         const mockReq = {
           method: req.method,
@@ -273,6 +277,8 @@ function dashboardStateApiDevPlugin() {
         } finally {
           process.env.DATABASE_URL = prev.DATABASE_URL;
           process.env.DASHBOARD_STORE_SECRET = prev.DASHBOARD_STORE_SECRET;
+          process.env.SUPABASE_URL = prev.SUPABASE_URL;
+          process.env.SUPABASE_SERVICE_ROLE_KEY = prev.SUPABASE_SERVICE_ROLE_KEY;
         }
       });
     },

@@ -1,15 +1,22 @@
 /**
- * Canonical dashboard persistence (Supabase / Neon / any Postgres).
+ * Dashboard persistence: Postgres via `pg` OR Supabase REST (recommended on Vercel).
  *
- * Vercel env:
- *   DATABASE_URL           — Supabase *transaction* pooler (6543) or *session* pooler / direct (5432)
- *   DASHBOARD_STORE_SECRET — must match VITE_DASHBOARD_STORE_SECRET
+ * Option A — Supabase REST (avoids pooler/pg driver issues; use if /api/dashboard-state returns 500):
+ *   SUPABASE_URL=https://xxxx.supabase.co
+ *   SUPABASE_SERVICE_ROLE_KEY=eyJ...  (Project Settings → API → service_role — server only, never VITE_)
+ *   DASHBOARD_STORE_SECRET + VITE_DASHBOARD_STORE_SECRET (unchanged)
  *
- * If you see 500s with the transaction pooler (6543), switch to the **Session mode**
- * connection string in Supabase → Settings → Database (port 5432 pooler), or direct DB URL.
+ * Option B — Direct DATABASE_URL + pg:
+ *   DATABASE_URL=postgresql://...  (not sqlite://)
  */
 
 import pg from "pg";
+
+function useSupabaseRest() {
+  const url = (process.env.SUPABASE_URL || "").trim();
+  const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+  return !!(url && key);
+}
 
 function normalizeDatabaseUrl(url) {
   if (!url || typeof url !== "string") return url;
@@ -33,12 +40,12 @@ function dbHintMessage(msg, code) {
     return "Check DATABASE_URL host — copy the URI again from Supabase → Settings → Database.";
   }
   if (code === "SELF_SIGNED_CERT_IN_CHAIN" || lower.includes("certificate")) {
-    return "TLS issue: use sslmode=require in DATABASE_URL (added automatically for supabase.com).";
+    return "TLS issue: use sslmode=require in DATABASE_URL.";
   }
   if (lower.includes("prepared statement") || lower.includes("portal")) {
-    return "PgBouncer conflict: in Supabase use **Session pooler** (5432) or **Direct connection** instead of Transaction pooler (6543), or see Supabase docs for serverless + Postgres.";
+    return "PgBouncer conflict: use Session pooler / direct URL, or set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (REST mode).";
   }
-  return "Open the failed request in Network → response JSON for `error`. Verify DATABASE_URL uses your real DB password (URL-encode special characters).";
+  return "Try adding SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (see api/dashboard-state.js). Or open Network → response JSON for details.";
 }
 
 async function readRequestBody(req) {
@@ -84,6 +91,93 @@ function authorized(req) {
   return secret && auth === `Bearer ${secret}`;
 }
 
+async function handleSupabaseRest(req, res) {
+  const base = process.env.SUPABASE_URL.replace(/\/$/, "");
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const restHeaders = {
+    apikey: key,
+    Authorization: `Bearer ${key}`,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+
+  if (req.method === "GET") {
+    const url = `${base}/rest/v1/dashboard_state?id=eq.default&select=payload,updated_at`;
+    const fr = await fetch(url, {
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        Accept: "application/json",
+      },
+    });
+    const text = await fr.text();
+    let rows;
+    try {
+      rows = text ? JSON.parse(text) : [];
+    } catch {
+      return res.status(502).json({ error: "Invalid JSON from Supabase", detail: text.slice(0, 200) });
+    }
+    if (!fr.ok) {
+      return res.status(502).json({
+        error: rows?.message || rows?.error || text?.slice(0, 300) || `Supabase HTTP ${fr.status}`,
+        hint: "Create table dashboard_state in SQL Editor if missing. Check SUPABASE_URL and service_role key.",
+      });
+    }
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(404).json({ empty: true, error: "No row yet" });
+    }
+    const row = rows[0];
+    return res.status(200).json({
+      data: row.payload,
+      updatedAt: row.updated_at,
+    });
+  }
+
+  if (req.method === "POST" || req.method === "PUT") {
+    let body;
+    try {
+      body = await readRequestBody(req);
+    } catch {
+      return res.status(400).json({ error: "Invalid JSON body" });
+    }
+    const payload = body?.data ?? body;
+    if (!payload || typeof payload !== "object") {
+      return res.status(400).json({ error: "Missing data object" });
+    }
+
+    const row = {
+      id: "default",
+      payload,
+      updated_at: new Date().toISOString(),
+    };
+
+    const fr = await fetch(`${base}/rest/v1/dashboard_state`, {
+      method: "POST",
+      headers: {
+        ...restHeaders,
+        Prefer: "resolution=merge-duplicates",
+      },
+      body: JSON.stringify(row),
+    });
+    const text = await fr.text();
+    if (!fr.ok) {
+      let detail;
+      try {
+        detail = JSON.parse(text);
+      } catch {
+        detail = text;
+      }
+      return res.status(502).json({
+        error: typeof detail === "object" ? (detail.message || JSON.stringify(detail).slice(0, 400)) : String(detail).slice(0, 400),
+        hint: "Ensure table `public.dashboard_state` exists (id text PK, payload jsonb, updated_at timestamptz). SQL is in .env.example.",
+      });
+    }
+    return res.status(200).json({ ok: true });
+  }
+
+  return res.status(405).json({ error: "Method not allowed" });
+}
+
 export default async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(204).end();
 
@@ -91,10 +185,25 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
+  if (useSupabaseRest()) {
+    try {
+      return await handleSupabaseRest(req, res);
+    } catch (e) {
+      return res.status(500).json({ error: e.message || String(e), hint: "Supabase REST handler failed." });
+    }
+  }
+
   const rawUrl = process.env.DATABASE_URL;
   if (!rawUrl || String(rawUrl).includes("[YOUR-PASSWORD]")) {
     return res.status(500).json({
-      error: "DATABASE_URL missing or still contains [YOUR-PASSWORD] placeholder — set the real Supabase URI on Vercel.",
+      error: "Set DATABASE_URL (Postgres) or use SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY for REST mode.",
+      hint: "REST mode avoids Vercel + pooler errors — copy Project URL and service_role from Supabase → Settings → API.",
+    });
+  }
+
+  if (String(rawUrl).toLowerCase().startsWith("sqlite:")) {
+    return res.status(500).json({
+      error: "DATABASE_URL points at SQLite — use your Supabase Postgres URI, or use SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY.",
     });
   }
 
