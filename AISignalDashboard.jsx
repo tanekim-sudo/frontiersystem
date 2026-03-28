@@ -82,7 +82,10 @@ function setGitPatResolver(fn) {
 function shouldMirrorIdentityKeyToGist(k) {
   if (k === "config" || k === "mailing_list" || k === "emailjs_config") return true;
   if (k === "annotations" || k === "annotation_author") return true;
-  if (k === "hf_lb") return true;
+  if (k === "hf_lb" || k === "hist_hf") return true;
+  if (k === "hist_labor_macro") return true;
+  if (k.startsWith("hist_")) return true;
+  if (k.startsWith(`${HSPFX}brief_`)) return true;
   if (k.startsWith(`${HSPFX}github_watchlist_`)) return true;
   if (k.startsWith(`${HSPFX}github_live_`) || k.startsWith(`${HSPFX}github_history_`)) return true;
   if (k === `${HSPFX}crosscorr`) return true;
@@ -120,6 +123,8 @@ function getAllData() {
     const k = localStorage.key(i);
     if (k?.startsWith(PFX) && k !== GIST_ID_KEY) {
       try { data[k.slice(PFX.length)] = JSON.parse(localStorage.getItem(k)); } catch {}
+    } else if (k?.startsWith(HSPFX) && !k?.startsWith(PFX)) {
+      try { data[`__raw_${k}`] = JSON.parse(localStorage.getItem(k)); } catch {}
     }
   }
   return data;
@@ -127,6 +132,12 @@ function getAllData() {
 
 function loadAllData(data) {
   Object.entries(data).forEach(([k, v]) => {
+    if (k.startsWith("__raw_")) {
+      const rawKey = k.slice(6);
+      const existing = localStorage.getItem(rawKey);
+      if (!existing) { try { localStorage.setItem(rawKey, JSON.stringify(v)); } catch {} }
+      return;
+    }
     const existing = localStorage.getItem(PFX + k);
     const existingParsed = existing ? (() => { try { return JSON.parse(existing); } catch { return null; } })() : null;
     if (Array.isArray(v) && Array.isArray(existingParsed)) {
@@ -218,31 +229,34 @@ async function syncToSignalStoreProxy() {
   } catch {}
 }
 
-async function syncFromDatabaseProxy() {
+async function syncFromDatabaseProxy(retries = 2) {
   const secret = databaseStoreSecret();
   if (!secret) return false;
-  try {
-    const res = await fetch("/api/dashboard-state", { headers: { Authorization: `Bearer ${secret}` } });
-    if (res.status === 404) {
-      try {
-        const j = await res.json();
-        if (j.empty) return false;
-      } catch {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch("/api/dashboard-state", { headers: { Authorization: `Bearer ${secret}` } });
+      if (res.status === 404) {
+        try { const j = await res.json(); if (j.empty) return false; } catch { return false; }
         return false;
       }
-      return false;
+      if (res.status === 401) return false;
+      if (!res.ok) {
+        if (attempt < retries) { await sleep(1500 * (attempt + 1)); continue; }
+        return false;
+      }
+      const j = await res.json();
+      if (j.data && typeof j.data === "object") {
+        loadAllData(j.data);
+        return true;
+      }
+    } catch {
+      if (attempt < retries) { await sleep(1500 * (attempt + 1)); continue; }
     }
-    if (!res.ok) return false;
-    const j = await res.json();
-    if (j.data && typeof j.data === "object") {
-      loadAllData(j.data);
-      return true;
-    }
-  } catch {}
+  }
   return false;
 }
 
-async function syncToDatabaseProxy() {
+async function syncToDatabaseProxy(retries = 1) {
   if (!_cloudInitDone) return;
   const secret = databaseStoreSecret();
   if (!secret) return;
@@ -268,13 +282,19 @@ async function syncToDatabaseProxy() {
       return;
     }
   }
-  try {
-    await fetch("/api/dashboard-state", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ data }),
-    });
-  } catch {}
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch("/api/dashboard-state", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ data }),
+      });
+      if (res.ok || res.status === 401 || res.status === 400) return;
+      if (attempt < retries) { await sleep(2000 * (attempt + 1)); continue; }
+    } catch {
+      if (attempt < retries) { await sleep(2000 * (attempt + 1)); continue; }
+    }
+  }
 }
 
 let _syncDebounce = null;
@@ -410,6 +430,34 @@ function appendLaborMacroSnapshot(row) {
   if (h.length > 260) h.splice(0, h.length - 260);
   sv("hist_labor_macro", h);
   return h;
+}
+
+const TIME_RANGES = [
+  { id: "1y", label: "1Y", filterFn: (d, dateKey) => { const cutoff = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 1); return new Date(d[dateKey]) >= cutoff; } },
+  { id: "2y", label: "2Y", filterFn: (d, dateKey) => { const cutoff = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 2); return new Date(d[dateKey]) >= cutoff; } },
+  { id: "5y", label: "5Y", filterFn: (d, dateKey) => { const cutoff = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 5); return new Date(d[dateKey]) >= cutoff; } },
+  { id: "all", label: "All", filterFn: () => true },
+];
+
+function filterByTimeRange(data, rangeId, dateKey = "date") {
+  const range = TIME_RANGES.find((r) => r.id === rangeId) || TIME_RANGES[0];
+  return data.filter((d) => range.filterFn(d, dateKey));
+}
+
+function TimeRangeSelector({ value, onChange, style }) {
+  return (
+    <div style={{ display: "inline-flex", gap: 2, background: C.nested, borderRadius: 6, padding: 2, ...style }}>
+      {TIME_RANGES.map((r) => (
+        <button key={r.id} type="button" onClick={() => onChange(r.id)} style={{
+          ...font.sans, fontSize: 10, fontWeight: 600, padding: "3px 8px", borderRadius: 4, border: "none",
+          background: value === r.id ? C.white : "transparent", color: value === r.id ? C.text : C.textMuted,
+          cursor: "pointer", boxShadow: value === r.id ? "0 1px 2px rgba(0,0,0,.08)" : "none",
+        }}>
+          {r.label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 const LABOR_FRED_CAT_ORDER = ["labor", "jolts", "wages", "growth", "housing", "sentiment", "financial_stress", "rates", "tech_production"];
@@ -1040,11 +1088,257 @@ function buildBriefChartsHtml(ctx) {
   return `<div style="margin:0 0 20px 0">${parts.join("")}</div>`;
 }
 function briefEmailHtmlDocument(week, snapshot, markdownBody, diffMode, baseForDiff) {
+  if (!diffMode && snapshot) return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Weekly Brief ${escapeHtml(week)}</title></head><body style="margin:0;padding:28px;background:#f0f2f5;font-family:Inter,system-ui,sans-serif">${buildVisualBriefHtml(markdownBody, snapshot, week)}</body></html>`;
   const charts = buildBriefChartsHtml(snapshot);
   const inner = diffMode
     ? paragraphDiffHtml(baseForDiff, markdownBody)
     : `${charts}<div style="font:15px/1.65 Georgia,serif;color:#1a1d26">${simpleMarkdownToHtml(markdownBody)}</div>`;
   return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Weekly Brief ${escapeHtml(week)}</title></head><body style="margin:0;padding:28px;background:#f0f2f5;font-family:Inter,system-ui,sans-serif"><div style="max-width:720px;margin:0 auto;background:#fff;border:1px solid #e1e4ea;border-radius:12px;padding:24px 28px">${inner}</div></body></html>`;
+}
+
+function buildSvgBarChart(values, labels, w, h, color, labelColor = "#4b5163") {
+  if (!values?.length || values.length < 2) return "";
+  const pad = { t: 8, r: 8, b: 20, l: 40 };
+  const cw = w - pad.l - pad.r, ch = h - pad.t - pad.b;
+  const max = Math.max(...values, 1);
+  const barW = Math.max(4, Math.min(24, (cw / values.length) * 0.7));
+  const gap = (cw - barW * values.length) / Math.max(1, values.length - 1);
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block;max-width:100%"><rect fill="#f8fafc" width="100%" height="100%" rx="8"/>`;
+  for (let i = 0; i <= 3; i++) {
+    const y = pad.t + ch - (ch * i / 3);
+    const lbl = Math.round(max * i / 3);
+    svg += `<line x1="${pad.l}" y1="${y}" x2="${w - pad.r}" y2="${y}" stroke="#e1e4ea" stroke-width="0.5"/>`;
+    svg += `<text x="${pad.l - 4}" y="${y + 3}" text-anchor="end" fill="${labelColor}" font-size="8" font-family="Inter,system-ui,sans-serif">${lbl}</text>`;
+  }
+  values.forEach((v, i) => {
+    const bh = (v / max) * ch;
+    const x = pad.l + i * (barW + gap);
+    const y = pad.t + ch - bh;
+    svg += `<rect x="${x}" y="${y}" width="${barW}" height="${bh}" fill="${color}" rx="2" opacity="0.85"/>`;
+    if (labels?.[i] && (i === 0 || i === values.length - 1 || i % Math.max(1, Math.floor(values.length / 5)) === 0)) {
+      svg += `<text x="${x + barW / 2}" y="${h - 4}" text-anchor="middle" fill="${labelColor}" font-size="7" font-family="Inter,system-ui,sans-serif">${escapeHtml(String(labels[i]).slice(-5))}</text>`;
+    }
+  });
+  svg += `</svg>`;
+  return svg;
+}
+
+function buildVisualBriefHtml(text, ctx, week) {
+  if (!ctx) return `<div style="max-width:720px;margin:0 auto;background:#fff;border:1px solid #e1e4ea;border-radius:12px;padding:24px 28px"><div style="font:15px/1.65 Georgia,serif;color:#1a1d26">${simpleMarkdownToHtml(text)}</div></div>`;
+  const esc = escapeHtml;
+  const card = (content, opts = {}) => `<div style="background:#fff;border:1px solid #e1e4ea;border-radius:12px;padding:18px 22px;margin-bottom:16px;${opts.border ? `border-left:4px solid ${opts.border};` : ""}">${content}</div>`;
+  const sectionHdr = (title, color = "#0284c7") => `<div style="font:700 11px Inter,system-ui,sans-serif;text-transform:uppercase;letter-spacing:0.08em;color:#4b5163;border-left:4px solid ${color};padding-left:10px;margin-bottom:12px">${esc(title)}</div>`;
+  const badge = (label, level) => {
+    const m = { HIGH: { bg: "#ecfdf5", fg: "#0f7b55" }, MEDIUM: { bg: "#fef3c7", fg: "#b45309" }, LOW: { bg: "#fef2f2", fg: "#c0392b" }, ACCELERATING: { bg: "#ecfdf5", fg: "#0f7b55" }, STEADY_GROWTH: { bg: "#ecfdf5", fg: "#0f7b55" }, INFLECTING_UP: { bg: "#dbeafe", fg: "#1d4ed8" }, PLATEAUING: { bg: "#fef3c7", fg: "#b45309" }, DECELERATING: { bg: "#fef2f2", fg: "#c0392b" }, CONTRACTING: { bg: "#fef2f2", fg: "#c0392b" }, BOTTOMING: { bg: "#f3e8ff", fg: "#6d28d9" } };
+    const s = m[level] || m.MEDIUM;
+    return `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font:700 10px Inter,system-ui,sans-serif;background:${s.bg};color:${s.fg}">${esc(label)}</span>`;
+  };
+  const fmtPct = (v) => v == null ? "n/a" : `${v >= 0 ? "+" : ""}${v}%`;
+  const fmtNum = (v) => v == null ? "—" : typeof v === "number" ? v.toLocaleString() : v;
+
+  const parts = [];
+  parts.push(`<div style="max-width:900px;margin:0 auto;font-family:Inter,system-ui,sans-serif;color:#1a1d26">`);
+
+  // Header
+  parts.push(card(`<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><div><div style="font:800 22px Inter,system-ui,sans-serif;color:#1a1d26;margin-bottom:4px">AI Demand Signal Intelligence</div><div style="font:400 13px Inter,system-ui,sans-serif;color:#4b5163">Week of ${esc(week)} · ${esc(new Date(ctx.generated_at).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }))} · ${ctx.total_verticals_tracked || 0} verticals</div></div><div style="text-align:right"><div style="font:800 32px Inter,system-ui,sans-serif;color:#0284c7">${ctx.composite_score_summary?.average || 0}</div><div style="font:600 10px Inter,system-ui,sans-serif;color:#4b5163;text-transform:uppercase;letter-spacing:0.06em">composite avg</div></div></div>`, { border: "#0284c7" }));
+
+  // Regime dashboard table
+  if (ctx.verticals?.length) {
+    let table = `${sectionHdr("Regime Dashboard")}`;
+    table += `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr>`;
+    ["Vertical", "Regime", "Score", "Jobs", "Trends", "Repos", "Claude"].forEach((h) => {
+      table += `<th style="text-align:left;padding:8px 10px;border-bottom:2px solid #e1e4ea;font-weight:700;color:#4b5163;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;white-space:nowrap">${h}</th>`;
+    });
+    table += `</tr></thead><tbody>`;
+    ctx.verticals.forEach((v, i) => {
+      const bg = i % 2 === 0 ? "#fff" : "#f7f8fa";
+      const jobs = v.signals?.job_postings;
+      const trends = v.signals?.google_trends;
+      const repos = v.signals?.github_repos;
+      const claude = v.signals?.claude_code_attribution;
+      const stage = v.pipeline_stage;
+      const mom = jobs?.time_series?.rolling_momentum_5pt_pct;
+      let regime = "STEADY_GROWTH";
+      if (mom > 15) regime = "ACCELERATING";
+      else if (mom < -15) regime = "DECELERATING";
+      else if (mom != null && Math.abs(mom) <= 5) regime = "PLATEAUING";
+      else if (stage?.label) regime = stage.label.toUpperCase().replace(/\s+/g, "_");
+      table += `<tr style="background:${bg}">`;
+      table += `<td style="padding:8px 10px;font-weight:600">${esc(v.name)}</td>`;
+      table += `<td style="padding:8px 10px">${badge(regime.replace(/_/g, " "), regime)}</td>`;
+      table += `<td style="padding:8px 10px;font-weight:700">${v.composite_score || 0}</td>`;
+      table += `<td style="padding:8px 10px">${fmtNum(jobs?.current_count)} <span style="color:#4b5163;font-size:10px">${fmtPct(jobs?.time_series?.pct_change_vs_previous)}</span></td>`;
+      table += `<td style="padding:8px 10px">${fmtNum(trends?.current_index)}</td>`;
+      table += `<td style="padding:8px 10px">${fmtNum(repos?.active_repos_30d)}</td>`;
+      table += `<td style="padding:8px 10px">${fmtNum(claude?.commits_7d)}</td>`;
+      table += `</tr>`;
+    });
+    table += `</tbody></table></div>`;
+    parts.push(card(table));
+  }
+
+  // Visual charts per vertical
+  if (ctx.verticals?.length) {
+    parts.push(sectionHdr("Signal Trends", "#0284c7"));
+    ctx.verticals.forEach((v) => {
+      const mon = v.theirstack_historical?.recent_monthly || [];
+      const jobVals = mon.length >= 2 ? mon.map((m) => m.count || 0) : (v.signals?.job_postings?.time_series?.recent_values || []).map((p) => p.value || 0);
+      const jobLabels = mon.length >= 2 ? mon.map((m) => m.month || "") : (v.signals?.job_postings?.time_series?.recent_values || []).map((p) => p.date?.slice(5, 10) || "");
+      const trendVals = (v.signals?.google_trends?.time_series?.recent_values || []).map((p) => p.value || 0);
+      const trendLabels = (v.signals?.google_trends?.time_series?.recent_values || []).map((p) => p.date?.slice(5, 10) || "");
+      const repoVals = (v.signals?.github_repos?.time_series?.recent_values || []).map((p) => p.value || 0);
+      const claudeVals = (v.signals?.claude_code_attribution?.time_series?.recent_values || []).map((p) => p.value || 0);
+
+      let chartHtml = `<div style="font:700 15px Inter,system-ui,sans-serif;color:#1a1d26;margin-bottom:4px">${esc(v.name)}</div>`;
+      chartHtml += `<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">`;
+      chartHtml += `<span style="font:600 11px Inter,system-ui,sans-serif;padding:3px 8px;border-radius:4px;background:#f0f7ff;color:#0284c7">Score: ${v.composite_score || 0}</span>`;
+      if (v.pipeline_stage?.label) chartHtml += `<span style="font:600 11px Inter,system-ui,sans-serif;padding:3px 8px;border-radius:4px;background:#f0fdf4;color:#0f7b55">${esc(v.pipeline_stage.label)}</span>`;
+      chartHtml += `</div>`;
+      chartHtml += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">`;
+      chartHtml += `<div><div style="font:700 10px Inter,system-ui,sans-serif;color:#4b5163;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Job Postings</div>`;
+      chartHtml += jobVals.length >= 2 ? buildSvgBarChart(jobVals, jobLabels, 320, 100, "#0284c7") : `<div style="font:400 11px Inter,system-ui,sans-serif;color:#8b92a5;padding:20px 0">Insufficient history</div>`;
+      chartHtml += `</div>`;
+      chartHtml += `<div><div style="font:700 10px Inter,system-ui,sans-serif;color:#4b5163;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Google Trends</div>`;
+      chartHtml += trendVals.length >= 2 ? buildSvgSparkline(trendVals, 320, 80, "#2563eb") : `<div style="font:400 11px Inter,system-ui,sans-serif;color:#8b92a5;padding:20px 0">Insufficient history</div>`;
+      if (trendLabels.length >= 2) chartHtml += `<div style="display:flex;justify-content:space-between;font:400 7px Inter,system-ui,sans-serif;color:#8b92a5;margin-top:2px"><span>${esc(trendLabels[0])}</span><span>${esc(trendLabels[trendLabels.length - 1])}</span></div>`;
+      chartHtml += `</div>`;
+      if (repoVals.length >= 2) {
+        chartHtml += `<div><div style="font:700 10px Inter,system-ui,sans-serif;color:#4b5163;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">GitHub Repos</div>${buildSvgSparkline(repoVals, 320, 60, "#0f7b55")}</div>`;
+      }
+      if (claudeVals.length >= 2) {
+        chartHtml += `<div><div style="font:700 10px Inter,system-ui,sans-serif;color:#4b5163;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Claude Attribution</div>${buildSvgSparkline(claudeVals, 320, 60, "#6d28d9")}</div>`;
+      }
+      chartHtml += `</div>`;
+
+      // Key metrics row
+      const jobs = v.signals?.job_postings;
+      const trends = v.signals?.google_trends;
+      chartHtml += `<div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">`;
+      if (jobs?.time_series) {
+        chartHtml += `<div style="flex:1;min-width:120px;padding:8px 10px;background:#f7f8fa;border-radius:8px"><div style="font:600 9px Inter,system-ui,sans-serif;color:#8b92a5;text-transform:uppercase">Jobs momentum</div><div style="font:700 16px Inter,system-ui,sans-serif;color:${(jobs.time_series.rolling_momentum_5pt_pct || 0) >= 0 ? "#0f7b55" : "#c0392b"}">${fmtPct(jobs.time_series.rolling_momentum_5pt_pct)}</div></div>`;
+      }
+      if (trends?.momentum_pct != null) {
+        chartHtml += `<div style="flex:1;min-width:120px;padding:8px 10px;background:#f7f8fa;border-radius:8px"><div style="font:600 9px Inter,system-ui,sans-serif;color:#8b92a5;text-transform:uppercase">Trends momentum</div><div style="font:700 16px Inter,system-ui,sans-serif;color:${trends.momentum_pct >= 0 ? "#0f7b55" : "#c0392b"}">${fmtPct(trends.momentum_pct)}</div></div>`;
+      }
+      if (jobs?.time_series?.z_score_current != null) {
+        chartHtml += `<div style="flex:1;min-width:120px;padding:8px 10px;background:#f7f8fa;border-radius:8px"><div style="font:600 9px Inter,system-ui,sans-serif;color:#8b92a5;text-transform:uppercase">Z-score</div><div style="font:700 16px Inter,system-ui,sans-serif;color:#1a1d26">${jobs.time_series.z_score_current}</div></div>`;
+      }
+      if (v.theirstack_historical?.current_vs_baseline_pct != null) {
+        chartHtml += `<div style="flex:1;min-width:120px;padding:8px 10px;background:#f7f8fa;border-radius:8px"><div style="font:600 9px Inter,system-ui,sans-serif;color:#8b92a5;text-transform:uppercase">vs Baseline</div><div style="font:700 16px Inter,system-ui,sans-serif;color:#1a1d26">${fmtPct(v.theirstack_historical.current_vs_baseline_pct)}</div></div>`;
+      }
+      chartHtml += `</div>`;
+
+      // Divergences
+      if (v.divergence_signals?.length) {
+        chartHtml += `<div style="margin-top:12px">`;
+        v.divergence_signals.forEach((d) => {
+          const dc = d.direction?.includes("leading") ? "#b45309" : "#6d28d9";
+          chartHtml += `<div style="padding:8px 10px;margin-bottom:6px;border-left:3px solid ${dc};background:#fffbeb;border-radius:0 6px 6px 0;font:400 12px Inter,system-ui,sans-serif;color:#1a1d26"><strong>${esc(d.pair?.replace(/_/g, " ") || "divergence")}</strong>: ${esc(d.interpretation || "")}</div>`;
+        });
+        chartHtml += `</div>`;
+      }
+      parts.push(card(chartHtml, { border: v.pipeline_stage?.index >= 3 ? "#0f7b55" : v.pipeline_stage?.index <= 1 ? "#c0392b" : "#0284c7" }));
+    });
+  }
+
+  // Macro context
+  if (ctx.macro_labor_context && ctx.macro_labor_context.fred_headlines?.length) {
+    let macroHtml = sectionHdr("Macro Context", "#b45309");
+    if (ctx.macro_labor_context.chicago_recent_weeks?.length >= 2) {
+      const cw = ctx.macro_labor_context.chicago_recent_weeks;
+      const uVals = cw.map((r) => r.forecast_u).filter((v) => v != null);
+      const u3Vals = cw.map((r) => r.u3).filter((v) => v != null);
+      const cwLabels = cw.map((r) => r.date?.slice(5) || "");
+      if (uVals.length >= 2) {
+        macroHtml += `<div style="margin-bottom:12px"><div style="font:700 10px Inter,system-ui,sans-serif;color:#4b5163;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Chicago Fed Nowcast vs U-3</div>`;
+        macroHtml += buildSvgSparkline(uVals, 400, 60, "#b45309");
+        if (u3Vals.length >= 2) macroHtml += buildSvgSparkline(u3Vals, 400, 60, "#2563eb");
+        macroHtml += `<div style="display:flex;justify-content:space-between;font:400 7px Inter,system-ui,sans-serif;color:#8b92a5;margin-top:2px"><span>${esc(cwLabels[0])}</span><span>${esc(cwLabels[cwLabels.length - 1])}</span></div></div>`;
+      }
+    }
+    const headlines = ctx.macro_labor_context.fred_headlines.slice(0, 12);
+    macroHtml += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">`;
+    headlines.forEach((h) => {
+      macroHtml += `<div style="padding:6px 8px;background:#f7f8fa;border-radius:6px"><div style="font:600 8px Inter,system-ui,sans-serif;color:#8b92a5;text-transform:uppercase">${esc(h.name?.slice(0, 28) || h.id)}</div><div style="font:700 14px Inter,system-ui,sans-serif;color:#1a1d26">${h.value != null ? h.value : "—"}</div><div style="font:400 8px Inter,system-ui,sans-serif;color:#8b92a5">${esc(h.date || "")}</div></div>`;
+    });
+    macroHtml += `</div>`;
+    parts.push(card(macroHtml, { border: "#b45309" }));
+  }
+
+  // HuggingFace
+  if (ctx.ai_supply_side?.hugging_face_leaderboard?.length) {
+    let hfHtml = sectionHdr("AI Supply Side — HuggingFace", "#6d28d9");
+    const hfOrgs = ctx.ai_supply_side.hugging_face_leaderboard;
+    const maxDl = Math.max(...hfOrgs.map((o) => o.total_downloads || 0), 1);
+    hfHtml += `<div style="display:grid;gap:6px">`;
+    hfOrgs.forEach((o, i) => {
+      const pct = ((o.total_downloads || 0) / maxDl * 100).toFixed(0);
+      hfHtml += `<div style="display:flex;align-items:center;gap:8px"><span style="font:600 10px Inter,system-ui,sans-serif;color:#4b5163;min-width:20px;text-align:right">${i + 1}</span><span style="font:600 11px Inter,system-ui,sans-serif;color:#1a1d26;min-width:100px">${esc(o.org)}</span><div style="flex:1;height:14px;background:#f3e8ff;border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:#6d28d9;border-radius:3px"></div></div><span style="font:600 10px Inter,system-ui,sans-serif;color:#4b5163;min-width:60px;text-align:right">${(o.total_downloads || 0).toLocaleString()}</span></div>`;
+    });
+    hfHtml += `</div>`;
+    if (ctx.ai_supply_side.hf_download_trend?.recent_values?.length >= 2) {
+      const dlVals = ctx.ai_supply_side.hf_download_trend.recent_values.map((p) => p.value || 0);
+      hfHtml += `<div style="margin-top:12px"><div style="font:700 10px Inter,system-ui,sans-serif;color:#4b5163;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Download Trend</div>${buildSvgSparkline(dlVals, 400, 60, "#6d28d9")}</div>`;
+    }
+    parts.push(card(hfHtml, { border: "#6d28d9" }));
+  }
+
+  // Claude analysis text — parse sections
+  const analysisHtml = buildAnalysisSectionsHtml(text);
+  if (analysisHtml) parts.push(analysisHtml);
+
+  // Data quality
+  if (ctx.data_quality_flags?.length) {
+    let dqHtml = sectionHdr("Data Quality Flags", "#c0392b");
+    ctx.data_quality_flags.forEach((f) => {
+      dqHtml += `<div style="padding:4px 0;font:400 11px Inter,system-ui,sans-serif;color:#c0392b">⚠ ${esc(f)}</div>`;
+    });
+    parts.push(card(dqHtml, { border: "#c0392b" }));
+  }
+
+  parts.push(`</div>`);
+  return parts.join("");
+}
+
+function buildAnalysisSectionsHtml(text) {
+  if (!text) return "";
+  const esc = escapeHtml;
+  const sectionColors = {
+    "KEY TAKEAWAYS": "#0284c7", "EXECUTIVE SUMMARY": "#0284c7", "SIGNAL MOVEMENT": "#2563eb",
+    "DIVERGENCE": "#b45309", "CORRELATIONS": "#6d28d9", "INVESTMENT PREDICTIONS": "#0f7b55",
+    "VERTICAL DEEP": "#0284c7", "ACTIONABLE": "#0f7b55", "RISK FACTORS": "#c0392b",
+    "INTERPRETATION": "#2563eb", "MACRO": "#b45309", "NARRATIVE FLOW": "#4b5163",
+    "REGIME": "#0284c7", "DATA CONFIDENCE": "#4b5163", "CONTRARIAN": "#c0392b",
+  };
+  const getSectionColor = (title) => {
+    const upper = title.toUpperCase();
+    for (const [k, c] of Object.entries(sectionColors)) { if (upper.includes(k)) return c; }
+    return "#4b5163";
+  };
+  const sections = text.split(/━{3,}|═{3,}/).map((s) => s.trim()).filter(Boolean);
+  const parts = [];
+  for (const section of sections) {
+    const lines = section.split("\n");
+    let title = "";
+    let bodyLines = lines;
+    if (lines[0] && /^[A-Z][A-Z &\-—()\/]{3,}/.test(lines[0].trim())) {
+      title = lines[0].trim();
+      bodyLines = lines.slice(1);
+    }
+    if (title.includes("VISUAL TREND") || title.includes("REGIME DASHBOARD")) continue;
+    const color = getSectionColor(title);
+    let body = bodyLines.join("\n").trim();
+    if (!body) continue;
+    body = esc(body).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\n/g, "<br/>");
+    // Style bullets
+    body = body.replace(/^• /gm, `<span style="color:${color};margin-right:4px">●</span> `);
+    body = body.replace(/((?:^|<br\/>)\d+\.\s)/g, `<span style="font-weight:700;color:${color}">$1</span>`);
+    const html = `<div style="background:#fff;border:1px solid #e1e4ea;border-radius:12px;padding:18px 22px;margin-bottom:16px;border-left:4px solid ${color}">` +
+      (title ? `<div style="font:700 11px Inter,system-ui,sans-serif;text-transform:uppercase;letter-spacing:0.08em;color:#4b5163;margin-bottom:10px">${esc(title)}</div>` : "") +
+      `<div style="font:400 13px/1.7 Inter,system-ui,sans-serif;color:#1a1d26">${body}</div></div>`;
+    parts.push(html);
+  }
+  return parts.join("");
 }
 function BriefSnapshotCharts({ ctx }) {
   if (!ctx?.verticals?.length) return null;
@@ -1716,9 +2010,12 @@ function zoomedYDomain(values) {
 }
 
 function SignalHistoryChart({ signalKey, color, label }) {
+  const [sigRange, setSigRange] = useState("1y");
   const raw = getSignalHistory(signalKey);
   if (raw.length < 2) return <div style={{...font.sans,fontSize:12,color:C.textMuted,padding:"12px 0",textAlign:"center"}}>Chart appears after 2+ data points. Data is recorded permanently on each refresh.</div>;
-  const data = raw.map(p => ({ ...p, _ts: new Date(p.isoDate || p.ts).getTime() })).sort((a,b)=>a._ts-b._ts);
+  const allData = raw.map(p => ({ ...p, _ts: new Date(p.isoDate || p.ts).getTime() })).sort((a,b)=>a._ts-b._ts);
+  const data = filterByTimeRange(allData, sigRange, "isoDate");
+  if (data.length < 2) return <div style={{...font.sans,fontSize:12,color:C.textMuted,padding:"12px 0",textAlign:"center"}}>Not enough data in selected range. <TimeRangeSelector value={sigRange} onChange={setSigRange} style={{marginLeft:8}} /></div>;
   const showDots = data.length <= 60;
   const yDomain = zoomedYDomain(data.map(d => d.value));
   const vals = data.map(d => d.value);
@@ -1735,10 +2032,13 @@ function SignalHistoryChart({ signalKey, color, label }) {
     }
   }
   return (
-    <div style={{ width: "100%", height: 160 }}>
+    <div style={{ width: "100%", height: 180 }}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
         <span style={{...font.sans,fontSize:10,color:C.textMuted}}>{data.length} data points since {formatChartDateShort(data[0]?.isoDate)}</span>
-        <span style={{...font.mono,fontSize:10,fontWeight:700,color:pctChange > 0 ? C.green : pctChange < 0 ? C.red : C.textMuted}} title={pctNote || "First point vs last point"}>{pctChange > 0 ? "+" : ""}{pctChange.toFixed(1)}%{pctNote ? " *" : ""} overall</span>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{...font.mono,fontSize:10,fontWeight:700,color:pctChange > 0 ? C.green : pctChange < 0 ? C.red : C.textMuted}} title={pctNote || "First point vs last point"}>{pctChange > 0 ? "+" : ""}{pctChange.toFixed(1)}%{pctNote ? " *" : ""} overall</span>
+          <TimeRangeSelector value={sigRange} onChange={setSigRange} />
+        </div>
       </div>
       {pctNote && <div style={{...font.sans,fontSize:9,color:C.textMuted,textAlign:"right",marginBottom:4,lineHeight:1.3}}>* {pctNote}: used when the first points are on a different scale than recent data (run Backfill to align windows).</div>}
       <ResponsiveContainer>
@@ -1971,6 +2271,7 @@ function LaborMacroPanel({ onAfterLoad }) {
   const [laborErr, setLaborErr] = useState(null);
   const [fredCat, setFredCat] = useState("labor");
   const [snapTick, setSnapTick] = useState(0);
+  const [timeRange, setTimeRange] = useState("1y");
   const onAfterRef = useRef(onAfterLoad);
   useEffect(() => {
     onAfterRef.current = onAfterLoad;
@@ -2059,6 +2360,10 @@ function LaborMacroPanel({ onAfterLoad }) {
       <div style={{ padding: "0 22px 18px" }}>
         {laborErr && <div style={{ ...font.sans, fontSize: 12, color: C.red, marginBottom: 8 }}>{laborErr}</div>}
 
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+          <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
+        </div>
+
         {laborOverview?.chicago_fed && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginBottom: 14 }}>
             <div style={{ background: C.nested, borderRadius: 10, padding: 10 }}>
@@ -2082,12 +2387,12 @@ function LaborMacroPanel({ onAfterLoad }) {
           </div>
         )}
 
-        {chiTs.length >= 2 && (
+        {(()=>{ const filteredChi = filterByTimeRange(chiTs, timeRange, "date"); return filteredChi.length >= 2 && (
           <div style={{ marginBottom: 18 }}>
-            <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 6 }}>Chicago Fed — unemployment nowcast vs official U-3 ({chiTs.length} weekly points)</div>
+            <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 6 }}>Chicago Fed — unemployment nowcast vs official U-3 ({filteredChi.length} weekly points)</div>
             <div style={{ height: 200, width: "100%" }}>
               <ResponsiveContainer>
-                <LineChart data={chiTs} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                <LineChart data={filteredChi} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                   <XAxis dataKey="date" tick={{ fontSize: 9, fill: C.textMuted }} interval="preserveStartEnd" />
                   <YAxis tick={{ fontSize: 9, fill: C.textMuted }} width={36} domain={["auto", "auto"]} />
                   <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
@@ -2100,7 +2405,7 @@ function LaborMacroPanel({ onAfterLoad }) {
             <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, margin: "14px 0 6px" }}>Chicago Fed — layoffs / separations vs hiring (unemployed)</div>
             <div style={{ height: 200, width: "100%" }}>
               <ResponsiveContainer>
-                <LineChart data={chiTs} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                <LineChart data={filteredChi} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                   <XAxis dataKey="date" tick={{ fontSize: 9, fill: C.textMuted }} interval="preserveStartEnd" />
                   <YAxis tick={{ fontSize: 9, fill: C.textMuted }} width={36} domain={["auto", "auto"]} />
                   <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
@@ -2111,15 +2416,15 @@ function LaborMacroPanel({ onAfterLoad }) {
               </ResponsiveContainer>
             </div>
           </div>
-        )}
+        );})()}
 
-        {snapChart.length >= 2 && (
+        {(()=>{const filteredSnap=filterByTimeRange(snapChart.map(d=>({...d,_iso:new Date(d.t).toISOString()})), timeRange, "_iso");return filteredSnap.length >= 2 && (
           <div style={{ marginBottom: 18 }}>
             <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 4 }}>Your refresh snapshots (stored locally)</div>
             <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 6 }}>Each macro refresh records Chicago nowcast, JOLTS openings, and UI claims when FRED is configured.</div>
             <div style={{ height: 160, width: "100%" }}>
               <ResponsiveContainer>
-                <LineChart data={snapChart} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                <LineChart data={filteredSnap} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                   <XAxis dataKey="label" tick={{ fontSize: 8, fill: C.textMuted }} interval="preserveStartEnd" />
                   <YAxis yAxisId="l" tick={{ fontSize: 9, fill: C.textMuted }} width={32} />
                   <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 9, fill: C.textMuted }} width={40} />
@@ -2131,7 +2436,7 @@ function LaborMacroPanel({ onAfterLoad }) {
               </ResponsiveContainer>
             </div>
           </div>
-        )}
+        );})()}
 
         {fredHist && (
           <div style={{ marginBottom: 14 }}>
@@ -2161,7 +2466,8 @@ function LaborMacroPanel({ onAfterLoad }) {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 12 }}>
               {fredSeriesInCat.map((s, idx) => {
                 const col = PALETTE[idx % PALETTE.length];
-                const data = (s.observations || []).map((o) => ({ date: o.date, v: o.value }));
+                const dataAll = (s.observations || []).map((o) => ({ date: o.date, v: o.value }));
+                const data = filterByTimeRange(dataAll, timeRange, "date");
                 if (s.error) {
                   return (
                     <div key={s.id} style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.borderLight}`, background: C.nested }}>
@@ -2178,15 +2484,36 @@ function LaborMacroPanel({ onAfterLoad }) {
                     </div>
                   );
                 }
+                const vals = data.map((d) => d.v).filter((v) => v != null && !isNaN(v)).sort((a, b) => a - b);
+                let yDomain = ["auto", "auto"];
+                let clamped = false;
+                if (vals.length >= 10) {
+                  const q1 = vals[Math.floor(vals.length * 0.25)];
+                  const q3 = vals[Math.floor(vals.length * 0.75)];
+                  const iqr = q3 - q1;
+                  const lo = q1 - 3.0 * iqr;
+                  const hi = q3 + 3.0 * iqr;
+                  const outliers = vals.filter((v) => v < lo || v > hi);
+                  if (outliers.length > 0 && outliers.length < vals.length * 0.15) {
+                    const clampedVals = vals.filter((v) => v >= lo && v <= hi);
+                    const cMin = clampedVals[0];
+                    const cMax = clampedVals[clampedVals.length - 1];
+                    const pad = (cMax - cMin) * 0.08;
+                    yDomain = [Math.floor(cMin - pad), Math.ceil(cMax + pad)];
+                    clamped = true;
+                  }
+                }
                 return (
                   <div key={s.id} style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.borderLight}`, background: C.white }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 2 }}>{s.meta?.name || s.id}</div>
-                    <div style={{ fontSize: 9, color: C.textMuted, fontFamily: font.mono.fontFamily, marginBottom: 6 }}>{s.id}</div>
+                    <div style={{ fontSize: 9, color: C.textMuted, fontFamily: font.mono.fontFamily, marginBottom: 6 }}>
+                      {s.id}{clamped ? <span style={{ marginLeft: 6, color: C.amber }} title="Outlier spike (e.g. COVID) clipped for readability — actual peak is higher">⚠ outlier clipped</span> : null}
+                    </div>
                     <div style={{ height: 120, width: "100%" }}>
                       <ResponsiveContainer>
                         <LineChart data={data} margin={{ top: 2, right: 4, left: -18, bottom: 0 }}>
                           <XAxis dataKey="date" tick={{ fontSize: 8, fill: C.textMuted }} interval="preserveStartEnd" />
-                          <YAxis tick={{ fontSize: 8, fill: C.textMuted }} width={44} domain={["auto", "auto"]} />
+                          <YAxis tick={{ fontSize: 8, fill: C.textMuted }} width={44} domain={yDomain} allowDataOverflow={clamped} />
                           <Tooltip contentStyle={{ fontSize: 10, borderRadius: 8 }} formatter={(v) => [v, ""]} />
                           <Line type="monotone" dataKey="v" stroke={col} strokeWidth={2} dot={false} />
                         </LineChart>
@@ -2481,6 +2808,7 @@ function HuggingFaceLeaderboard({onDataChanged}) {
   const [err,setErr]=useState(null);
   const [expanded,setExpanded]=useState(null);
   const [showHist,setShowHist]=useState(false);
+  const [hfRange,setHfRange]=useState("1y");
 
   const doFetch=useCallback(async()=>{
     setIsL(true);setErr(null);
@@ -2571,10 +2899,13 @@ function HuggingFaceLeaderboard({onDataChanged}) {
 
       {showHist && hfHist.length >= 2 && (
         <div className="fade-in" style={{padding:"14px 22px",borderBottom:`1px solid ${C.border}`}}>
-          <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:4}}>Download Growth Over Time</div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+            <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text}}>Download Growth Over Time</div>
+            <TimeRangeSelector value={hfRange} onChange={setHfRange} />
+          </div>
           <div style={{...font.sans,fontSize:10,color:C.textMuted,marginBottom:6}}>{hfHist.length} data points since {formatChartDateShort(new Date(hfHist[0]?.ts).toISOString())}</div>
           <div style={{width:"100%",height:200}}>
-            {(()=>{const hd=hfHist.map(p=>({...p,_ts:p.ts||Date.now()}));const allVals=hd.flatMap(p=>HF_ORGS.map(o=>p[o.id]).filter(v=>typeof v==="number"&&v>0));const yd=zoomedYDomain(allVals);return(
+            {(()=>{const hdAll=hfHist.map(p=>({...p,_ts:p.ts||Date.now(),_iso:new Date(p.ts||Date.now()).toISOString()}));const hd=filterByTimeRange(hdAll,hfRange,"_iso");const allVals=hd.flatMap(p=>HF_ORGS.map(o=>p[o.id]).filter(v=>typeof v==="number"&&v>0));const yd=zoomedYDomain(allVals);return(
             <ResponsiveContainer>
               <LineChart data={hd} margin={{top:8,right:16,bottom:8,left:8}}>
                 <XAxis dataKey="_ts" type="number" scale="time" domain={["dataMin","dataMax"]}
@@ -4100,131 +4431,57 @@ WRITING RULES:
 - Plain prose. No corporate-speak ("it is worth noting," "interestingly," "moving forward" are banned).
 - Every sentence must contain a number, comparison, rate of change, or forward-looking implication.
 - Use precise language: "accelerating" = rate of increase increasing. "Surging" = >30%. "Plateauing" = <5%.
-- Be specific about timeframes. "Over the last 3 observations" not "recently."`;
+- Be specific about timeframes. "Over the last 3 observations" not "recently."
 
-      const userPrompt = `═══════════════════════════════════════════════════════════════
-WEEKLY AI DEMAND SIGNAL INTELLIGENCE — RAW DATA PAYLOAD
-Week: ${ctx.week} | Generated: ${ctx.generated_at}
-═══════════════════════════════════════════════════════════════
+OUTPUT FORMAT:
+- Write in plain text with section headers in ALL CAPS separated by ━━━ lines.
+- Charts and tables are rendered separately by the dashboard — focus only on analytical prose.
+- Keep each section focused and concise. No filler. Every sentence must add value.
+- Use **bold** for emphasis on key numbers and terms.
+- Sections: KEY TAKEAWAYS, EXECUTIVE SUMMARY, SIGNAL MOVEMENT ANALYSIS, DIVERGENCE ANALYSIS, CORRELATIONS & BLIND SPOTS, INVESTMENT PREDICTIONS, VERTICAL DEEP DIVES, ACTIONABLE RECOMMENDATIONS, RISK FACTORS & CONTRARIAN VIEW, DATA CONFIDENCE.`;
+
+      const userPrompt = `RAW DATA — Week: ${ctx.week} | Generated: ${ctx.generated_at}
 
 ${JSON.stringify(ctx, null, 1)}
 
-═══════════════════════════════════════════════════════════════
-OUTPUT — USE THIS EXACT STRUCTURE
-═══════════════════════════════════════════════════════════════
-
-AI DEMAND SIGNAL WEEKLY INTELLIGENCE REPORT
-Week of ${ctx.week}
-Generated: ${ctx.generated_at} | ${ctx.total_verticals_tracked} verticals tracked
+Write the analytical sections below. Charts, tables, and visual layout are handled separately — focus only on sharp, concise analysis. Use ━━━ lines between sections. Keep each section tight — no filler.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 KEY TAKEAWAYS
-(Exactly 5 bullets. Each ≤18 words. Each bullet must include at least one number, percent, or comparative.)
+5 bullets. Each ≤18 words with a number/percent. Most important signals first.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-VISUAL TREND STRIPS
-For EVERY vertical, one line using Unicode blocks ▁▂▃▄▅▆▇█ only (no other chart libs):
-- Build Jobs strip from theirstack_historical.recent_monthly[].count OR signals.job_postings.time_series.recent_values[].value
-- Build Trends strip from signals.google_trends.time_series.recent_values[].value
-Format: [Vertical] | Jobs: [strip] | Trends: [strip]
-If a series has <2 points, write "insufficient points" instead of a strip.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-MACRO & EXTERNAL CONTEXT (DESK RESEARCH — IMPLICATIONS, NOT HEADLINES)
-Relative to generated_at / ISO week:
-- If macro_labor_context includes chicago_fed / fred_headlines / chicago_recent_weeks: anchor **at least 2 bullets** to those **numbers** (levels or recent direction). Still label macro as **lagging/coincident** vs. your leading demand signals where relevant.
-- LAST ~7 DAYS: 3 bullets — typical macro/tech narrative themes; each bullet ties to a specific metric in the payload and states a plausible transmission channel (e.g., "If credit spreads widened, job-posting velocity in X vertical could reflect…").
-- LAST ~30 DAYS: 3 bullets — labor, rates expectations, enterprise IT / SaaS sentiment, AI capex narrative; each maps to at least one signal movement.
-- BROADER ECONOMY: 3 bullets — unemployment / JOLTS style framing, productivity & automation debate, semiconductor–cloud–model vendor chain; explain how each could bias hiring vs search vs OSS activity.
-Use "consistent with / plausible / speculative" language. Do not fabricate specific headline events or exact unemployment prints unless they are widely known for that period; prefer thematic framing.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-CORRELATIONS & BLIND SPOTS (REQUIRED — THIS IS THE CORE VALUE)
-The reader is not asking for a macro heat map. They want **insights they would not notice themselves**.
-
-- Provide **exactly 4** items prefixed **NON-OBVIOUS:**. Each must **combine at least two distinct domains** from the payload (examples: vertical A jobs momentum + vertical B trends; JOLTS or claims + Claude commits; Chicago Fed nowcast trajectory + Google Trends; Hugging Face + payrolls; two second-derivatives that disagree).
-- For each item: (1) the juxtaposition, (2) why a human skimming the dashboard would miss it, (3) a **testable** implication with **approximate timing** using the lead/lag framework, (4) one sentence on **what would falsify** the take.
-- If macro_labor_context is empty or thin, still deliver 4 items using only vertical signals + cross_corr — and state that the macro snapshot was unavailable.
-- Do **not** output a composite macro score or ranked heat index.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 EXECUTIVE SUMMARY
-(3-4 sentences. The single most important development. What changed vs last week. One-sentence directional call sharp enough to open a Monday meeting.)
+3-4 sentences. What changed. Directional call for Monday morning. Be specific.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-REGIME DASHBOARD
-(Table: [Vertical] | [REGIME: ACCELERATING/STEADY_GROWTH/PLATEAUING/DECELERATING/CONTRACTING/BOTTOMING/INFLECTING_UP] | Composite: [score] | Jobs: [count] ([pct]% chg) | Trends: [index] | Repos: [count] | Key driver)
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-NARRATIVE FLOW (READ ORDER)
-One short paragraph explaining how a PM should read this memo top-to-bottom (what to skim vs what to read slowly).
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 SIGNAL MOVEMENT ANALYSIS
-For each metric with meaningful movement:
-- WHAT moved, by how much, in what vertical
-- WHY it matters: use the timing knowledge above. Job postings +30% → vendor revenue inflection in 2-4Q. Claude attribution surging → compute demand THIS quarter. Google Trends spike → procurement pipeline building over next 2Q.
-- CONFIDENCE: HIGH/MEDIUM/LOW
+For each signal with meaningful movement: what moved, magnitude, why it matters using lead/lag timing, confidence HIGH/MEDIUM/LOW.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-DIVERGENCE ANALYSIS (HIGHEST ALPHA)
-For each divergence between signals:
-- THE GAP: Which signals disagree, magnitude
-- THE INTERPRETATION: What adoption phase mismatch this reveals (e.g., "CIO mandate without developer adoption" = budget committed but tools not yet deployed; resolution: jobs lead, repos follow in 2-3 months)
-- THE TRADE: Specific positioning this divergence suggests
-- RESOLUTION TIMELINE: When and how will this resolve? Which signal is leading?
+DIVERGENCE ANALYSIS
+For each divergence: the gap, interpretation (adoption phase), trade implication, resolution timeline.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-INVESTMENT PREDICTIONS (NEW — THIS IS THE KEY SECTION)
-Make 3-5 specific, falsifiable predictions based on signal analysis. Be pragmatic and reasonable — ground every prediction in the data. Use the signal timing knowledge.
-
-For each prediction:
-- PREDICTION: A specific, testable claim about what will happen and when
-- SUPPORTING EVIDENCE: Which signals point to this outcome, with specific numbers
-- TIMING: When this should materialize (use the lead/lag framework — jobs lead revenue by 2-4Q, search leads procurement by 2-3Q, etc.)
-- AFFECTED SECTORS/THEMES: Which areas of the market this impacts (AI infrastructure, cloud compute, professional services, SaaS platforms, semiconductor, etc.)
-- CONFIDENCE: HIGH/MEDIUM/LOW with brief justification
-- WHAT WOULD INVALIDATE: Specific data point that would reverse this prediction
-
-Example predictions (use as format guide, not content):
-- "Enterprise AI hiring in [vertical] will drive a procurement cycle reaching vendor revenue by Q3 2026, based on +30% WoW job posting growth sustained over 4 weeks and title mix shifting toward implementation roles."
-- "Open-source model download concentration shifting from [provider A] to [provider B] on Hugging Face signals market share rotation that will appear in cloud provider earnings in 2-3 quarters."
-- "The divergence between rising search interest and flat hiring in [vertical] will resolve bearishly — this is awareness without budget commitment, and search should decline within 8 weeks."
+CORRELATIONS & BLIND SPOTS
+4 items prefixed NON-OBVIOUS. Each combines 2+ domains. Include testable implication with timing and falsification.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-VERTICAL DEEP DIVES
-(One paragraph per vertical: signal levels with context, momentum, divergences, forward view, key risk.)
+INVESTMENT PREDICTIONS
+3-5 predictions. Each: prediction, evidence, timing, sectors, confidence, invalidation. Be falsifiable.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 ACTIONABLE RECOMMENDATIONS
-(5 recommendations ordered by conviction. Each must include: SIGNAL driving it, ACTION (be concrete — "increase exposure," "initiate position," "reduce allocation"), CONVICTION, TIMEFRAME, INVALIDATION trigger.)
+5 items by conviction. Each: signal, action, conviction, timeframe, invalidation.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-INTERPRETATION & IMPLICATIONS
-For each major trend direction (up / flat / down) in jobs, trends, repos, and Claude attribution: state what it would imply for (1) near-term vendor revenue, (2) 2–4 quarter positioning, (3) tail risks if the trend reverses.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 RISK FACTORS & CONTRARIAN VIEW
-RISKS: What could make the AI demand picture misleading? Which conclusions rest on thin data?
-CONTRARIAN TAKE: 2-3 sentences arguing against your own analysis. If bullish, what's the bear case? If bearish, where's the bull case?
+Risks: what could mislead. Contrarian: 2-3 sentences arguing against your own analysis.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DATA CONFIDENCE
+Grade A/B/C/D. Flag stale or missing signals.`;
 
-DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
 
 
       const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -4237,7 +4494,7 @@ DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
         },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 12000,
+          max_tokens: 8000,
           system: systemPrompt,
           messages: [{ role: "user", content: userPrompt }],
         }),
@@ -4247,8 +4504,9 @@ DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
         throw new Error(`Claude API ${res.status}: ${txt.slice(0, 180)}`);
       }
       const js = await res.json();
-      const text = (js?.content || []).map(c => c?.text || "").join("\n").trim();
+      let text = (js?.content || []).map(c => c?.text || "").join("\n").trim();
       if (!text) throw new Error("Claude returned empty content");
+      text = text.replace(/^```(?:html)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
       const existing = ld(briefStorageKey(wk), null) || (()=>{try{return JSON.parse(localStorage.getItem(briefStorageKey(wk))||"null");}catch{return null;}})();
       const toStore = {
         generated_at: new Date().toISOString(),
@@ -4258,6 +4516,7 @@ DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
       };
       localStorage.setItem(briefStorageKey(wk), JSON.stringify(toStore));
       localStorage.setItem(BRIEF_LAST_KEY, toStore.generated_at);
+      { const pat = _resolveGitPat(); if (pat || signalStoreSecret() || databaseStoreSecret()) debouncedSyncToGist(pat, 5000); }
       setBriefContent(text);
       setBriefBaseForDiff(toStore.first_content_markdown || text);
       setBriefSnapshot(ctx);
@@ -4529,8 +4788,8 @@ DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
             </div>
             <div style={{display:"flex",alignItems:"center",gap:6}}>
               <label style={{display:"flex",alignItems:"center",gap:4,fontSize:12,color:C.textSec}}><input type="checkbox" checked={briefDiffMode} onChange={e=>setBriefDiffMode(e.target.checked)} /> Show Changes</label>
-              <Btn size="sm" onClick={()=>navigator.clipboard?.writeText(briefContent || "")}>Copy as Markdown</Btn>
-              <Btn size="sm" onClick={()=>navigator.clipboard?.writeText((briefContent || "").replace(/[#*_`>-]/g,""))}>Copy as Plain Text</Btn>
+              <Btn size="sm" onClick={()=>navigator.clipboard?.writeText(briefContent || "")}>Copy HTML</Btn>
+              <Btn size="sm" onClick={()=>{const tmp=document.createElement("div");tmp.innerHTML=briefContent||"";navigator.clipboard?.writeText(tmp.textContent||tmp.innerText||"");}}>Copy as Plain Text</Btn>
               <Btn size="sm" variant={mailingList.length>0?"primary":"default"} disabled={emailSending||!briefContent} onClick={()=>sendReportEmail(briefContent,briefWeek,briefSnapshot)}>
                 {emailSending ? <><Spinner size={11} color="#fff"/> Sending</> : <><IcoC name="mail" size={12} color={mailingList.length>0?"#fff":C.textSec}/> Email to Team ({mailingList.length})</>}
               </Btn>
@@ -4547,25 +4806,25 @@ DATA CONFIDENCE: Grade A/B/C/D. Flag stale or missing signals.`;
           <div style={{flex:1,overflowY:"auto",padding:"22px 28px"}}>
             {briefLoading ? (
               <div style={{maxWidth:700,margin:"80px auto",textAlign:"center"}}>
-                <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Synthesizing signals...</div>
-                <div style={{fontSize:12,color:C.textMuted,marginBottom:10}}>Estimated time: 10-15 seconds</div>
+                <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Synthesizing intelligence report...</div>
+                <div style={{fontSize:12,color:C.textMuted,marginBottom:10}}>Analyzing signals and building visual report — 10-20 seconds</div>
                 <div style={{height:8,background:C.nested,borderRadius:999,overflow:"hidden",maxWidth:360,margin:"0 auto"}}>
-                  <div style={{height:"100%",width:`${Math.min(100,Math.round((briefProgressSec/15)*100))}%`,background:C.cyan,transition:"width .5s"}} />
+                  <div style={{height:"100%",width:`${Math.min(100,Math.round((briefProgressSec/20)*100))}%`,background:C.cyan,transition:"width .5s"}} />
                 </div>
               </div>
             ) : (
-              <div style={{maxWidth:900,margin:"0 auto",background:C.white,border:`1px solid ${C.border}`,borderRadius:12,padding:"22px 26px"}}>
-                <div style={{fontSize:12,letterSpacing:"0.08em",textTransform:"uppercase",fontWeight:700,color:C.textMuted,borderBottom:`1px solid ${C.border}`,paddingBottom:8,marginBottom:12}}>
-                  AI Demand Signal Weekly Brief | {briefWeek}
-                </div>
-                <div style={{fontFamily:"Georgia, serif",fontSize:16,lineHeight:1.7,color:C.text}}>
-                  {briefDiffMode ? (
-                    <div dangerouslySetInnerHTML={{ __html: paragraphDiffHtml(briefBaseForDiff, briefContent) }} />
-                  ) : (
-                    <pre style={{whiteSpace:"pre-wrap",margin:0,fontFamily:"Georgia, serif"}}>{briefContent}</pre>
-                  )}
-                  {briefSnapshot ? <BriefSnapshotCharts ctx={briefSnapshot} /> : null}
-                </div>
+              <div style={{maxWidth:960,margin:"0 auto"}}>
+                {briefDiffMode ? (
+                  <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:12,padding:"22px 26px"}}>
+                    <div style={{fontSize:12,letterSpacing:"0.08em",textTransform:"uppercase",fontWeight:700,color:C.textMuted,borderBottom:`1px solid ${C.border}`,paddingBottom:8,marginBottom:12}}>
+                      AI Demand Signal Weekly Brief | {briefWeek} — diff view
+                    </div>
+                    <div style={{fontFamily:"Georgia, serif",fontSize:16,lineHeight:1.7,color:C.text}} dangerouslySetInnerHTML={{ __html: paragraphDiffHtml(briefBaseForDiff, briefContent) }} />
+                    {briefSnapshot ? <BriefSnapshotCharts ctx={briefSnapshot} /> : null}
+                  </div>
+                ) : (
+                  <div dangerouslySetInnerHTML={{ __html: buildVisualBriefHtml(briefContent, briefSnapshot, briefWeek) }} />
+                )}
               </div>
             )}
           </div>

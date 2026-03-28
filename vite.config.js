@@ -285,10 +285,36 @@ function dashboardStateApiDevPlugin() {
   };
 }
 
+/** Serves /api/dashboard-health during `vite` dev. */
+function dashboardHealthApiDevPlugin() {
+  return {
+    name: 'dashboard-health-api-dev',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        const pathOnly = (req.url || '').split('?')[0];
+        if (pathOnly !== '/api/dashboard-health') return next();
+        if (req.method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Origin', '*'); res.statusCode = 204; res.end(); return; }
+        if (req.method !== 'GET') { res.statusCode = 405; res.end(); return; }
+        const mode = server.config.mode;
+        const rootEnv = loadEnv(mode, process.cwd(), '');
+        const prev = { DATABASE_URL: process.env.DATABASE_URL, DASHBOARD_STORE_SECRET: process.env.DASHBOARD_STORE_SECRET, SUPABASE_URL: process.env.SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY };
+        process.env.DATABASE_URL = rootEnv.DATABASE_URL || '';
+        process.env.DASHBOARD_STORE_SECRET = rootEnv.DASHBOARD_STORE_SECRET || '';
+        process.env.SUPABASE_URL = rootEnv.SUPABASE_URL || '';
+        process.env.SUPABASE_SERVICE_ROLE_KEY = rootEnv.SUPABASE_SERVICE_ROLE_KEY || '';
+        const mockReq = { method: 'GET', headers: req.headers };
+        const mockRes = { statusCode: 200, status(c) { this.statusCode = c; return this; }, json(obj) { if (!res.headersSent) { res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Content-Type', 'application/json'); res.statusCode = this.statusCode; res.end(JSON.stringify(obj)); } }, end(c) { if (!res.headersSent) { res.statusCode = this.statusCode; res.end(c ?? ''); } } };
+        try { const { default: handler } = await import('./api/dashboard-health.js'); await handler(mockReq, mockRes); } catch (e) { if (!res.headersSent) { res.statusCode = 500; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ error: e.message })); } }
+        finally { Object.assign(process.env, prev); }
+      });
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
-    plugins: [react(), laborApiDevPlugin(), signalStoreApiDevPlugin(), dashboardStateApiDevPlugin()],
+    plugins: [react(), laborApiDevPlugin(), signalStoreApiDevPlugin(), dashboardStateApiDevPlugin(), dashboardHealthApiDevPlugin()],
     server: {
       open: true,
       port: 5173,
