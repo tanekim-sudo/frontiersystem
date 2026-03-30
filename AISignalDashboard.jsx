@@ -1304,11 +1304,17 @@ function buildAnalysisSectionsHtml(text) {
   if (!text) return "";
   const esc = escapeHtml;
   const sectionColors = {
-    "KEY TAKEAWAYS": "#0284c7", "EXECUTIVE SUMMARY": "#0284c7", "SIGNAL MOVEMENT": "#2563eb",
-    "DIVERGENCE": "#b45309", "CORRELATIONS": "#6d28d9", "INVESTMENT PREDICTIONS": "#0f7b55",
-    "VERTICAL DEEP": "#0284c7", "ACTIONABLE": "#0f7b55", "RISK FACTORS": "#c0392b",
-    "INTERPRETATION": "#2563eb", "MACRO": "#b45309", "NARRATIVE FLOW": "#4b5163",
-    "REGIME": "#0284c7", "DATA CONFIDENCE": "#4b5163", "CONTRARIAN": "#c0392b",
+    "WEEK IN 60": "#0284c7", "60 SECONDS": "#0284c7", "KEY TAKEAWAYS": "#0284c7",
+    "STREET IS MISSING": "#b45309", "WHAT THE STREET": "#b45309",
+    "STOCK PULSE": "#6d28d9", "AI STOCK": "#6d28d9",
+    "SIGNAL DEEP": "#2563eb", "SIGNAL MOVEMENT": "#2563eb",
+    "DIVERGENCE": "#b45309", "CORRELATIONS": "#6d28d9",
+    "HEARING": "#0f7b55", "WHAT I": "#0f7b55",
+    "CONVICTION": "#0f7b55", "INVESTMENT PREDICTIONS": "#0f7b55", "ACTIONABLE": "#0f7b55",
+    "RISK RADAR": "#c0392b", "RISK FACTORS": "#c0392b", "CONTRARIAN": "#c0392b",
+    "DATA QUALITY": "#4b5163", "DATA CONFIDENCE": "#4b5163", "SOURCES": "#4b5163",
+    "EXECUTIVE SUMMARY": "#0284c7", "VERTICAL DEEP": "#0284c7",
+    "INTERPRETATION": "#2563eb", "MACRO": "#b45309", "REGIME": "#0284c7",
   };
   const getSectionColor = (title) => {
     const upper = title.toUpperCase();
@@ -1329,8 +1335,10 @@ function buildAnalysisSectionsHtml(text) {
     const color = getSectionColor(title);
     let body = bodyLines.join("\n").trim();
     if (!body) continue;
-    body = esc(body).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\n/g, "<br/>");
-    // Style bullets
+    body = body.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '%%LINK%%$1%%HREF%%$2%%ENDLINK%%');
+    body = esc(body);
+    body = body.replace(/%%LINK%%(.+?)%%HREF%%(https?:\/\/[^%]+)%%ENDLINK%%/g, '<a href="$2" target="_blank" rel="noreferrer" style="color:#0284c7;text-decoration:underline">$1</a>');
+    body = body.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\n/g, "<br/>");
     body = body.replace(/^• /gm, `<span style="color:${color};margin-right:4px">●</span> `);
     body = body.replace(/((?:^|<br\/>)\d+\.\s)/g, `<span style="font-weight:700;color:${color}">$1</span>`);
     const html = `<div style="background:#fff;border:1px solid #e1e4ea;border-radius:12px;padding:18px 22px;margin-bottom:16px;border-left:4px solid ${color}">` +
@@ -1483,6 +1491,7 @@ function buildDefaultConfig() {
     stages: JSON.parse(JSON.stringify(DEFAULT_STAGES)),
     stageTaxonomy: JSON.parse(JSON.stringify(DEFAULT_STAGE_TAXONOMY)),
     alertRules: JSON.parse(JSON.stringify(DEFAULT_ALERT_RULES)),
+    alertThreshold: 10,
     apiKeys: {}, scoreWeights: {},
     stageMultipliers: { s1:0.7, s2:1.0, s3:1.2, s4:1.5 },
   };
@@ -1678,13 +1687,47 @@ function resolveStage(score, tax) { for(let i=tax.length-1;i>=0;i--){if(score>=t
 
 // ── ALERT ENGINE ─────────────────────────────────────────────────────────────
 
-function evalAlerts(verticals, sr, rules) {
-  const alerts=[];
+function evalAlerts(verticals, sr, rules, threshold = 10) {
+  const alerts = [];
   verticals.forEach(v => {
-    const jr=sr[`${v.id}_theirstack`]; const jvi=jr?Math.min(((jr.count||0)/100)*100,200):0;
-    const jsw=jr?.classification?.dominantStage?.weight||0;
-    const ctx={jobVolWoW:0,jobVolIndex:jvi,jobStageWeight:jsw,prevJobVolWoW:0,jobStageJump:0};
-    rules.filter(r=>r.enabled).forEach(rule => { try{if(new Function(...Object.keys(ctx),`return(${rule.condition})`)(...Object.values(ctx)))alerts.push({id:`${v.id}_${rule.id}_${Date.now()}`,ts:Date.now(),vertical:v.name,text:rule.message,severity:rule.severity});}catch{} });
+    const jr = sr[`${v.id}_theirstack`];
+    const tr = sr[`${v.id}_google_trends`];
+    const gr = sr[`${v.id}_github_repos`];
+    const cl = sr[`${v.id}_claude_attrib`];
+    const jvi = jr ? Math.min(((jr.count || 0) / 100) * 100, 200) : 0;
+    const jsw = jr?.classification?.dominantStage?.weight || 0;
+
+    const jobHist = getSignalHistory(`${v.id}_theirstack`);
+    const trendHist = getSignalHistory(`${v.id}_google_trends`);
+    const repoHist = getSignalHistory(`${v.id}_github_repos`);
+    const claudeHist = getSignalHistory(`${v.id}_claude_attrib`);
+
+    const pctChange = (hist) => {
+      if (hist.length < 2) return 0;
+      const prev = hist[hist.length - 2]?.value || 0;
+      const cur = hist[hist.length - 1]?.value || 0;
+      return prev > 0 ? ((cur - prev) / prev) * 100 : 0;
+    };
+    const jobPct = pctChange(jobHist);
+    const trendPct = pctChange(trendHist);
+    const repoPct = pctChange(repoHist);
+    const claudePct = pctChange(claudeHist);
+
+    if (Math.abs(jobPct) >= threshold) {
+      alerts.push({ id: `${v.id}_job_chg_${Date.now()}`, ts: Date.now(), vertical: v.name, text: `Job postings ${jobPct > 0 ? "up" : "down"} ${Math.abs(jobPct).toFixed(0)}% (${jr?.count || 0} count) — crosses ${threshold}% threshold`, severity: jobPct > 0 ? "green" : "red" });
+    }
+    if (Math.abs(trendPct) >= threshold) {
+      alerts.push({ id: `${v.id}_trend_chg_${Date.now()}`, ts: Date.now(), vertical: v.name, text: `Google Trends ${trendPct > 0 ? "up" : "down"} ${Math.abs(trendPct).toFixed(0)}% (index ${tr?.count || 0}) — crosses ${threshold}% threshold`, severity: trendPct > 0 ? "green" : "amber" });
+    }
+    if (Math.abs(repoPct) >= threshold) {
+      alerts.push({ id: `${v.id}_repo_chg_${Date.now()}`, ts: Date.now(), vertical: v.name, text: `GitHub repos ${repoPct > 0 ? "up" : "down"} ${Math.abs(repoPct).toFixed(0)}% (${gr?.count || 0} active) — crosses ${threshold}% threshold`, severity: repoPct > 0 ? "green" : "amber" });
+    }
+    if (Math.abs(claudePct) >= threshold) {
+      alerts.push({ id: `${v.id}_claude_chg_${Date.now()}`, ts: Date.now(), vertical: v.name, text: `Claude attribution ${claudePct > 0 ? "up" : "down"} ${Math.abs(claudePct).toFixed(0)}% (${cl?.count || 0} commits) — crosses ${threshold}% threshold`, severity: claudePct > 0 ? "green" : "amber" });
+    }
+
+    const ctx = { jobVolWoW: jobPct, jobVolIndex: jvi, jobStageWeight: jsw, prevJobVolWoW: 0, jobStageJump: 0 };
+    rules.filter(r => r.enabled).forEach(rule => { try { if (new Function(...Object.keys(ctx), `return(${rule.condition})`)(...Object.values(ctx))) alerts.push({ id: `${v.id}_${rule.id}_${Date.now()}`, ts: Date.now(), vertical: v.name, text: rule.message, severity: rule.severity }); } catch {} });
   });
   return alerts;
 }
@@ -3259,9 +3302,26 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
       </div>
     </div>
 
+    <div style={{marginTop:16,padding:"12px 14px",background:C.nested,border:`1px solid ${C.borderLight}`,borderRadius:10}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+        <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text}}>Alert threshold</div>
+        <span style={{...font.mono,fontSize:14,fontWeight:700,color:C.cyan}}>{config.alertThreshold || 10}%</span>
+      </div>
+      <input type="range" min="1" max="50" step="1" value={config.alertThreshold || 10}
+        onChange={e => update(c => ({ ...c, alertThreshold: parseInt(e.target.value, 10) || 10 }))}
+        style={{width:"100%"}}/>
+      <div style={{display:"flex",justifyContent:"space-between",marginTop:4}}>
+        <span style={{...font.sans,fontSize:10,color:C.textMuted}}>1% (sensitive)</span>
+        <span style={{...font.sans,fontSize:10,color:C.textMuted}}>50% (major moves only)</span>
+      </div>
+      <div style={{...font.sans,fontSize:11,color:C.textSec,marginTop:6,lineHeight:1.45}}>
+        Signals that change by more than this percentage (week-over-week) will trigger an alert. Lower = more alerts, higher = only significant shifts.
+      </div>
+    </div>
+
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8,gap:8,flexWrap:"wrap"}}>
       <span style={{...font.sans,fontSize:11,color:C.textMuted}}>Don’t overthink it: the defaults are already tuned for directional monitoring.</span>
-      <Btn size="sm" onClick={()=>update(c=>({...c,stages:JSON.parse(JSON.stringify(DEFAULT_STAGES)),stageTaxonomy:JSON.parse(JSON.stringify(DEFAULT_STAGE_TAXONOMY)),stageMultipliers:{s1:0.7,s2:1,s3:1.2,s4:1.5}}))}>Reset to recommended labels</Btn>
+      <Btn size="sm" onClick={()=>update(c=>({...c,stages:JSON.parse(JSON.stringify(DEFAULT_STAGES)),stageTaxonomy:JSON.parse(JSON.stringify(DEFAULT_STAGE_TAXONOMY)),stageMultipliers:{s1:0.7,s2:1,s3:1.2,s4:1.5},alertThreshold:10}))}>Reset to recommended labels</Btn>
     </div>
   </div>);
 
@@ -3685,7 +3745,7 @@ export default function App() {
   const refreshAll=useCallback(async()=>{
     const cfg=configRef.current;
     await Promise.allSettled(cfg.sources.filter(s=>s.enabled).map(src=>fetchSource(src.id)));
-    const sr=srRef.current;const na=evalAlerts(cfg.verticals,sr,cfg.alertRules);
+    const sr=srRef.current;const na=evalAlerts(cfg.verticals,sr,cfg.alertRules,cfg.alertThreshold||10);
     if(na.length>0)setAlerts(p=>[...na,...p].slice(0,50));
     doCloudSync("up");
   },[fetchSource,doCloudSync]);
@@ -3807,7 +3867,7 @@ export default function App() {
     const signalKey = `${verticalId}_${sourceId}`;
     const histCacheKey = `backfill_v2_${signalKey}`;
     const cached = ld(histCacheKey, null);
-    if (cached?.version === 2 && cached?.points?.length > 8) {
+    if (cached?.version === 2 && cached?.points?.length >= 50) {
       cached.points.forEach(p => {
         const h = ld(`hist_${signalKey}`, []);
         if (!h.some(x => x.isoDate === p.isoDate)) {
@@ -3846,9 +3906,15 @@ export default function App() {
     }
 
     if (sourceId === "github_repos" || sourceId === "claude_attrib") {
+      const token = ENV_KEYS.github || "";
+      if (!token) {
+        setErrors(prev => ({ ...prev, [signalKey]: "GitHub PAT required for backfill. Add VITE_GITHUB_PAT in settings." }));
+        return;
+      }
       const weeks = weekIntervals(78, new Date());
       setHistoryProgress({ active: true, verticalId, current: 0, total: weeks.length, label: `Backfilling ${vert.name} ${sourceId === "github_repos" ? "GitHub Repos (30d windows)" : "Claude (7d windows)"}...` });
       const recorded = [];
+      let consecutiveErrors = 0;
       for (let i = 0; i < weeks.length; i++) {
         if (cancelHistoryRef.current) break;
         const w = weeks[i];
@@ -3866,6 +3932,7 @@ export default function App() {
           } else {
             count = await fetchGitHubCountInRange(vert, sourceId, w.gte, w.lte);
           }
+          consecutiveErrors = 0;
           const ts = new Date(w.lte + "T12:00:00Z").getTime();
           const entry = { ts, isoDate: new Date(ts).toISOString(), value: count, date: w.key };
           recorded.push(entry);
@@ -3877,9 +3944,12 @@ export default function App() {
             sv(`hist_${signalKey}`, h);
           }
         } catch (e) {
-          if (e.message?.includes("rate limit")) { await sleep(60000); i--; continue; }
-          setErrors(prev => ({ ...prev, [signalKey]: e.message }));
-          break;
+          if (e.message?.includes("rate limit")) { await sleep(65000); i--; continue; }
+          consecutiveErrors++;
+          setErrors(prev => ({ ...prev, [signalKey]: `${e.message} (week ${w.key}, ${consecutiveErrors} consecutive errors)` }));
+          if (consecutiveErrors >= 5) break;
+          await sleep(6000);
+          continue;
         }
         setHistoryProgress({ active: true, verticalId, current: i + 1, total: weeks.length, label: `Backfilling ${vert.name} ${sourceId === "github_repos" ? "repos" : "Claude"} (${i + 1}/${weeks.length})...` });
         await sleep(4500);
@@ -3889,6 +3959,7 @@ export default function App() {
         setAllHistories(prev => ({ ...prev, [signalKey]: getSignalHistory(signalKey) }));
       }
       setHistoryProgress({ active: false, verticalId: null, current: 0, total: 0, label: "" });
+      const pat = resolveGitPat(); if (pat || signalStoreSecret() || databaseStoreSecret()) debouncedSyncToGist(pat, 2000);
       return;
     }
     const pat=resolveGitPat();if(pat||signalStoreSecret()||databaseStoreSecret())debouncedSyncToGist(pat,2000);
@@ -4391,96 +4462,61 @@ export default function App() {
       tmr = setInterval(() => setBriefProgressSec((s) => Math.min(60, s + 1)), 1000);
       const apiKey = ENV_KEYS.anthropic;
       if (!apiKey) throw new Error("Missing VITE_ANTHROPIC_API_KEY");
-      const systemPrompt = `You are the Head of AI Demand Intelligence at a technology-focused hedge fund managing $2B+ in AI-exposed positions. Every week you produce the team's definitive report — the single document the entire investment team reads Monday morning to calibrate thesis and sizing.
+      const stockTickers = ["MSFT", "AAPL", "NVDA", "GOOGL", "META"];
+      const systemPrompt = `You are a senior market intelligence analyst at a top-tier hedge fund. You write the kind of brief that sounds like you just got off calls with 15 people across the AI ecosystem — product managers at hyperscalers, infra buyers at Fortune 500s, VCs, and sell-side analysts. Your tone is direct, conversational, and insider-informed.
 
-YOUR ANALYTICAL FRAMEWORK:
-- Numbers first, narrative second. Every claim must cite a specific metric, rate of change, or comparison.
-- RATES OF CHANGE matter more than levels. A count of 5,000 means nothing — is it up 40% from baseline? Flat for 3 months? Decelerating from +60%?
-- SECOND DERIVATIVES are the real signal. If growth was +30% last period and +15% this period, growth is decelerating even though the number rises. This determines position timing.
-- DIVERGENCES between signals are the highest-alpha intelligence. When hiring says one thing and developer activity says another, that gap reveals timing mismatches.
-- INTELLECTUAL HONESTY: thin data gets flagged. Ambiguous signals get both interpretations. Never manufacture drama from noise.
+You have access to web search. USE IT AGGRESSIVELY to ground every claim in real, current information from the past 1-2 weeks. You MUST search for:
+1. Stock price movements and key financial news for: ${stockTickers.join(", ")}
+2. Major AI industry announcements, product launches, partnerships from the past 7-14 days
+3. Any relevant earnings, guidance changes, or analyst upgrades/downgrades for AI companies
+4. Enterprise AI adoption news, deals, or survey results from the past 2 weeks
+5. AI regulation, policy, or geopolitical developments affecting the sector
 
-SIGNAL TIMING KNOWLEDGE (use for predictions):
-- Job Postings: Lead vendor revenue by 2-4 quarters (6-12 months). Hiring intent → procurement (1-2Q) → contract (1Q) → revenue (1Q). Title shifts from strategy→engineering roles compress this to 3-6 months.
-- Google Trends: 1-4 weeks for volatility. 3-9 months for procurement impact. Spikes predict trading volume within 1-2 weeks. Sustained rises indicate pipeline building over 2 quarters.
-- GitHub Repos: 6-18 months lead. OSS maturity → enterprise evaluation → procurement. Longest lead but highest structural conviction. Language shifts (Python→TypeScript) signal production readiness.
-- Claude Code Attribution: 0-3 months. Most real-time signal. Directly reflects current AI tool adoption. Revenue impact for coding platforms is same-quarter. Compute demand impact within 1 quarter.
-- Hugging Face Downloads: 3-12 months. Open-source model adoption leads enterprise deployment decisions. Download concentration shifts signal vendor market share changes 2-4 quarters ahead.
+VOICE & TONE:
+- Write like you're briefing your PM over coffee. "NVIDIA's up 8% this week — the H200 supply constraints are finally loosening and hyperscaler orders are pulling forward." Not "NVIDIA Corporation experienced positive stock price momentum."
+- Name real companies, real products, real people. "Satya mentioned on the earnings call..." "The Databricks Series I at $62B signals..."
+- Use specific dates, not "recently." Say "as of March 22" or "last Tuesday's announcement."
+- Be opinionated. Take a stance. "I think the market is wrong about X because Y."
+- Swear off hedge-speak. No "it remains to be seen" or "going forward."
 
-MOVEMENT PATTERNS (payload key signal_movement_interpretation):
-- The dashboard no longer shows long "What Movements Mean" copy per source. That full guide is **only** in the JSON under signal_movement_interpretation (label, meaning, market_impact per pattern).
-- When you discuss WoW changes, momentum, spikes, plateaus, or divergences for jobs, trends, repos, or Claude attribution, **map the data to the closest pattern(s)** and briefly cite implications (meaning + market_impact) where it sharpens the thesis—not as filler.
+ANALYTICAL FRAMEWORK:
+- RATES OF CHANGE over levels. A 5,000 job count means nothing — is it up 40% from baseline?
+- SECOND DERIVATIVES are the real signal. Growth decelerating from +30% to +15% is bearish even though the number rises.
+- DIVERGENCES between signals are highest-alpha. When hiring says one thing and developer activity says another, that gap is tradeable.
+- INTELLECTUAL HONESTY: thin data gets flagged. Never manufacture drama from noise.
 
-MACRO IN THE PAYLOAD (when macro_labor_context is present):
-- Treat Chicago Fed / FRED as **national regime context**, usually **lagging or coincident** relative to hiring, search, repos, and Claude attribution. They explain *environment*, not a second headline score.
-- Do **not** invent a unified "macro heat" or single composite index. Instead, name **specific pairs or triplets** of series (e.g. JOLTS vs. job-posting momentum; claims vs. Claude; sentiment vs. trends) and discuss **alignment or tension** with explicit uncertainty.
-- A major part of your value is **correlation discovery**: patterns a human skimming charts would miss — especially **cross-domain** (micro demand signals ↔ macro; vertical A ↔ vertical B; level vs. momentum vs. second derivative).
-
-MARKET CONTEXT (illustrative baseline — refresh with live facts when you have them):
-- AI coding tools at 73% daily enterprise usage (up from 41% in 2025). Claude Code at 69% market share.
-- S&P 500 Software Index RSI hit 18 — most oversold since 1990. SaaS stocks down 15-30% YTD despite 16.8% projected 2026 earnings growth.
-- Enterprise IT spending growing 3.6% in 2026. AI capex doubling to $660-690B but hiring decoupled from spend.
-- Only 37.4% of workers use generative AI on the job despite tool availability. 90% of AI job postings from just 1% of companies.
-
-DESK RESEARCH & MACRO (this dashboard has no live web search — reason carefully from your knowledge):
-- Anchor commentary to report_calendar.generated_at and the ISO week in the payload.
-- Connect labor market themes (hiring freezes vs AI-skilled demand), rates/credit, mega-cap tech & AI capex, and enterprise software budget cycles to the DIRECTION and INFLECTION of each signal. Use explicit epistemic hygiene: label links as "consistent with," "plausible channel," or "speculative" — do not claim causation without evidence.
-- If data_quality_flags mention simulated TheirStack jobs, say so once; still interpret momentum and divergences vs Google Trends, GitHub, and Claude attribution.
-
-WRITING RULES:
-- Plain prose. No corporate-speak ("it is worth noting," "interestingly," "moving forward" are banned).
-- Every sentence must contain a number, comparison, rate of change, or forward-looking implication.
-- Use precise language: "accelerating" = rate of increase increasing. "Surging" = >30%. "Plateauing" = <5%.
-- Be specific about timeframes. "Over the last 3 observations" not "recently."
+SIGNAL TIMING (for predictions):
+- Job Postings: Lead vendor revenue 2-4 quarters
+- Google Trends: 1-4 weeks for volatility, 3-9 months for procurement
+- GitHub Repos: 6-18 month lead (longest but highest conviction)
+- Claude Code Attribution: 0-3 months (most real-time signal)
+- HuggingFace Downloads: 3-12 months lead on enterprise deployment
 
 OUTPUT FORMAT:
-- Write in plain text with section headers in ALL CAPS separated by ━━━ lines.
-- Charts and tables are rendered separately by the dashboard — focus only on analytical prose.
-- Keep each section focused and concise. No filler. Every sentence must add value.
-- Use **bold** for emphasis on key numbers and terms.
-- Sections: KEY TAKEAWAYS, EXECUTIVE SUMMARY, SIGNAL MOVEMENT ANALYSIS, DIVERGENCE ANALYSIS, CORRELATIONS & BLIND SPOTS, INVESTMENT PREDICTIONS, VERTICAL DEEP DIVES, ACTIONABLE RECOMMENDATIONS, RISK FACTORS & CONTRARIAN VIEW, DATA CONFIDENCE.`;
+Write in plain text with section headers in ALL CAPS separated by ━━━ lines. Use **bold** for key numbers/terms.
 
-      const userPrompt = `RAW DATA — Week: ${ctx.week} | Generated: ${ctx.generated_at}
+REQUIRED SECTIONS (in this order):
+1. THE WEEK IN 60 SECONDS — 5 bullet points, each with a concrete number. Think of it as what you'd text to your CIO.
+2. WHAT THE STREET IS MISSING — The 2-3 things your signals show that consensus hasn't priced in yet.
+3. AI STOCK PULSE — For each of ${stockTickers.join(", ")}: current price, weekly change %, the ONE thing that matters this week, and your directional lean (bullish/bearish/neutral with 1-line thesis). Use web search to get real current prices.
+4. SIGNAL DEEP DIVE — For each signal with meaningful movement: what moved, magnitude, what industry contacts would say about why, and the investment implication.
+5. THE DIVERGENCE PLAY — Where your signals disagree with each other. What the gap means and when you expect resolution.
+6. WHAT I'M HEARING — Write this as if you talked to 5-8 industry contacts. "A VP of Engineering at a Fortune 100 told me..." "Three separate infra buyers said..." (Synthesize the data into plausible industry color — be clear this is your analytical synthesis, not literal quotes.)
+7. CONVICTION TRADES — 3-5 specific, actionable calls ranked by conviction. Each needs: the thesis, the evidence, the timing, and what would make you wrong.
+8. RISK RADAR — What could blow up your thesis. The contrarian case. What the bears are saying and whether they're right.
+9. DATA QUALITY — Quick grade (A/B/C/D) on each signal source. Flag anything stale.`;
+
+      const userPrompt = `DASHBOARD DATA — Week: ${ctx.week} | Generated: ${ctx.generated_at}
 
 ${JSON.stringify(ctx, null, 1)}
 
-Write the analytical sections below. Charts, tables, and visual layout are handled separately — focus only on sharp, concise analysis. Use ━━━ lines between sections. Keep each section tight — no filler.
+INSTRUCTIONS:
+1. FIRST: Use web search to look up current stock prices and weekly performance for ${stockTickers.join(", ")}. Also search for major AI industry news from the past 7-14 days.
+2. THEN: Write the full brief combining your web research with the dashboard data above.
+3. Write it like you just walked out of a week of industry meetings and are briefing the investment team.
+4. Every section should have real numbers — from the dashboard data AND from your web research.
+5. Be specific, be opinionated, be useful. This is the document the team reads Monday morning.`;
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-KEY TAKEAWAYS
-5 bullets. Each ≤18 words with a number/percent. Most important signals first.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-EXECUTIVE SUMMARY
-3-4 sentences. What changed. Directional call for Monday morning. Be specific.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SIGNAL MOVEMENT ANALYSIS
-For each signal with meaningful movement: what moved, magnitude, why it matters using lead/lag timing, confidence HIGH/MEDIUM/LOW.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-DIVERGENCE ANALYSIS
-For each divergence: the gap, interpretation (adoption phase), trade implication, resolution timeline.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CORRELATIONS & BLIND SPOTS
-4 items prefixed NON-OBVIOUS. Each combines 2+ domains. Include testable implication with timing and falsification.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-INVESTMENT PREDICTIONS
-3-5 predictions. Each: prediction, evidence, timing, sectors, confidence, invalidation. Be falsifiable.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ACTIONABLE RECOMMENDATIONS
-5 items by conviction. Each: signal, action, conviction, timeframe, invalidation.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-RISK FACTORS & CONTRARIAN VIEW
-Risks: what could mislead. Contrarian: 2-3 sentences arguing against your own analysis.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-DATA CONFIDENCE
-Grade A/B/C/D. Flag stale or missing signals.`;
 
 
 
@@ -4494,9 +4530,10 @@ Grade A/B/C/D. Flag stale or missing signals.`;
         },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 8000,
+          max_tokens: 12000,
           system: systemPrompt,
           messages: [{ role: "user", content: userPrompt }],
+          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 10 }],
         }),
       });
       if (!res.ok) {
@@ -4504,7 +4541,26 @@ Grade A/B/C/D. Flag stale or missing signals.`;
         throw new Error(`Claude API ${res.status}: ${txt.slice(0, 180)}`);
       }
       const js = await res.json();
-      let text = (js?.content || []).map(c => c?.text || "").join("\n").trim();
+      const webSources = [];
+      (js?.content || []).forEach(block => {
+        if (block.type === "web_search_tool_result") {
+          (block.content || []).forEach(r => {
+            if (r.type === "web_search_result" && r.url) webSources.push({ url: r.url, title: r.title || "" });
+          });
+        }
+      });
+      let text = (js?.content || []).filter(c => c.type === "text").map(c => {
+        let t = c.text || "";
+        if (c.citations?.length) {
+          const cites = c.citations.filter(ci => ci.url).map(ci => `[${ci.title || ci.url}](${ci.url})`);
+          if (cites.length) t += "\n" + cites.join(" | ");
+        }
+        return t;
+      }).join("\n").trim();
+      if (webSources.length > 0) {
+        const unique = [...new Map(webSources.map(s => [s.url, s])).values()].slice(0, 15);
+        text += "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nSOURCES\n" + unique.map((s, i) => `${i + 1}. [${s.title || s.url}](${s.url})`).join("\n");
+      }
       if (!text) throw new Error("Claude returned empty content");
       text = text.replace(/^```(?:html)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
       const existing = ld(briefStorageKey(wk), null) || (()=>{try{return JSON.parse(localStorage.getItem(briefStorageKey(wk))||"null");}catch{return null;}})();
@@ -4806,10 +4862,10 @@ Grade A/B/C/D. Flag stale or missing signals.`;
           <div style={{flex:1,overflowY:"auto",padding:"22px 28px"}}>
             {briefLoading ? (
               <div style={{maxWidth:700,margin:"80px auto",textAlign:"center"}}>
-                <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Synthesizing intelligence report...</div>
-                <div style={{fontSize:12,color:C.textMuted,marginBottom:10}}>Analyzing signals and building visual report — 10-20 seconds</div>
+                <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Researching markets & building brief...</div>
+                <div style={{fontSize:12,color:C.textMuted,marginBottom:10}}>Searching live stock data, AI industry news, and analyzing dashboard signals — 30-60 seconds</div>
                 <div style={{height:8,background:C.nested,borderRadius:999,overflow:"hidden",maxWidth:360,margin:"0 auto"}}>
-                  <div style={{height:"100%",width:`${Math.min(100,Math.round((briefProgressSec/20)*100))}%`,background:C.cyan,transition:"width .5s"}} />
+                  <div style={{height:"100%",width:`${Math.min(100,Math.round((briefProgressSec/50)*100))}%`,background:C.cyan,transition:"width .5s"}} />
                 </div>
               </div>
             ) : (
