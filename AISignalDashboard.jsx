@@ -4,7 +4,7 @@
 // ══════════════════════════════════════════════════════════════════════════════
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, ComposedChart, Bar, Area, ReferenceLine, ReferenceDot } from "recharts";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, ComposedChart, Bar, Area, ReferenceLine, ReferenceDot, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from "recharts";
 
 const PFX = "sid_v3_";
 const HSPFX = "aitracker_";
@@ -91,6 +91,7 @@ function shouldMirrorIdentityKeyToGist(k) {
   if (k === `${HSPFX}crosscorr`) return true;
   if (k.startsWith(`${HSPFX}patterns_`)) return true;
   if (k.startsWith(`${HSPFX}history_latest_`) || k.startsWith(`${HSPFX}weekly_latest_`)) return true;
+  if (k === "ec_history") return true;
   return false;
 }
 
@@ -3006,6 +3007,610 @@ function HuggingFaceLeaderboard({onDataChanged}) {
   );
 }
 
+// ── EARNINGS CALL ANALYZER ──────────────────────────────────────────────────
+
+const EC_COMPANIES = [
+  { id: "GOOGL", name: "Alphabet (Google)", color: "#4285F4" },
+  { id: "AMZN", name: "Amazon", color: "#FF9900" },
+  { id: "MSFT", name: "Microsoft", color: "#00A4EF" },
+  { id: "META", name: "Meta", color: "#0668E1" },
+  { id: "NVDA", name: "NVIDIA", color: "#76B900" },
+  { id: "CUSTOM", name: "Custom Company", color: C.cyan },
+];
+
+const EC_SCORE_DEFS = [
+  { id: "tense_distribution", label: "Tense Distribution", short: "Tense", desc: "Present-tense operational vs future-tense aspirational language" },
+  { id: "specificity_gradient", label: "Specificity Gradient", short: "Specificity", desc: "Do claims get more specific or vague as significance increases?" },
+  { id: "sincerity_signal", label: "Sincerity Signal", short: "Sincerity", desc: "Volunteered bad news, error acknowledgment, absence of superlatives" },
+  { id: "absorption_failure", label: "Absorption Failure", short: "Absorption", desc: "Does explanation length scale with negative metric severity?" },
+  { id: "register_consistency", label: "Register Consistency", short: "Register", desc: "Does language register shift between strong and weak quarters?" },
+];
+
+function ecScoreColor(score) {
+  if (score >= 81) return C.green;
+  if (score >= 61) return C.blue;
+  if (score >= 31) return C.amber;
+  return C.red;
+}
+function ecScoreLabel(score) {
+  if (score >= 81) return "Strong Operational Signal";
+  if (score >= 61) return "Operationally Grounded";
+  if (score >= 31) return "Mixed Signals";
+  return "Narrative-Dominant";
+}
+
+function EcScoreGauge({ score, size = 120, label }) {
+  const r = (size - 16) / 2;
+  const circ = 2 * Math.PI * r;
+  const pct = Math.max(0, Math.min(100, score)) / 100;
+  const offset = circ * (1 - pct * 0.75);
+  const color = ecScoreColor(score);
+  return (
+    <div style={{ textAlign: "center", width: size }}>
+      <svg width={size} height={size * 0.85} viewBox={`0 0 ${size} ${size * 0.85}`}>
+        <circle cx={size / 2} cy={size * 0.55} r={r} fill="none" stroke={C.nested} strokeWidth={8}
+          strokeDasharray={`${circ * 0.75} ${circ * 0.25}`} strokeLinecap="round"
+          transform={`rotate(135 ${size / 2} ${size * 0.55})`} />
+        <circle cx={size / 2} cy={size * 0.55} r={r} fill="none" stroke={color} strokeWidth={8}
+          strokeDasharray={`${circ * 0.75} ${circ * 0.25}`} strokeDashoffset={offset} strokeLinecap="round"
+          transform={`rotate(135 ${size / 2} ${size * 0.55})`} style={{ transition: "stroke-dashoffset 1s ease" }} />
+        <text x={size / 2} y={size * 0.52} textAnchor="middle" style={{ font: `800 ${size * 0.26}px Inter,system-ui,sans-serif`, fill: color }}>{score}</text>
+        <text x={size / 2} y={size * 0.72} textAnchor="middle" style={{ font: `600 ${size * 0.075}px Inter,system-ui,sans-serif`, fill: C.textMuted }}>{ecScoreLabel(score)}</text>
+      </svg>
+      {label && <div style={{ ...font.sans, fontSize: 11, fontWeight: 600, color: C.textSec, marginTop: -4 }}>{label}</div>}
+    </div>
+  );
+}
+
+function EcQuoteCard({ quote, explanation, type, claimSig, specLevel }) {
+  const borderColor = type === "operational" || type === "specific" || type === "healthy" ? C.green
+    : type === "narrative" || type === "vague" || type === "failure" ? C.red : C.amber;
+  return (
+    <div style={{ borderLeft: `3px solid ${borderColor}`, padding: "10px 14px", marginBottom: 8, background: C.nested, borderRadius: "0 8px 8px 0" }}>
+      <div style={{ ...font.sans, fontSize: 12, fontStyle: "italic", color: C.text, lineHeight: 1.55, marginBottom: 4 }}>"{quote}"</div>
+      {claimSig && <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginBottom: 2 }}>Significance: {claimSig} | Specificity: {specLevel}</div>}
+      <div style={{ ...font.sans, fontSize: 11, color: C.textSec, lineHeight: 1.45 }}>{explanation}</div>
+    </div>
+  );
+}
+
+function EcRadarChart({ analysis, priorAnalysis }) {
+  if (!analysis?.scores) return null;
+  const data = EC_SCORE_DEFS.map(d => ({
+    subject: d.short,
+    current: analysis.scores[d.id]?.score || 0,
+    ...(priorAnalysis?.scores ? { prior: priorAnalysis.scores[d.id]?.score || 0 } : {}),
+  }));
+  return (
+    <ResponsiveContainer width="100%" height={260}>
+      <RadarChart data={data} cx="50%" cy="50%" outerRadius="72%">
+        <PolarGrid stroke={C.border} />
+        <PolarAngleAxis dataKey="subject" tick={{ fontSize: 11, fill: C.textSec }} />
+        <PolarRadiusAxis angle={90} domain={[0, 100]} tick={{ fontSize: 9 }} />
+        <Radar name="Current" dataKey="current" stroke={C.cyan} fill={C.cyan} fillOpacity={0.25} strokeWidth={2} />
+        {priorAnalysis?.scores && <Radar name="Prior" dataKey="prior" stroke={C.amber} fill={C.amber} fillOpacity={0.12} strokeWidth={1.5} strokeDasharray="4 3" />}
+        <Legend wrapperStyle={{ fontSize: 11 }} />
+      </RadarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function EcInvestmentSignalBadge({ signal }) {
+  const m = {
+    LONG_SIGNAL: { label: "LONG SIGNAL", bg: "#ecfdf5", fg: C.green, icon: "↑" },
+    SHORT_SIGNAL: { label: "SHORT SIGNAL", bg: "#fef2f2", fg: C.red, icon: "↓" },
+    WATCH: { label: "WATCH", bg: "#fef3c7", fg: C.amber, icon: "◎" },
+    NEUTRAL: { label: "NEUTRAL", bg: C.nested, fg: C.textMuted, icon: "–" },
+  };
+  const s = m[signal] || m.NEUTRAL;
+  return <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 12px", borderRadius: 6, background: s.bg, color: s.fg, fontWeight: 700, fontSize: 12 }}>{s.icon} {s.label}</span>;
+}
+
+function EarningsCallPanel() {
+  const [ecOpen, setEcOpen] = useState(false);
+  const [ecTab, setEcTab] = useState("input");
+  const [ecCompany, setEcCompany] = useState("GOOGL");
+  const [ecCustomName, setEcCustomName] = useState("");
+  const [ecQuarter, setEcQuarter] = useState("Q1");
+  const [ecYear, setEcYear] = useState("2026");
+  const [ecTranscript, setEcTranscript] = useState("");
+  const [ecPriorTranscript, setEcPriorTranscript] = useState("");
+  const [ecAnalyzing, setEcAnalyzing] = useState(false);
+  const [ecProgress, setEcProgress] = useState(0);
+  const [ecResult, setEcResult] = useState(null);
+  const [ecError, setEcError] = useState(null);
+  const [ecHistory, setEcHistory] = useState(() => ld("ec_history", []));
+  const [ecSelectedScore, setEcSelectedScore] = useState(null);
+  const [ecHighlightFilter, setEcHighlightFilter] = useState("all");
+
+  const companyName = ecCompany === "CUSTOM" ? ecCustomName : EC_COMPANIES.find(c => c.id === ecCompany)?.name || ecCompany;
+  const companyColor = EC_COMPANIES.find(c => c.id === ecCompany)?.color || C.cyan;
+
+  const priorAnalysis = useMemo(() => {
+    if (!ecResult) return null;
+    return ecHistory.find(h => h.company === ecResult.company && h.quarter !== `${ecQuarter} ${ecYear}`);
+  }, [ecResult, ecHistory, ecQuarter, ecYear]);
+
+  const analyzeTranscript = useCallback(async () => {
+    if (!ecTranscript || ecTranscript.length < 500) { setEcError("Transcript too short — full earnings calls are typically 8,000-15,000 words."); return; }
+    const apiKey = ENV_KEYS.anthropic;
+    if (!apiKey) { setEcError("Missing VITE_ANTHROPIC_API_KEY"); return; }
+    setEcAnalyzing(true); setEcError(null); setEcProgress(0);
+    const progressTimer = setInterval(() => setEcProgress(p => Math.min(95, p + 2)), 1000);
+    try {
+      const systemPrompt = `You are an expert in detecting management communication quality in earnings call transcripts. You analyze whether management teams are communicating from genuine operational knowledge or from narrative management.
+
+Core thesis: management teams whose dominant focus is genuine operational reality produce measurably different language than management teams managing a narrative. Operationally-grounded management uses present-tense specifics, scales explanation to metric severity, volunteers bad news, and sounds identical across strong and weak quarters. Narrative-focused management uses future-tense aspiration, vague categorical claims, avoids specific predictions, and shifts register when the stock moves.
+
+You MUST use web search to find:
+1. The company's most recent financial results and guidance
+2. Current stock price and recent performance
+3. Any analyst commentary on this earnings call
+4. Industry context for the quarter being analyzed
+
+Analyze the transcript and score on five dimensions. Be rigorous — cite exact quotes. Return structured JSON only, no markdown, no preamble.`;
+
+      const priorCtx = ecPriorTranscript ? `\n\nPRIOR QUARTER TRANSCRIPT (for register consistency comparison):\n${ecPriorTranscript.slice(0, 8000)}` : "";
+
+      const userPrompt = `Analyze this earnings call transcript for ${companyName} ${ecQuarter} ${ecYear}.
+
+First, use web search to look up ${companyName}'s recent financial performance, stock price, and analyst reactions to this quarter's results. Then analyze the transcript.
+
+Score each dimension 0-100 and provide 3-5 specific quote examples for each score with explanation.${priorCtx}
+
+TRANSCRIPT:
+${ecTranscript.slice(0, 30000)}
+
+Return this exact JSON structure (no markdown fences, no text before/after — pure JSON only):
+{
+  "company": "${companyName}",
+  "quarter": "${ecQuarter} ${ecYear}",
+  "ticker": "${ecCompany !== "CUSTOM" ? ecCompany : ""}",
+  "overall_quality_score": <number 0-100>,
+  "overall_interpretation": "<2-3 sentence summary>",
+  "scores": {
+    "tense_distribution": {
+      "score": <number>,
+      "interpretation": "<string>",
+      "operational_quotes": [{"quote": "<exact quote>", "explanation": "<why operational>"}],
+      "narrative_quotes": [{"quote": "<exact quote>", "explanation": "<why narrative>"}]
+    },
+    "specificity_gradient": {
+      "score": <number>,
+      "interpretation": "<string>",
+      "specific_quotes": [{"quote": "<string>", "claim_significance": "<HIGH/MEDIUM/LOW>", "specificity_level": "<HIGH/MEDIUM/LOW>", "explanation": "<string>"}],
+      "vague_quotes": [{"quote": "<string>", "claim_significance": "<HIGH/MEDIUM/LOW>", "specificity_level": "<HIGH/MEDIUM/LOW>", "explanation": "<string>"}]
+    },
+    "sincerity_signal": {
+      "score": <number>,
+      "interpretation": "<string>",
+      "volunteered_bad_news": [{"quote": "<string>", "explanation": "<string>"}],
+      "error_acknowledgments": [{"quote": "<string>", "explanation": "<string>"}],
+      "superlative_inflation": [{"quote": "<string>", "explanation": "<string>"}],
+      "specific_predictions": [{"quote": "<string>", "uncertainty_acknowledged": <boolean>, "explanation": "<string>"}]
+    },
+    "absorption_failure": {
+      "score": <number>,
+      "interpretation": "<string>",
+      "healthy_scaling_examples": [{"quote": "<string>", "metric_severity": "<HIGH/MEDIUM/LOW>", "explanation_length": "<PROPORTIONAL/BRIEF/EXTENSIVE>", "explanation": "<string>"}],
+      "failure_signals": [{"quote": "<string>", "metric_severity": "<HIGH/MEDIUM/LOW>", "explanation_length": "<PROPORTIONAL/BRIEF/EXTENSIVE>", "explanation": "<string>"}]
+    },
+    "register_consistency": {
+      "score": <number>,
+      "note": "${ecPriorTranscript ? "Comparative analysis with prior quarter" : "Single transcript only — baseline register markers captured"}",
+      "register_markers": [{"quote": "<string>", "register_type": "<OPERATIONAL/NARRATIVE/MIXED>", "explanation": "<string>"}]
+    }
+  },
+  "key_diagnostics": {
+    "strongest_operational_signal": "<string>",
+    "strongest_narrative_signal": "<string>",
+    "qa_vs_prepared_divergence": "<string describing prepared remarks vs Q&A differences>",
+    "overall_communication_diagnosis": "<string>",
+    "nrr_trajectory_prediction": "<string>",
+    "investment_signal": "<LONG_SIGNAL|SHORT_SIGNAL|WATCH|NEUTRAL>",
+    "stock_context": "<current stock info from web search>",
+    "analyst_sentiment": "<recent analyst commentary from web search>"
+  },
+  "highlighted_transcript": [
+    {"text": "<sentence or phrase from transcript>", "classification": "<OPERATIONAL|NARRATIVE|NEUTRAL>", "signal_type": "<tense|specificity|sincerity|absorption>", "explanation": "<string>"}
+  ]
+}`;
+
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 12000,
+          system: systemPrompt,
+          messages: [{ role: "user", content: userPrompt }],
+          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }],
+        }),
+      });
+      if (!res.ok) throw new Error(`Claude API ${res.status}: ${(await res.text()).slice(0, 180)}`);
+      const js = await res.json();
+      const textBlocks = (js?.content || []).filter(c => c.type === "text").map(c => c.text || "").join("\n").trim();
+      const jsonMatch = textBlocks.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error("Claude did not return valid JSON. Response preview: " + textBlocks.slice(0, 200));
+      const parsed = JSON.parse(jsonMatch[0]);
+      parsed.analyzed_at = new Date().toISOString();
+      setEcResult(parsed);
+      setEcTab("dashboard");
+      setEcProgress(100);
+
+      const updated = [parsed, ...ecHistory.filter(h => !(h.company === parsed.company && h.quarter === parsed.quarter))].slice(0, 40);
+      setEcHistory(updated);
+      sv("ec_history", updated);
+    } catch (e) {
+      setEcError(e.message);
+    } finally {
+      clearInterval(progressTimer);
+      setEcAnalyzing(false);
+    }
+  }, [ecTranscript, ecPriorTranscript, companyName, ecCompany, ecQuarter, ecYear, ecHistory]);
+
+  const handleFileUpload = (e, target) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => { if (target === "main") setEcTranscript(ev.target.result); else setEcPriorTranscript(ev.target.result); };
+    reader.readAsText(file);
+  };
+
+  const scoreData = ecResult?.scores || {};
+  const diagData = ecResult?.key_diagnostics || {};
+
+  const tabs = [
+    { id: "input", label: "Transcript Input" },
+    { id: "dashboard", label: "Analysis Dashboard" },
+    { id: "evidence", label: "Evidence Panel" },
+    { id: "compare", label: "Comparative View" },
+  ];
+
+  if (!ecOpen) {
+    return (
+      <Card style={{ cursor: "pointer" }} onClick={() => setEcOpen(true)}>
+        <SectionHeader
+          icon={<IcoC name="layers" size={18} color={C.purple} />}
+          title="LLM Earnings Call Analyzer"
+          subtitle="Detect whether management is communicating from operational reality or managing a narrative."
+          badge={ecHistory.length > 0 ? <Badge color={C.purple} bg={C.purpleBg} size="sm">{ecHistory.length} analyzed</Badge> : null}
+        />
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+          {EC_COMPANIES.filter(c => c.id !== "CUSTOM").map(c => (
+            <span key={c.id} style={{ ...font.sans, fontSize: 11, padding: "3px 10px", borderRadius: 6, background: c.color + "14", color: c.color, fontWeight: 600 }}>{c.id}</span>
+          ))}
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card style={{ padding: 0, overflow: "hidden" }}>
+      <div style={{ padding: "16px 20px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <IcoC name="layers" size={18} color={C.purple} />
+          <div>
+            <div style={{ ...font.sans, fontSize: 14, fontWeight: 700, color: C.text }}>LLM Earnings Call Analyzer</div>
+            <div style={{ ...font.sans, fontSize: 11, color: C.textMuted }}>Management communication quality scoring</div>
+          </div>
+        </div>
+        <Btn size="sm" variant="ghost" onClick={() => setEcOpen(false)}>Collapse</Btn>
+      </div>
+
+      {/* Tab bar */}
+      <div style={{ display: "flex", borderBottom: `1px solid ${C.border}`, background: C.nested }}>
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setEcTab(t.id)} style={{ ...font.sans, flex: 1, fontSize: 12, fontWeight: 600, padding: "10px 12px", cursor: "pointer", background: ecTab === t.id ? C.white : "transparent", border: "none", borderBottom: ecTab === t.id ? `2px solid ${C.purple}` : "2px solid transparent", color: ecTab === t.id ? C.text : C.textMuted, transition: "all .15s" }}>{t.label}</button>
+        ))}
+      </div>
+
+      <div style={{ padding: "16px 20px" }}>
+        {/* ── INPUT TAB ── */}
+        {ecTab === "input" && (
+          <div className="fade-in">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 120px 100px", gap: 10, marginBottom: 14 }}>
+              <div>
+                <label style={{ ...font.sans, fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 4, display: "block" }}>Company</label>
+                <select value={ecCompany} onChange={e => setEcCompany(e.target.value)} style={{ width: "100%", fontSize: 13, padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}` }}>
+                  {EC_COMPANIES.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                {ecCompany === "CUSTOM" && <input value={ecCustomName} onChange={e => setEcCustomName(e.target.value)} placeholder="Company name" style={{ width: "100%", marginTop: 6, fontSize: 12, padding: "6px 10px" }} />}
+              </div>
+              <div>
+                <label style={{ ...font.sans, fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 4, display: "block" }}>Quarter</label>
+                <select value={ecQuarter} onChange={e => setEcQuarter(e.target.value)} style={{ width: "100%", fontSize: 13, padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}` }}>
+                  {["Q1", "Q2", "Q3", "Q4"].map(q => <option key={q} value={q}>{q}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ ...font.sans, fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 4, display: "block" }}>Year</label>
+                <select value={ecYear} onChange={e => setEcYear(e.target.value)} style={{ width: "100%", fontSize: 13, padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}` }}>
+                  {["2024", "2025", "2026"].map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <label style={{ ...font.sans, fontSize: 11, fontWeight: 600, color: C.textSec }}>Earnings Call Transcript</label>
+                <label style={{ ...font.sans, fontSize: 11, color: C.cyan, cursor: "pointer" }}>
+                  <input type="file" accept=".txt,.md" onChange={e => handleFileUpload(e, "main")} style={{ display: "none" }} /> Upload .txt
+                </label>
+              </div>
+              <textarea value={ecTranscript} onChange={e => setEcTranscript(e.target.value)}
+                placeholder="Paste the full earnings call transcript here..."
+                style={{ width: "100%", minHeight: 200, fontSize: 12, padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.border}`, resize: "vertical", fontFamily: "'JetBrains Mono', monospace", lineHeight: 1.6 }} />
+              <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginTop: 2 }}>{ecTranscript.split(/\s+/).filter(Boolean).length.toLocaleString()} words</div>
+            </div>
+
+            <details style={{ marginBottom: 14 }}>
+              <summary style={{ ...font.sans, fontSize: 11, color: C.textSec, cursor: "pointer" }}>Prior quarter transcript (optional — enables register consistency scoring)</summary>
+              <div style={{ marginTop: 6 }}>
+                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
+                  <label style={{ ...font.sans, fontSize: 11, color: C.cyan, cursor: "pointer" }}>
+                    <input type="file" accept=".txt,.md" onChange={e => handleFileUpload(e, "prior")} style={{ display: "none" }} /> Upload .txt
+                  </label>
+                </div>
+                <textarea value={ecPriorTranscript} onChange={e => setEcPriorTranscript(e.target.value)}
+                  placeholder="Paste the prior quarter's transcript for register comparison..."
+                  style={{ width: "100%", minHeight: 100, fontSize: 12, padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.border}`, resize: "vertical", fontFamily: "'JetBrains Mono', monospace", lineHeight: 1.6 }} />
+              </div>
+            </details>
+
+            {ecError && <div style={{ ...font.sans, fontSize: 12, color: C.red, padding: "10px 14px", background: C.redBg, borderRadius: 8, marginBottom: 10 }}>{ecError}</div>}
+
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <Btn variant="primary" size="sm" onClick={analyzeTranscript} disabled={ecAnalyzing || ecTranscript.length < 100}>
+                {ecAnalyzing ? <><Spinner size={11} color="#fff" /> Analyzing ({Math.round(ecProgress)}%)</> : <><IcoC name="zap" size={12} color="#fff" /> Analyze Transcript</>}
+              </Btn>
+              {ecAnalyzing && (
+                <div style={{ flex: 1, height: 6, background: C.nested, borderRadius: 999, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${ecProgress}%`, background: C.purple, transition: "width .5s" }} />
+                </div>
+              )}
+            </div>
+
+            {ecHistory.length > 0 && (
+              <div style={{ marginTop: 16, borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
+                <div style={{ ...font.sans, fontSize: 11, fontWeight: 700, color: C.textSec, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Previous Analyses</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8 }}>
+                  {ecHistory.slice(0, 12).map((h, i) => (
+                    <div key={i} onClick={() => { setEcResult(h); setEcTab("dashboard"); }}
+                      style={{ padding: "10px 12px", border: `1px solid ${C.borderLight}`, borderRadius: 10, cursor: "pointer", background: C.white, transition: "border-color .15s" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text }}>{h.company}</span>
+                        <span style={{ ...font.sans, fontSize: 18, fontWeight: 800, color: ecScoreColor(h.overall_quality_score) }}>{h.overall_quality_score}</span>
+                      </div>
+                      <div style={{ ...font.sans, fontSize: 11, color: C.textMuted }}>{h.quarter}</div>
+                      <div style={{ ...font.sans, fontSize: 10, color: C.textMuted }}>{h.analyzed_at ? new Date(h.analyzed_at).toLocaleDateString() : ""}</div>
+                    </div>
+                  ))}
+                </div>
+                <Btn size="sm" variant="ghost" style={{ marginTop: 8 }} onClick={() => { if (confirm("Clear all earnings call history?")) { setEcHistory([]); sv("ec_history", []); } }}>Clear History</Btn>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── DASHBOARD TAB ── */}
+        {ecTab === "dashboard" && ecResult && (
+          <div className="fade-in">
+            <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 20 }}>
+              {/* Left: overall gauge + signal */}
+              <div style={{ flex: "0 0 auto", textAlign: "center" }}>
+                <EcScoreGauge score={ecResult.overall_quality_score || 0} size={160} />
+                <div style={{ marginTop: 8 }}><EcInvestmentSignalBadge signal={diagData.investment_signal} /></div>
+                <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: companyColor, marginTop: 8 }}>{ecResult.company}</div>
+                <div style={{ ...font.sans, fontSize: 11, color: C.textMuted }}>{ecResult.quarter}</div>
+              </div>
+
+              {/* Center: radar chart */}
+              <div style={{ flex: 1, minWidth: 280 }}>
+                <EcRadarChart analysis={ecResult} priorAnalysis={priorAnalysis} />
+              </div>
+
+              {/* Right: diagnostics */}
+              <div style={{ flex: "0 0 280px" }}>
+                <div style={{ ...font.sans, fontSize: 11, fontWeight: 700, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Key Diagnostics</div>
+                {diagData.stock_context && <div style={{ ...font.sans, fontSize: 11, color: C.text, marginBottom: 6, padding: "6px 10px", background: C.nested, borderRadius: 6 }}><strong>Stock:</strong> {diagData.stock_context}</div>}
+                {diagData.nrr_trajectory_prediction && <div style={{ ...font.sans, fontSize: 11, color: C.text, marginBottom: 6, padding: "6px 10px", background: C.nested, borderRadius: 6 }}><strong>NRR Trajectory:</strong> {diagData.nrr_trajectory_prediction}</div>}
+                {diagData.qa_vs_prepared_divergence && <div style={{ ...font.sans, fontSize: 11, color: C.text, marginBottom: 6, padding: "6px 10px", background: C.nested, borderRadius: 6 }}><strong>Q&A vs Prepared:</strong> {diagData.qa_vs_prepared_divergence}</div>}
+                {diagData.analyst_sentiment && <div style={{ ...font.sans, fontSize: 11, color: C.text, marginBottom: 6, padding: "6px 10px", background: C.nested, borderRadius: 6 }}><strong>Analysts:</strong> {diagData.analyst_sentiment}</div>}
+                {diagData.strongest_operational_signal && <div style={{ ...font.sans, fontSize: 11, color: C.green, marginBottom: 4, padding: "6px 10px", background: C.greenBg, borderRadius: 6 }}><strong>Best Signal:</strong> {diagData.strongest_operational_signal}</div>}
+                {diagData.strongest_narrative_signal && <div style={{ ...font.sans, fontSize: 11, color: C.red, marginBottom: 4, padding: "6px 10px", background: C.redBg, borderRadius: 6 }}><strong>Worst Signal:</strong> {diagData.strongest_narrative_signal}</div>}
+              </div>
+            </div>
+
+            {/* Overall interpretation */}
+            {ecResult.overall_interpretation && (
+              <div style={{ padding: "12px 16px", background: C.nested, borderRadius: 10, marginBottom: 16, borderLeft: `4px solid ${ecScoreColor(ecResult.overall_quality_score)}` }}>
+                <div style={{ ...font.sans, fontSize: 13, color: C.text, lineHeight: 1.6 }}>{ecResult.overall_interpretation}</div>
+              </div>
+            )}
+
+            {/* Five score cards */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 16 }}>
+              {EC_SCORE_DEFS.map(def => {
+                const s = scoreData[def.id];
+                if (!s) return null;
+                const selected = ecSelectedScore === def.id;
+                return (
+                  <div key={def.id} onClick={() => setEcSelectedScore(selected ? null : def.id)}
+                    style={{ padding: "14px 16px", border: `1px solid ${selected ? C.purple : C.borderLight}`, borderRadius: 12, cursor: "pointer", background: C.white, transition: "border-color .15s" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                      <div style={{ ...font.sans, fontSize: 11, fontWeight: 700, color: C.textSec }}>{def.short}</div>
+                      <div style={{ ...font.sans, fontSize: 22, fontWeight: 800, color: ecScoreColor(s.score) }}>{s.score}</div>
+                    </div>
+                    <div style={{ height: 4, background: C.nested, borderRadius: 2, overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: `${s.score}%`, background: ecScoreColor(s.score), transition: "width .5s" }} />
+                    </div>
+                    <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginTop: 6, lineHeight: 1.4 }}>{def.desc}</div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Expanded score detail */}
+            {ecSelectedScore && scoreData[ecSelectedScore] && (
+              <div className="fade-in" style={{ padding: "14px 18px", background: C.nested, borderRadius: 12, border: `1px solid ${C.purple}22`, marginBottom: 16 }}>
+                <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 4 }}>{EC_SCORE_DEFS.find(d => d.id === ecSelectedScore)?.label}</div>
+                <div style={{ ...font.sans, fontSize: 12, color: C.textSec, lineHeight: 1.55, marginBottom: 10 }}>{scoreData[ecSelectedScore].interpretation}</div>
+                {ecSelectedScore === "tense_distribution" && (<>
+                  {(scoreData.tense_distribution.operational_quotes || []).map((q, i) => <EcQuoteCard key={`op${i}`} quote={q.quote} explanation={q.explanation} type="operational" />)}
+                  {(scoreData.tense_distribution.narrative_quotes || []).map((q, i) => <EcQuoteCard key={`nr${i}`} quote={q.quote} explanation={q.explanation} type="narrative" />)}
+                </>)}
+                {ecSelectedScore === "specificity_gradient" && (<>
+                  {(scoreData.specificity_gradient.specific_quotes || []).map((q, i) => <EcQuoteCard key={`sp${i}`} quote={q.quote} explanation={q.explanation} type="specific" claimSig={q.claim_significance} specLevel={q.specificity_level} />)}
+                  {(scoreData.specificity_gradient.vague_quotes || []).map((q, i) => <EcQuoteCard key={`vg${i}`} quote={q.quote} explanation={q.explanation} type="vague" claimSig={q.claim_significance} specLevel={q.specificity_level} />)}
+                </>)}
+                {ecSelectedScore === "sincerity_signal" && (<>
+                  <div style={{ ...font.sans, fontSize: 10, fontWeight: 700, color: C.textMuted, marginBottom: 4, textTransform: "uppercase" }}>Volunteered Bad News</div>
+                  {(scoreData.sincerity_signal.volunteered_bad_news || []).map((q, i) => <EcQuoteCard key={`bn${i}`} quote={q.quote} explanation={q.explanation} type="operational" />)}
+                  <div style={{ ...font.sans, fontSize: 10, fontWeight: 700, color: C.textMuted, marginBottom: 4, marginTop: 8, textTransform: "uppercase" }}>Error Acknowledgments</div>
+                  {(scoreData.sincerity_signal.error_acknowledgments || []).map((q, i) => <EcQuoteCard key={`ea${i}`} quote={q.quote} explanation={q.explanation} type="operational" />)}
+                  <div style={{ ...font.sans, fontSize: 10, fontWeight: 700, color: C.textMuted, marginBottom: 4, marginTop: 8, textTransform: "uppercase" }}>Superlative Inflation</div>
+                  {(scoreData.sincerity_signal.superlative_inflation || []).map((q, i) => <EcQuoteCard key={`si${i}`} quote={q.quote} explanation={q.explanation} type="narrative" />)}
+                  <div style={{ ...font.sans, fontSize: 10, fontWeight: 700, color: C.textMuted, marginBottom: 4, marginTop: 8, textTransform: "uppercase" }}>Specific Predictions</div>
+                  {(scoreData.sincerity_signal.specific_predictions || []).map((q, i) => <EcQuoteCard key={`pr${i}`} quote={q.quote} explanation={q.explanation} type={q.uncertainty_acknowledged ? "operational" : "narrative"} />)}
+                </>)}
+                {ecSelectedScore === "absorption_failure" && (<>
+                  <div style={{ ...font.sans, fontSize: 10, fontWeight: 700, color: C.textMuted, marginBottom: 4, textTransform: "uppercase" }}>Healthy Scaling</div>
+                  {(scoreData.absorption_failure.healthy_scaling_examples || []).map((q, i) => <EcQuoteCard key={`hs${i}`} quote={q.quote} explanation={q.explanation} type="healthy" claimSig={q.metric_severity} specLevel={q.explanation_length} />)}
+                  <div style={{ ...font.sans, fontSize: 10, fontWeight: 700, color: C.textMuted, marginBottom: 4, marginTop: 8, textTransform: "uppercase" }}>Failure Signals</div>
+                  {(scoreData.absorption_failure.failure_signals || []).map((q, i) => <EcQuoteCard key={`fs${i}`} quote={q.quote} explanation={q.explanation} type="failure" claimSig={q.metric_severity} specLevel={q.explanation_length} />)}
+                </>)}
+                {ecSelectedScore === "register_consistency" && (<>
+                  <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginBottom: 8 }}>{scoreData.register_consistency.note}</div>
+                  {(scoreData.register_consistency.register_markers || []).map((q, i) => <EcQuoteCard key={`rm${i}`} quote={q.quote} explanation={q.explanation} type={q.register_type === "OPERATIONAL" ? "operational" : q.register_type === "NARRATIVE" ? "narrative" : "mixed"} />)}
+                </>)}
+              </div>
+            )}
+          </div>
+        )}
+
+        {ecTab === "dashboard" && !ecResult && (
+          <div style={{ textAlign: "center", padding: "40px 20px", color: C.textMuted }}>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>No analysis yet</div>
+            <div style={{ fontSize: 12, marginBottom: 12 }}>Paste a transcript in the Input tab and click Analyze</div>
+            <Btn size="sm" onClick={() => setEcTab("input")}>Go to Input</Btn>
+          </div>
+        )}
+
+        {/* ── EVIDENCE TAB ── */}
+        {ecTab === "evidence" && ecResult && (
+          <div className="fade-in">
+            <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+              {[{ id: "all", label: "All" }, { id: "operational", label: "Operational", color: C.green }, { id: "narrative", label: "Narrative", color: C.red }].map(f => (
+                <button key={f.id} onClick={() => setEcHighlightFilter(f.id)}
+                  style={{ ...font.sans, fontSize: 11, fontWeight: 600, padding: "5px 12px", borderRadius: 6, cursor: "pointer", border: `1px solid ${ecHighlightFilter === f.id ? (f.color || C.purple) : C.borderLight}`, background: ecHighlightFilter === f.id ? (f.color || C.purple) + "14" : C.white, color: ecHighlightFilter === f.id ? (f.color || C.purple) : C.textMuted }}>{f.label}</button>
+              ))}
+            </div>
+
+            <div style={{ maxHeight: 600, overflowY: "auto", padding: "2px 0" }}>
+              {(ecResult.highlighted_transcript || [])
+                .filter(h => ecHighlightFilter === "all" || h.classification?.toLowerCase() === ecHighlightFilter)
+                .map((h, i) => {
+                  const cls = h.classification?.toLowerCase();
+                  const borderColor = cls === "operational" ? C.green : cls === "narrative" ? C.red : C.borderLight;
+                  const bgColor = cls === "operational" ? C.greenBg : cls === "narrative" ? C.redBg : C.nested;
+                  return (
+                    <div key={i} style={{ borderLeft: `3px solid ${borderColor}`, padding: "8px 14px", marginBottom: 6, background: bgColor, borderRadius: "0 8px 8px 0" }}>
+                      <div style={{ ...font.sans, fontSize: 12, color: C.text, lineHeight: 1.55 }}>"{h.text}"</div>
+                      <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                        <span style={{ ...font.sans, fontSize: 10, fontWeight: 700, color: borderColor }}>{h.classification}</span>
+                        {h.signal_type && <span style={{ ...font.sans, fontSize: 10, color: C.textMuted }}>{h.signal_type}</span>}
+                      </div>
+                      {h.explanation && <div style={{ ...font.sans, fontSize: 11, color: C.textSec, marginTop: 3, lineHeight: 1.4 }}>{h.explanation}</div>}
+                    </div>
+                  );
+                })}
+              {(!ecResult.highlighted_transcript || ecResult.highlighted_transcript.length === 0) && (
+                <div style={{ ...font.sans, fontSize: 12, color: C.textMuted, textAlign: "center", padding: 20 }}>No highlighted segments available</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {ecTab === "evidence" && !ecResult && (
+          <div style={{ textAlign: "center", padding: "40px 20px", color: C.textMuted }}>
+            <div style={{ fontSize: 12 }}>Run an analysis first to see evidence</div>
+          </div>
+        )}
+
+        {/* ── COMPARE TAB ── */}
+        {ecTab === "compare" && (
+          <div className="fade-in">
+            {ecHistory.length < 2 ? (
+              <div style={{ textAlign: "center", padding: "40px 20px", color: C.textMuted }}>
+                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Analyze at least 2 transcripts to compare</div>
+                <div style={{ fontSize: 12 }}>Track the same company across quarters to detect communication quality trajectory</div>
+              </div>
+            ) : (
+              <>
+                {/* Company trajectory chart */}
+                {(() => {
+                  const byCompany = {};
+                  ecHistory.forEach(h => { if (!byCompany[h.company]) byCompany[h.company] = []; byCompany[h.company].push(h); });
+                  return Object.entries(byCompany).map(([company, entries]) => {
+                    const sorted = [...entries].sort((a, b) => (a.quarter || "").localeCompare(b.quarter || ""));
+                    const chartData = sorted.map(e => ({ name: e.quarter, score: e.overall_quality_score || 0, ...Object.fromEntries(EC_SCORE_DEFS.map(d => [d.short, e.scores?.[d.id]?.score || 0])) }));
+                    const color = EC_COMPANIES.find(c => c.name === company || c.id === company)?.color || C.cyan;
+                    const latest = sorted[sorted.length - 1];
+                    const prev = sorted.length >= 2 ? sorted[sorted.length - 2] : null;
+                    const delta = prev ? (latest?.overall_quality_score || 0) - (prev?.overall_quality_score || 0) : null;
+                    return (
+                      <div key={company} style={{ marginBottom: 20, padding: 16, border: `1px solid ${C.borderLight}`, borderRadius: 12, background: C.white }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                          <div>
+                            <div style={{ ...font.sans, fontSize: 14, fontWeight: 700, color: C.text }}>{company}</div>
+                            <div style={{ ...font.sans, fontSize: 11, color: C.textMuted }}>{sorted.length} transcript{sorted.length !== 1 ? "s" : ""} analyzed</div>
+                          </div>
+                          <div style={{ textAlign: "right" }}>
+                            <div style={{ ...font.sans, fontSize: 24, fontWeight: 800, color: ecScoreColor(latest?.overall_quality_score || 0) }}>{latest?.overall_quality_score || 0}</div>
+                            {delta != null && <div style={{ ...font.sans, fontSize: 11, fontWeight: 600, color: delta > 0 ? C.green : delta < 0 ? C.red : C.textMuted }}>{delta > 0 ? "+" : ""}{delta} vs prior</div>}
+                            {delta != null && Math.abs(delta) >= 15 && <div style={{ ...font.sans, fontSize: 10, fontWeight: 700, color: C.red, marginTop: 2 }}>⚠ Communication shift detected</div>}
+                          </div>
+                        </div>
+                        {chartData.length >= 2 && (
+                          <ResponsiveContainer width="100%" height={200}>
+                            <LineChart data={chartData} margin={{ top: 4, right: 10, bottom: 4, left: 4 }}>
+                              <XAxis dataKey="name" tick={{ fontSize: 11 }} stroke={C.border} />
+                              <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} stroke={C.border} width={30} />
+                              <Tooltip />
+                              <Line type="monotone" dataKey="score" stroke={color} strokeWidth={2.5} dot={{ fill: color, r: 4 }} name="Overall" />
+                              {EC_SCORE_DEFS.map(d => <Line key={d.short} type="monotone" dataKey={d.short} stroke={color} strokeWidth={1} strokeDasharray="3 3" dot={false} strokeOpacity={0.4} name={d.short} />)}
+                            </LineChart>
+                          </ResponsiveContainer>
+                        )}
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))", gap: 6, marginTop: 10 }}>
+                          {sorted.map(e => (
+                            <div key={e.quarter} onClick={() => { setEcResult(e); setEcTab("dashboard"); }}
+                              style={{ textAlign: "center", padding: "6px 8px", borderRadius: 8, cursor: "pointer", border: `1px solid ${C.borderLight}`, background: C.nested }}>
+                              <div style={{ ...font.sans, fontSize: 10, fontWeight: 600, color: C.textSec }}>{e.quarter}</div>
+                              <div style={{ ...font.sans, fontSize: 16, fontWeight: 800, color: ecScoreColor(e.overall_quality_score || 0) }}>{e.overall_quality_score || 0}</div>
+                              <EcInvestmentSignalBadge signal={e.key_diagnostics?.investment_signal} />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 // ── ALERT FEED (redesigned) ──────────────────────────────────────────────────
 
 function AlertFeed({alerts,onPin}){
@@ -4805,6 +5410,11 @@ INSTRUCTIONS:
         {/* ─── Hugging Face ─── */}
         <div style={{marginBottom:28}}>
           <HuggingFaceLeaderboard onDataChanged={()=>{const pat=resolveGitPat();if(pat||signalStoreSecret()||databaseStoreSecret())debouncedSyncToGist(pat,3000);}}/>
+        </div>
+
+        {/* ─── Earnings Call Analyzer ─── */}
+        <div style={{marginBottom:28}}>
+          <EarningsCallPanel />
         </div>
 
         {/* ─── Alerts ─── */}
