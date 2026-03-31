@@ -1552,15 +1552,13 @@ async function callSource(source, vertical, configKeys) {
   if (vkw.titleKeywords) tv.titleKeywords = vkw.titleKeywords;
   if (vkw.descriptionKeywords) tv.descriptionKeywords = vkw.descriptionKeywords;
   const hasKw = (tv.keywords && tv.keywords.length > 0) || (Array.isArray(tv.titleKeywords) ? tv.titleKeywords.filter(Boolean).length > 0 : !!tv.titleKeywords) || (Array.isArray(tv.descriptionKeywords) ? tv.descriptionKeywords.filter(Boolean).length > 0 : !!tv.descriptionKeywords);
-  if (!hasKw) throw new Error(`No keywords configured for ${source.name}. Add keywords in the signal group settings for this source.`);
+  if (!hasKw && source.id !== "claude_attrib") throw new Error(`No keywords configured for ${source.name}. Add keywords in the signal group settings for this source.`);
   let templateStr = cfg.bodyTemplate;
   if (source.id === "claude_attrib") {
     const extraKw = Array.isArray(vkw.keywords) ? vkw.keywords.filter(Boolean) : [];
     if (extraKw.length > 0) {
       const kwQ = extraKw.map(k => `"${k}"`).join("+");
       templateStr = templateStr.replace('"Co-Authored-By: Claude"', `"Co-Authored-By: Claude"+${kwQ}`);
-    } else {
-      throw new Error("Claude Code Attribution requires keywords — add at least one keyword (e.g. your company name, product, or repo) in the signal group settings to filter results. Without keywords, this returns global commit counts across all of GitHub.");
     }
   }
   if (resolveTheirStackMocking(source, configKeys)) {
@@ -2721,7 +2719,7 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                    res ? <div>
                      <div style={{...font.mono,fontSize:22,fontWeight:800,color:C.text,letterSpacing:"-0.03em"}}>{(res.count||0).toLocaleString()}</div>
                      {trend!=null&&<Badge color={trend>=0?C.green:C.red} bg={trend>=0?C.greenBg:C.redBg} size="sm">{trend>=0?"+":""}{trend}%</Badge>}
-                     {(source.id==="github_repos"||source.id==="claude_attrib")&&res.count>50000&&<div style={{...font.sans,fontSize:9,color:C.amber,marginTop:2}} title="Very high count suggests keywords are too broad. Add more specific terms.">⚠ keywords may be too broad</div>}
+                     {source.id==="github_repos"&&res.count>50000&&<div style={{...font.sans,fontSize:9,color:C.amber,marginTop:2}} title="Very high count suggests keywords are too broad. Add more specific terms.">⚠ keywords may be too broad</div>}
                    </div> :
                    <span style={{color:C.textMuted,fontSize:13}}>No data</span>}
                 </div>
@@ -2830,17 +2828,16 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                       </div>
                       {(() => {
                         const kwArr = Array.isArray(kw.keywords) ? kw.keywords.filter(Boolean) : [];
-                        if (kwArr.length === 0) return (
+                        if (kwArr.length === 0 && source.id === "github_repos") return (
                           <div style={{ ...font.sans, fontSize: 11, color: C.red, lineHeight: 1.5 }}>
-                            <strong>No keywords configured.</strong> Add keywords above to filter results.
-                            {source.id === "claude_attrib"
-                              ? " Without keywords, this would search ALL Claude-attributed commits on GitHub — returning millions of results. Add your company name, product, or repo name."
-                              : " Without keywords, GitHub Search returns nothing meaningful. Add specific terms like 'LangChain', 'RAG pipeline', or your product name."}
+                            <strong>No keywords configured.</strong> Add keywords above — without them GitHub Search returns nothing meaningful. Use specific terms like "LangChain", "RAG pipeline", or your product name.
                           </div>
                         );
                         const queryPreview = source.id === "github_repos"
                           ? kwArr.map(k => k.includes(" ") ? `"${k}"` : k).join("+") + "+pushed:>YYYY-MM-DD"
-                          : `"Co-Authored-By: Claude"+${kwArr.map(k => k.includes(" ") ? `"${k}"` : k).join("+")}+committer-date:YYYY-MM-DD..YYYY-MM-DD`;
+                          : kwArr.length > 0
+                            ? `"Co-Authored-By: Claude"+${kwArr.map(k => k.includes(" ") ? `"${k}"` : k).join("+")}+committer-date:YYYY-MM-DD..YYYY-MM-DD`
+                            : `"Co-Authored-By: Claude"+committer-date:YYYY-MM-DD..YYYY-MM-DD`;
                         return (
                           <div>
                             <div style={{ ...font.sans, fontSize: 11, color: C.textSec, marginBottom: 4 }}>
@@ -2849,7 +2846,7 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                             <code style={{ ...font.mono, fontSize: 10, color: C.cyan, display: "block", padding: "6px 10px", background: C.nested, borderRadius: 6, wordBreak: "break-all", lineHeight: 1.5 }}>
                               {queryPreview}
                             </code>
-                            {res?.count > 50000 && (
+                            {source.id === "github_repos" && res?.count > 50000 && (
                               <div style={{ ...font.sans, fontSize: 11, color: C.amber, marginTop: 6, lineHeight: 1.5 }}>
                                 <strong>⚠ Count is very high ({(res.count || 0).toLocaleString()}).</strong> Your keywords may be too broad. Try more specific terms — e.g. instead of "AI" use "LangChain" or "vector database".
                               </div>
@@ -2857,7 +2854,9 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                             <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginTop: 6, lineHeight: 1.4 }}>
                               {source.id === "github_repos"
                                 ? "Counts public repos matching these terms with pushes in the last 30 days. Overly generic keywords (e.g. 'AI', 'machine learning') will match too many repos."
-                                : "Counts commits with 'Co-Authored-By: Claude' signature matching your keywords. Add specific terms to narrow to your domain."}
+                                : kwArr.length > 0
+                                  ? "Counts Claude-attributed commits filtered to your keywords. Remove keywords to track the global total instead."
+                                  : "Tracks ALL Claude-attributed commits on GitHub — a macro signal of AI coding tool adoption. Add keywords to narrow to a specific domain."}
                             </div>
                           </div>
                         );
@@ -4511,7 +4510,7 @@ export default function App() {
     if (sourceId === "claude_attrib") {
       const kw = vertical.keywords?.claude_attrib?.keywords;
       const raw = Array.isArray(kw) ? kw.filter(Boolean) : (kw ? [kw] : []);
-      if (!raw.length) return null;
+      if (!raw.length) return `"Co-Authored-By: Claude"`;
       const kwPart = raw.map(k => k.includes(" ") ? `"${k}"` : k).join("+");
       return `"Co-Authored-By: Claude"+${kwPart}`;
     }
@@ -4601,10 +4600,7 @@ export default function App() {
       }
       const baseQ = buildGitHubQuery(vert, sourceId);
       if (!baseQ) {
-        const hint = sourceId === "github_repos"
-          ? "Add keywords in your signal group under GitHub Repos (e.g. 'LangChain', 'vector database', 'RAG')."
-          : "Add keywords in your signal group under Claude Code Attribution (e.g. your company name, a repo name, or a technology). Without keywords this would count ALL Claude commits on GitHub.";
-        setErrors(prev => ({ ...prev, [signalKey]: `No keywords configured for ${sourceId === "github_repos" ? "GitHub Repos" : "Claude Attribution"}. ${hint}` }));
+        setErrors(prev => ({ ...prev, [signalKey]: "No keywords configured for GitHub Repos. Add keywords in your signal group (e.g. 'LangChain', 'vector database', 'RAG')." }));
         return;
       }
       const weeks = weekIntervals(78, new Date());
