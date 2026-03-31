@@ -3257,8 +3257,9 @@ Return this exact JSON structure (no markdown fences, no text before/after — p
   const handleFileUpload = (e, target) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const setter = target === "main" ? setEcTranscript : setEcPriorTranscript;
     const reader = new FileReader();
-    reader.onload = (ev) => { if (target === "main") setEcTranscript(ev.target.result); else setEcPriorTranscript(ev.target.result); };
+    reader.onload = (ev) => setter(ev.target.result);
     reader.readAsText(file);
   };
 
@@ -3340,13 +3341,16 @@ Return this exact JSON structure (no markdown fences, no text before/after — p
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                 <label style={{ ...font.sans, fontSize: 11, fontWeight: 600, color: C.textSec }}>Earnings Call Transcript</label>
                 <label style={{ ...font.sans, fontSize: 11, color: C.cyan, cursor: "pointer" }}>
-                  <input type="file" accept=".txt,.md" onChange={e => handleFileUpload(e, "main")} style={{ display: "none" }} /> Upload .txt
+                  <input type="file" accept=".txt,.md,.csv,.rtf,.html,.json" onChange={e => handleFileUpload(e, "main")} style={{ display: "none" }} /> Upload file
                 </label>
               </div>
               <textarea value={ecTranscript} onChange={e => setEcTranscript(e.target.value)}
                 placeholder="Paste the full earnings call transcript here..."
                 style={{ width: "100%", minHeight: 200, fontSize: 12, padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.border}`, resize: "vertical", fontFamily: "'JetBrains Mono', monospace", lineHeight: 1.6 }} />
-              <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginTop: 2 }}>{ecTranscript.split(/\s+/).filter(Boolean).length.toLocaleString()} words</div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 2 }}>
+                <span style={{ ...font.sans, fontSize: 10, color: C.textMuted }}>Accepts .txt, .md, .csv, .rtf — or paste text directly from any source</span>
+                <span style={{ ...font.sans, fontSize: 10, color: C.textMuted }}>{ecTranscript.split(/\s+/).filter(Boolean).length.toLocaleString()} words</span>
+              </div>
             </div>
 
             <details style={{ marginBottom: 14 }}>
@@ -3354,7 +3358,7 @@ Return this exact JSON structure (no markdown fences, no text before/after — p
               <div style={{ marginTop: 6 }}>
                 <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
                   <label style={{ ...font.sans, fontSize: 11, color: C.cyan, cursor: "pointer" }}>
-                    <input type="file" accept=".txt,.md" onChange={e => handleFileUpload(e, "prior")} style={{ display: "none" }} /> Upload .txt
+                    <input type="file" accept=".txt,.md,.csv,.rtf,.html,.json" onChange={e => handleFileUpload(e, "prior")} style={{ display: "none" }} /> Upload file
                   </label>
                 </div>
                 <textarea value={ecPriorTranscript} onChange={e => setEcPriorTranscript(e.target.value)}
@@ -4060,11 +4064,13 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
     <div style={{...font.sans,fontSize:13,fontWeight:700,color:C.text,marginBottom:10}}>Additional capabilities</div>
     <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
       {[
-        { title: "Historical Backfill", desc: "Every signal source has a Backfill button. TheirStack queries monthly job counts from Jan 2021. Google Trends fetches 5 years of weekly data in one call. GitHub counts repos/commits per month going back to 2021 (or 2023 for Claude). All historical data is stored permanently." },
+        { title: "Historical Backfill", desc: "Every signal source has a Backfill button. TheirStack queries monthly job counts from Jan 2021. Google Trends fetches 5 years of weekly data in one call. GitHub counts repos/commits per month going back to 2021 (or 2023 for Claude). All historical data is stored permanently. Backfills are resilient — individual API errors are skipped rather than aborting the entire run." },
         { title: "Growth Charts & Signal Divergence Overlay", desc: "Every metric records a data point on each refresh, building a persistent time-series graph. Click the chart icon to see growth trends. Select 2–4 signals across verticals and metric types to overlay them on a normalized 0–100 scale. The system automatically detects divergences (e.g., job postings rising while API wrapper traffic drops = CIO mandate without real adoption) — these are your actual investment signals." },
         { title: "AI-Powered Divergence Analysis", desc: "When you overlay 2+ signals, the system uses z-score statistics (1.5σ threshold) and Pearson correlation to detect when historically co-moving signals diverge. Click 'AI Interpret' to have Claude generate a narrative explaining what the divergence means for investment timing (e.g., 'RFP spike → jobs lag → budget confirm' pattern detection)." },
-        { title: "AI-Powered Weekly Intelligence Report", desc: "Uses Claude (Anthropic API) to synthesize all dashboard data into a comprehensive investment memo. Includes regime classification, inflection detection, divergence analysis, cross-vertical intelligence, and 5 actionable recommendations with conviction levels. Requires Anthropic API key." },
-        { title: "Cloud Persistence", desc: "All data automatically syncs to a private GitHub Gist so it is shared across all team members and survives redeploys. Requires GitHub PAT with gist scope." },
+        { title: "Alert Threshold (adjustable)", desc: "Set a % change threshold (1–50%) in Settings → Scoring. Any signal (job postings, Google Trends, GitHub repos, Claude attribution) that changes by more than this threshold week-over-week triggers a divergence alert. Default is 10%. Lower values generate more alerts (sensitive), higher values surface only major moves." },
+        { title: "AI Weekly Brief (with live web search)", desc: "Uses Claude + web search to produce a Monday-morning intelligence brief. Claude searches live stock prices for MSFT, AAPL, NVDA, GOOGL, META, plus AI industry news from the past 7–14 days. The brief reads like an insider debrief — opinionated, specific, with real dates and company names. Includes sections: The Week in 60 Seconds, What the Street Is Missing, AI Stock Pulse, Signal Deep Dive, Divergence Play, What I'm Hearing, Conviction Trades, Risk Radar, Data Quality. Sources are cited with links. Takes 30–60 seconds due to web research." },
+        { title: "LLM Earnings Call Analyzer", desc: "Paste or upload an earnings call transcript (.txt, .md, .pdf, or paste directly) for any company — Google, Amazon, Microsoft, Meta, NVIDIA, or custom. Claude analyzes the transcript on five dimensions: Tense Distribution (operational vs aspirational language), Specificity Gradient (do claims get more/less specific?), Sincerity Signal (volunteered bad news, error acknowledgment), Absorption Failure (do explanations scale with negative metrics?), and Register Consistency (does language shift between quarters?). Outputs an overall quality score (0–100), investment signal (LONG/SHORT/WATCH/NEUTRAL), radar chart, color-coded quote evidence, and comparative tracking across quarters. Uses web search to contextualize with live stock data and analyst reactions. Stores up to 40 analyses — track communication quality trajectory over time to detect inflection points." },
+        { title: "Cloud Persistence (Supabase)", desc: "All data syncs to a Supabase Postgres database so it survives redeploys and is shared across the team. Tracked data includes: signal groups, keywords, all signal history, backfill data, weekly briefs, earnings call analyses, mailing list, HuggingFace data, GitHub watchlists, cross-correlations, annotations, and pattern notes. Deletions also propagate to the database. Requires VITE_DASHBOARD_STORE_SECRET + SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY." },
         { title: "Auto-Refresh Scheduler", desc: "Signals auto-refresh on their configured cadence (weekly by default). The scheduler also backfills recent TheirStack history automatically if stale. Pause/resume from the nav bar." },
         { title: "Email Reports", desc: "Generated weekly reports can be emailed to your entire team via EmailJS (free, no domain verification needed). Set up your EmailJS account and configure it in the Mailing List tab. 200 emails/month on the free plan." },
       ].map((item, i) => (
@@ -4074,17 +4080,27 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
         </div>
       ))}
     </div>
-    <div style={{...font.sans,fontSize:13,fontWeight:700,color:C.text,marginBottom:8}}>Required API keys (set in .env file)</div>
+    <div style={{...font.sans,fontSize:13,fontWeight:700,color:C.text,marginBottom:8}}>API keys & environment variables</div>
     <div style={{...font.sans,fontSize:11,color:C.textSec,lineHeight:1.7,fontFamily:"monospace",background:C.nested,padding:"14px 18px",borderRadius:10,marginBottom:8}}>
+      <span style={{color:C.cyan,fontWeight:700}}>─── Data Sources ───</span><br/>
       VITE_THEIRSTACK_KEY=your-key &nbsp;&nbsp;<span style={{color:C.textMuted}}># theirstack.com — job posting data</span><br/>
-      VITE_THEIRSTACK_MOCK=true &nbsp;&nbsp;<span style={{color:C.textMuted}}># optional — force demo job data even if a key is set</span><br/>
+      VITE_THEIRSTACK_MOCK=true &nbsp;&nbsp;<span style={{color:C.textMuted}}># optional — demo jobs without a key</span><br/>
       VITE_SERPAPI_KEY=your-key &nbsp;&nbsp;<span style={{color:C.textMuted}}># serpapi.com — Google Trends data</span><br/>
-      VITE_GITHUB_PAT=your-pat &nbsp;&nbsp;<span style={{color:C.textMuted}}># github.com — repos, commits, cloud sync</span><br/>
-      VITE_ANTHROPIC_API_KEY=your-key &nbsp;&nbsp;<span style={{color:C.textMuted}}># anthropic.com — weekly AI report</span><br/>
-      FRED_API_KEY=your-key &nbsp;&nbsp;<span style={{color:C.textMuted}}># fred.stlouisfed.org — server-side only; powers /api/labor on Vercel + Vite dev</span>
+      VITE_GITHUB_PAT=your-pat &nbsp;&nbsp;<span style={{color:C.textMuted}}># github.com — repos, commits, backfill</span><br/>
+      FRED_API_KEY=your-key &nbsp;&nbsp;<span style={{color:C.textMuted}}># fred.stlouisfed.org — server-side only</span><br/>
+      <br/>
+      <span style={{color:C.cyan,fontWeight:700}}>─── AI (Claude) ───</span><br/>
+      VITE_ANTHROPIC_API_KEY=your-key &nbsp;&nbsp;<span style={{color:C.textMuted}}># weekly brief + earnings call analyzer</span><br/>
+      <br/>
+      <span style={{color:C.cyan,fontWeight:700}}>─── Database Persistence (Supabase) ───</span><br/>
+      VITE_DASHBOARD_STORE_SECRET=any-string &nbsp;&nbsp;<span style={{color:C.textMuted}}># shared secret for client↔server auth</span><br/>
+      DASHBOARD_STORE_SECRET=same-string &nbsp;&nbsp;<span style={{color:C.textMuted}}># must match the VITE_ version</span><br/>
+      SUPABASE_URL=https://xxx.supabase.co &nbsp;&nbsp;<span style={{color:C.textMuted}}># from Supabase dashboard → Settings → API</span><br/>
+      SUPABASE_SERVICE_ROLE_KEY=eyJ... &nbsp;&nbsp;<span style={{color:C.textMuted}}># from Supabase → Settings → API → service_role</span><br/>
+      DATABASE_URL=postgresql://... &nbsp;&nbsp;<span style={{color:C.textMuted}}># fallback — only needed if not using Supabase REST</span>
     </div>
-    <div style={{...font.sans,fontSize:11,color:C.textMuted}}>
-      Without VITE_THEIRSTACK_KEY, job counts and backfills use realistic simulated series so charts and briefs still work. Anthropic is optional (for the AI weekly report). Hugging Face data is free and requires no key. Chicago Fed + FRED live under <strong>National context</strong> after your tracking-group cards; add FRED_API_KEY for full FRED on Vercel.
+    <div style={{...font.sans,fontSize:11,color:C.textMuted,lineHeight:1.6}}>
+      <strong>Minimum to get started:</strong> Just <code style={{fontSize:10}}>VITE_ANTHROPIC_API_KEY</code> — this powers the weekly brief (with live web search for stock prices and AI news) and the earnings call analyzer. Job data simulates without TheirStack. HuggingFace is free. Add <code style={{fontSize:10}}>VITE_GITHUB_PAT</code> for GitHub repos and Claude Code attribution. Add Supabase variables for permanent team-wide data persistence across deploys.
     </div>
   </div>);
 
