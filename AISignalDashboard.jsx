@@ -9,18 +9,18 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Co
 const PFX = "sid_v3_";
 const HSPFX = "aitracker_";
 const C = {
-  bg: "#f7f8fa", white: "#fff", nested: "#f1f3f6", border: "#e1e4ea", borderLight: "#eceef3",
-  text: "#1a1d26", textSec: "#4b5163", textMuted: "#8b92a5",
-  cyan: "#0284c7", cyanBg: "#e0f2fe",
-  amber: "#b45309", amberBg: "#fef3c7",
-  red: "#c0392b", redBg: "#fef2f2",
-  green: "#0f7b55", greenBg: "#ecfdf5",
-  purple: "#6d28d9", purpleBg: "#f3f0ff",
-  blue: "#2563eb", blueBg: "#eff6ff",
-  orange: "#ea580c", orangeBg: "#fff7ed",
+  bg: "#f5f6f8", white: "#fff", nested: "#f0f1f4", border: "#d8dbe2", borderLight: "#e8eaef",
+  text: "#1c1f26", textSec: "#515868", textMuted: "#8890a0",
+  cyan: "#1a6b8a", cyanBg: "#eaf3f7",
+  amber: "#8a6a1a", amberBg: "#f7f2e6",
+  red: "#943232", redBg: "#f7eded",
+  green: "#2d6b4f", greenBg: "#edf5f1",
+  purple: "#584a8a", purpleBg: "#f0eef5",
+  blue: "#3d5a9e", blueBg: "#edf1f8",
+  orange: "#8a5a2d", orangeBg: "#f7f1ea",
 };
 const font = { sans: { fontFamily: "'Inter',system-ui,sans-serif" }, mono: { fontFamily: "'JetBrains Mono',monospace" } };
-const PALETTE = ["#0284c7","#2563eb","#b45309","#0f7b55","#6d28d9","#c0392b","#ea580c","#e11d48","#0891b2","#4f46e5"];
+const PALETTE = ["#1a6b8a","#3d5a9e","#8a6a1a","#2d6b4f","#584a8a","#943232","#8a5a2d","#7a3d5e","#4a7a8a","#4a5a7a"];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ── PERSISTENCE (localStorage + GitHub Gist cloud sync) ──────────────────────
@@ -402,12 +402,19 @@ function getSignalHistory(signalKey) {
 function appendSignalHistory(signalKey, value) {
   const h = ld(`hist_${signalKey}`, []);
   const now = new Date();
-  h.push({
+  const todayKey = now.toISOString().slice(0, 10);
+  const existingIdx = h.findIndex(p => (p.isoDate || new Date(p.ts).toISOString()).slice(0, 10) === todayKey);
+  const entry = {
     ts: now.getTime(),
     isoDate: now.toISOString(),
     value,
     date: now.toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }),
-  });
+  };
+  if (existingIdx >= 0) {
+    h[existingIdx] = entry;
+  } else {
+    h.push(entry);
+  }
   if (h.length > 500) h.splice(0, h.length - 500);
   sv(`hist_${signalKey}`, h);
   return h.map(p => ({ ...p, isoDate: p.isoDate || new Date(p.ts).toISOString() }));
@@ -512,7 +519,8 @@ function mockTheirStackRng(seed) {
     return s / 4294967296;
   };
 }
-/** Deterministic pseudo job counts for any keyword set + date range (demo when TheirStack API is off). */
+/** Deterministic pseudo job counts for any keyword set + date range (demo when TheirStack API is off).
+ *  Seed is pinned to ISO week of the midpoint so refreshes within the same week always return the same value. */
 function mockTheirStackCountForRange(vertical, gte, lte) {
   const kw = vertical.keywords?.theirstack || {};
   const parts = [...(Array.isArray(kw.titleKeywords) ? kw.titleKeywords : []), ...(Array.isArray(kw.descriptionKeywords) ? kw.descriptionKeywords : [])]
@@ -526,12 +534,13 @@ function mockTheirStackCountForRange(vertical, gte, lte) {
   const midMs = (gteMs + lteMs) / 2;
   const spanDays = Math.max(1, Math.round((lteMs - gteMs) / 86400000) + 1);
   const monthsSince2021 = (midMs - Date.UTC(2021, 0, 15)) / (30.44 * 86400000);
-  const rng = mockTheirStackRng((seed ^ Math.floor(midMs / 86400000)) >>> 0);
+  const weekIndex = Math.floor(midMs / (86400000 * 7));
+  const rng = mockTheirStackRng((seed ^ weekIndex) >>> 0);
   const base = 12 + (Math.abs(seed) % 140);
   const growth = 1 + Math.min(2.4, Math.max(0, monthsSince2021 * 0.011));
-  const seasonal = 1 + 0.09 * Math.sin((monthsSince2021 / 12) * Math.PI * 2);
-  const noise = 0.82 + rng() * 0.38;
-  const wave = 1 + 0.11 * Math.sin((midMs / (86400000 * 23)) * Math.PI * 2);
+  const seasonal = 1 + 0.06 * Math.sin((monthsSince2021 / 12) * Math.PI * 2);
+  const noise = 0.97 + rng() * 0.06;
+  const wave = 1 + 0.03 * Math.sin((weekIndex / 17) * Math.PI * 2);
   const dailyRate = (base * growth * seasonal * noise * wave) / 28;
   let count = Math.round(dailyRate * spanDays);
   count = Math.max(2, Math.min(12000, count));
@@ -613,6 +622,63 @@ function isoWeekKey(date) {
   return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, "0")}`;
 }
 function mean(arr) { if (!arr.length) return 0; return arr.reduce((a, b) => a + b, 0) / arr.length; }
+function smoothEMA(data, key, alpha = 0.3) {
+  if (!data.length) return data;
+  let ema = data[0][key];
+  return data.map((d, i) => {
+    const v = typeof d[key] === "number" && isFinite(d[key]) ? d[key] : ema;
+    ema = i === 0 ? v : alpha * v + (1 - alpha) * ema;
+    return { ...d, [`${key}_smooth`]: Math.round(ema * 100) / 100, [`${key}_raw`]: d[key] };
+  });
+}
+
+/** Comprehensive time-series sanitizer: dedup by day, reject outlier spikes, ensure monotonic timestamps, clamp impossible swings. */
+function sanitizeTimeSeries(data, valueKey = "value", opts = {}) {
+  if (!data || data.length < 2) return data;
+  const { maxSwingPct = 300, iqrMultiplier = 2.5 } = opts;
+  let sorted = [...data].sort((a, b) => {
+    const ta = a._ts || new Date(a.isoDate || a.ts || 0).getTime();
+    const tb = b._ts || new Date(b.isoDate || b.ts || 0).getTime();
+    return ta - tb;
+  });
+  const byDay = new Map();
+  sorted.forEach(p => {
+    const dk = (p.isoDate || new Date(p._ts || p.ts || 0).toISOString()).slice(0, 10);
+    byDay.set(dk, p);
+  });
+  sorted = Array.from(byDay.values());
+  if (sorted.length < 3) return sorted;
+  const vals = sorted.map(d => d[valueKey]).filter(v => typeof v === "number" && isFinite(v));
+  if (vals.length < 4) return sorted;
+  const sortedVals = [...vals].sort((a, b) => a - b);
+  const q1 = sortedVals[Math.floor(sortedVals.length * 0.25)];
+  const q3 = sortedVals[Math.floor(sortedVals.length * 0.75)];
+  const iqr = q3 - q1;
+  const fence = iqr > 0 ? iqr * iqrMultiplier : Infinity;
+  const lo = q1 - fence;
+  const hi = q3 + fence;
+  return sorted.map((d, i) => {
+    const v = d[valueKey];
+    if (typeof v !== "number" || !isFinite(v)) return d;
+    if (v < lo || v > hi) {
+      const neighbors = sorted.slice(Math.max(0, i - 2), i + 3).filter((_, j) => j !== Math.min(2, i)).map(n => n[valueKey]).filter(n => typeof n === "number" && isFinite(n) && n >= lo && n <= hi);
+      const replacement = neighbors.length > 0 ? Math.round(neighbors.reduce((a, b) => a + b, 0) / neighbors.length) : v;
+      return { ...d, [valueKey]: replacement, _outlierClamped: true };
+    }
+    if (i > 0 && i < sorted.length - 1) {
+      const prev = sorted[i - 1][valueKey];
+      const next = sorted[i + 1][valueKey];
+      if (typeof prev === "number" && typeof next === "number" && prev > 0 && next > 0) {
+        const avgNeighbor = (prev + next) / 2;
+        const swingFromAvg = Math.abs(v - avgNeighbor) / Math.max(avgNeighbor, 1) * 100;
+        if (swingFromAvg > maxSwingPct) {
+          return { ...d, [valueKey]: Math.round(avgNeighbor), _spikeClamped: true };
+        }
+      }
+    }
+    return d;
+  });
+}
 function stddev(arr) { if (arr.length < 2) return 0; const m = mean(arr); return Math.sqrt(mean(arr.map(v => (v - m) ** 2))); }
 function linearRegressionSlope(yVals) {
   const n = yVals.length;
@@ -1455,7 +1521,7 @@ const DEFAULT_SOURCES = [
     apiConfig: { endpoint: "/api/google-trends", method: "GET", authType: "query_param", authHeader: "api_key", proxyPrefix: "", bodyTemplate: "engine=google_trends&data_type=TIMESERIES&q={{keywords}}" },
     responsePaths: { countPath: "", itemsPath: "interest_over_time.timeline_data", titleField: "", bodyField: "" } },
   { id: "github_repos", name: "GitHub Repos", type: "count", weight: 0.15, cadence: "weekly", enabled: true,
-    apiConfig: { endpoint: "https://api.github.com/search/repositories", method: "GET", authType: "bearer", authHeader: "", proxyPrefix: "", bodyTemplate: "q={{keywords}}+pushed:>{{since30d}}&sort=updated&per_page=5" },
+    apiConfig: { endpoint: "https://api.github.com/search/repositories", method: "GET", authType: "bearer", authHeader: "", proxyPrefix: "", bodyTemplate: "q={{keywords}}+pushed:{{since30d}}..{{today}}&sort=updated&per_page=1" },
     responsePaths: { countPath: "total_count", itemsPath: "items", titleField: "full_name", bodyField: "description" } },
   { id: "claude_attrib", name: "Claude Code Attribution", type: "count", weight: 0.2, cadence: "weekly", enabled: true,
     apiConfig: { endpoint: "https://api.github.com/search/commits", method: "GET", authType: "bearer", authHeader: "", proxyPrefix: "", bodyTemplate: 'q="Co-Authored-By: Claude"+committer-date:{{since7d}}..{{today}}&sort=committer-date&order=desc&per_page=1' },
@@ -1573,7 +1639,7 @@ async function callSource(source, vertical, configKeys) {
   }
   const filled = fillTemplate(templateStr, tv);
   const ep = cfg.proxyPrefix ? cfg.proxyPrefix + cfg.endpoint : cfg.endpoint;
-  const headers = { Accept: source.id === "claude_attrib" ? "application/vnd.github.cloak-preview+json" : "application/json" };
+  const headers = { Accept: source.id === "claude_attrib" ? "application/vnd.github.cloak-preview+json" : source.id === "github_repos" ? "application/vnd.github+json" : "application/json" };
   const key = resolveKey(source, configKeys);
   if (cfg.authType === "bearer" && key) headers.Authorization = `Bearer ${key}`;
   if (cfg.authType === "header" && cfg.authHeader && key) headers[cfg.authHeader] = key;
@@ -1741,23 +1807,23 @@ function evalAlerts(verticals, sr, rules, threshold = 10) {
 
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
-*{box-sizing:border-box;margin:0;padding:0}body{background:#f0f2f5;color:${C.text}}
+*{box-sizing:border-box;margin:0;padding:0}body{background:#ecedf0;color:${C.text}}
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 @keyframes fadeInSlow{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
-@keyframes glow{0%,100%{box-shadow:0 0 0 0 rgba(2,132,199,0)}50%{box-shadow:0 0 0 6px rgba(2,132,199,.1)}}
+@keyframes glow{0%,100%{box-shadow:0 0 0 0 rgba(26,107,138,0)}50%{box-shadow:0 0 0 4px rgba(26,107,138,.06)}}
 @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
 .fade-in{animation:fadeIn .25s ease}.fade-in-slow{animation:fadeInSlow .4s ease}
 .glow{animation:glow 2.5s ease-in-out infinite}
 .shimmer{background:linear-gradient(90deg,${C.nested} 25%,${C.white} 50%,${C.nested} 75%);background-size:200% 100%;animation:shimmer 1.5s infinite}
 ::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-thumb{background:#c4c9d4;border-radius:3px}::-webkit-scrollbar-thumb:hover{background:#a0a8b8}
 input,textarea,select{background:${C.white};border:1.5px solid ${C.border};color:${C.text};font-family:'Inter',sans-serif;font-size:13px;padding:8px 12px;border-radius:8px;outline:none;transition:all .2s}
-input:focus,textarea:focus,select:focus{border-color:${C.cyan};box-shadow:0 0 0 3px ${C.cyanBg}}
+input:focus,textarea:focus,select:focus{border-color:${C.cyan};box-shadow:0 0 0 2px ${C.cyanBg}}
 textarea{font-family:'JetBrains Mono',monospace;font-size:12px;resize:vertical}
 table{border-collapse:separate;border-spacing:0;width:100%}
 .recharts-cartesian-grid-horizontal line,.recharts-cartesian-grid-vertical line{stroke:${C.borderLight}}
-.metric-card{transition:transform .15s,box-shadow .15s}.metric-card:hover{transform:translateY(-2px);box-shadow:0 8px 25px rgba(0,0,0,.08)}
+.metric-card{transition:transform .12s,box-shadow .12s}.metric-card:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.06)}
 .signal-section{transition:all .2s}
 .nav-btn{transition:all .15s;border:1.5px solid transparent}.nav-btn:hover{border-color:${C.border};background:${C.nested}}
 `;
@@ -1806,20 +1872,20 @@ function Btn({children,onClick,disabled,variant="default",size="md",style:sx,...
 }
 function Badge({children,color=C.textSec,bg,size="sm",...rest}){
   const sz=size==="lg"?{padding:"4px 12px",fontSize:12}:{padding:"3px 9px",fontSize:10.5};
-  return <span {...rest} style={{display:"inline-flex",alignItems:"center",gap:4,...sz,borderRadius:999,fontWeight:700,...font.sans,background:bg||color+"14",color,whiteSpace:"nowrap",letterSpacing:"0.02em",textTransform:"uppercase"}}>{children}</span>;
+  return <span {...rest} style={{display:"inline-flex",alignItems:"center",gap:4,...sz,borderRadius:4,fontWeight:600,...font.sans,background:bg||color+"10",color,whiteSpace:"nowrap",letterSpacing:"0.01em"}}>{children}</span>;
 }
 function Spinner({size=14,color:cl=C.cyan}){ return <svg width={size} height={size} viewBox="0 0 24 24" style={{animation:"spin .7s linear infinite",flexShrink:0}}><circle cx="12" cy="12" r="10" fill="none" stroke={C.border} strokeWidth="3"/><path d="M12 2 a10 10 0 0 1 10 10" fill="none" stroke={cl} strokeWidth="3" strokeLinecap="round"/></svg>; }
-function Card({children,style:sx,className,hover}){ return <div className={className} style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:14,padding:20,boxShadow:"0 1px 3px rgba(0,0,0,.04)",...sx}}>{children}</div>; }
+function Card({children,style:sx,className,hover}){ return <div className={className} style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,padding:20,boxShadow:"0 1px 2px rgba(0,0,0,.03)",...sx}}>{children}</div>; }
 
 function SectionHeader({icon,title,subtitle,right,badge}){
-  return(<div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,flexWrap:"wrap",gap:8}}>
+  return(<div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14,flexWrap:"wrap",gap:8}}>
     <div>
-      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:subtitle?4:0}}>
+      <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:subtitle?3:0}}>
         {icon&&<span style={{display:"flex",alignItems:"center"}}>{icon}</span>}
-        <h2 style={{...font.sans,fontSize:18,fontWeight:700,letterSpacing:"-0.02em",color:C.text,margin:0}}>{title}</h2>
+        <h2 style={{...font.sans,fontSize:15,fontWeight:700,letterSpacing:"-0.01em",color:C.text,margin:0}}>{title}</h2>
         {badge}
       </div>
-      {subtitle&&<p style={{...font.sans,fontSize:13,color:C.textMuted,lineHeight:1.5,maxWidth:600,margin:0}}>{subtitle}</p>}
+      {subtitle&&<p style={{...font.sans,fontSize:12,color:C.textMuted,lineHeight:1.5,maxWidth:600,margin:0}}>{subtitle}</p>}
     </div>
     {right&&<div style={{display:"flex",alignItems:"center",gap:8}}>{right}</div>}
   </div>);
@@ -1883,8 +1949,8 @@ const SOURCE_INFO = {
     },
   },
   github_repos: {
-    metric: "Active GitHub repositories matching keywords (pushed in last 30 days)",
-    how: "GET to GitHub Search API /search/repositories — filters by keyword and pushed:>30d ago. Measures active open-source development activity.",
+    metric: "Active GitHub repositories matching keywords (pushed in date range)",
+    how: "GET to GitHub Search API /search/repositories — filters by keyword and pushed:date..date range. Measures active open-source development activity.",
     investment: "Open-source activity is a supply-side innovation proxy. Growing repo counts indicate an expanding developer ecosystem building tooling around a technology. This leads enterprise adoption by 6-18 months — enterprises build on mature OSS. Rapid growth (>50% increase) in repos for a specific framework signals it may become the dominant standard, making vendors built on that stack more defensible. Declining activity = consolidation phase, fewer new entrants, potential winner-take-most dynamics.",
     leadLag: "6–18 months. OSS ecosystem maturity leads enterprise deployment by 2–6 quarters. Developer experimentation (repos) → open-source tooling matures → enterprise evaluates mature stack → procurement. This is the longest lead-time signal but also the highest-conviction for structural trends.",
     movements: {
@@ -1917,7 +1983,7 @@ const SOURCE_METRIC_BLURB = {
   google_trends:
     "Search attention, not revenue: Google’s 0–100 index for your keywords vs their own past peak. Shows awareness and research — often before budgets lock in, but can outpace actual hiring.",
   github_repos:
-    "Builder activity: public repos matching your themes with pushes in the last 30 days. More activity usually means developers experimenting — often months ahead of enterprise rollouts.",
+    "Builder activity: public repos matching your themes with recent pushes. More activity usually means developers experimenting — often months ahead of enterprise rollouts.",
   claude_attrib:
     "Real tool usage: GitHub commits in the last 7 days co-authored by Claude. A fast read on whether AI coding assistants are embedded in day-to-day engineering.",
   historical:
@@ -2065,32 +2131,49 @@ function zoomedYDomain(values) {
 
 function SignalHistoryChart({ signalKey, color, label }) {
   const [sigRange, setSigRange] = useState("1y");
+  const [smooth, setSmooth] = useState(true);
   const raw = getSignalHistory(signalKey);
   if (raw.length < 2) return <div style={{...font.sans,fontSize:12,color:C.textMuted,padding:"12px 0",textAlign:"center"}}>Chart appears after 2+ data points. Data is recorded permanently on each refresh.</div>;
-  const allData = raw.map(p => ({ ...p, _ts: new Date(p.isoDate || p.ts).getTime() })).sort((a,b)=>a._ts-b._ts);
-  const data = filterByTimeRange(allData, sigRange, "isoDate");
-  if (data.length < 2) return <div style={{...font.sans,fontSize:12,color:C.textMuted,padding:"12px 0",textAlign:"center"}}>Not enough data in selected range. <TimeRangeSelector value={sigRange} onChange={setSigRange} style={{marginLeft:8}} /></div>;
-  const showDots = data.length <= 60;
-  const yDomain = zoomedYDomain(data.map(d => d.value));
-  const vals = data.map(d => d.value);
-  let pctChange = data.length >= 2 ? (((data[data.length - 1].value - data[0].value) / Math.max(data[0].value, 1)) * 100) : 0;
+  const allData = sanitizeTimeSeries(raw.map(p => ({ ...p, _ts: new Date(p.isoDate || p.ts).getTime() })).sort((a,b)=>a._ts-b._ts), "value");
+  const filtered = filterByTimeRange(allData, sigRange, "isoDate");
+  if (filtered.length < 2) return <div style={{...font.sans,fontSize:12,color:C.textMuted,padding:"12px 0",textAlign:"center"}}>Not enough data in selected range. <TimeRangeSelector value={sigRange} onChange={setSigRange} style={{marginLeft:8}} /></div>;
+  const emaAlpha = filtered.length <= 10 ? 0.15 : filtered.length <= 30 ? 0.2 : 0.25;
+  const data = smooth && filtered.length >= 4 ? smoothEMA(filtered, "value", emaAlpha) : filtered;
+  const showDots = filtered.length <= 60;
+  const chartVals = data.map(d => smooth ? (d.value_smooth ?? d.value) : d.value);
+  const yDomain = zoomedYDomain(chartVals);
+  const vals = filtered.map(d => d.value);
   let pctNote = null;
   const hi = Math.max(...vals), lo = Math.min(...vals);
-  if (data.length >= 6 && lo > 0 && hi / lo > 50) {
-    const k = Math.max(2, Math.floor(data.length * 0.2));
+  const firstVal = filtered[0]?.value || 0;
+  const lastVal = filtered[filtered.length - 1]?.value || 0;
+  let pctChange = 0;
+  const useEarlyLateAvg = filtered.length >= 6 && (lo === 0 || hi / Math.max(lo, 1) > 10);
+  if (useEarlyLateAvg) {
+    const k = Math.max(2, Math.floor(filtered.length * 0.2));
     const earlyMean = mean(vals.slice(0, k));
     const lateMean = mean(vals.slice(-k));
     if (earlyMean > 0) {
       pctChange = ((lateMean - earlyMean) / earlyMean) * 100;
       pctNote = "early vs late avg";
+    } else if (lateMean > 0) {
+      pctChange = NaN;
+      pctNote = "from zero baseline";
     }
+  } else if (filtered.length >= 2 && firstVal > 0) {
+    pctChange = ((lastVal - firstVal) / firstVal) * 100;
   }
   return (
     <div style={{ width: "100%", height: 180 }}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-        <span style={{...font.sans,fontSize:10,color:C.textMuted}}>{data.length} data points since {formatChartDateShort(data[0]?.isoDate)}</span>
+        <span style={{...font.sans,fontSize:10,color:C.textMuted}}>{filtered.length} data points since {formatChartDateShort(filtered[0]?.isoDate)}</span>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <span style={{...font.mono,fontSize:10,fontWeight:700,color:pctChange > 0 ? C.green : pctChange < 0 ? C.red : C.textMuted}} title={pctNote || "First point vs last point"}>{pctChange > 0 ? "+" : ""}{pctChange.toFixed(1)}%{pctNote ? " *" : ""} overall</span>
+          <label style={{...font.sans,fontSize:9,color:C.textMuted,display:"flex",alignItems:"center",gap:3,cursor:"pointer",userSelect:"none"}}>
+            <input type="checkbox" checked={smooth} onChange={e=>setSmooth(e.target.checked)} style={{width:12,height:12,accentColor:color}} />Smooth
+          </label>
+          <span style={{...font.mono,fontSize:10,fontWeight:700,color: Number.isNaN(pctChange) ? C.textMuted : pctChange > 0 ? C.green : pctChange < 0 ? C.red : C.textMuted}} title={pctNote || "First point vs last point"}>
+            {Number.isNaN(pctChange) ? "n/a *" : `${pctChange > 0 ? "+" : ""}${Math.abs(pctChange) > 99999 ? `${(pctChange / 1000).toFixed(0)}K` : pctChange.toFixed(1)}%${pctNote ? " *" : ""}`} overall
+          </span>
           <TimeRangeSelector value={sigRange} onChange={setSigRange} />
         </div>
       </div>
@@ -2101,9 +2184,14 @@ function SignalHistoryChart({ signalKey, color, label }) {
             tickFormatter={ts=>formatChartDateShort(new Date(ts).toISOString())}
             tick={{fontSize:9,fill:C.textMuted,...font.sans}} interval="preserveStartEnd" tickCount={6} />
           <YAxis tick={{fontSize:10,fill:C.textMuted,...font.mono}} width={55} domain={yDomain} allowDataOverflow={true} />
-          <Tooltip contentStyle={{...font.sans,fontSize:12,background:C.white,border:`1px solid ${C.border}`,borderRadius:10,boxShadow:"0 4px 12px rgba(0,0,0,.08)"}} labelStyle={{fontWeight:700}} labelFormatter={ts=>formatChartDate(new Date(ts).toISOString())} />
-          <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2.5}
-            dot={showDots?{r:3,fill:C.white,stroke:color,strokeWidth:2}:false}
+          <Tooltip contentStyle={{...font.sans,fontSize:12,background:C.white,border:`1px solid ${C.border}`,borderRadius:10,boxShadow:"0 4px 12px rgba(0,0,0,.08)"}} labelStyle={{fontWeight:700}} labelFormatter={ts=>formatChartDate(new Date(ts).toISOString())}
+            formatter={(val, name) => [typeof val === "number" ? val.toLocaleString() : val, name]} />
+          {smooth && filtered.length >= 4 && (
+            <Line type="monotone" dataKey="value_raw" stroke={color} strokeWidth={1} strokeOpacity={0.25}
+              dot={showDots?{r:2,fill:color,fillOpacity:0.3,strokeWidth:0}:false} activeDot={false} name={`${label} (raw)`} />
+          )}
+          <Line type="monotone" dataKey={smooth && filtered.length >= 4 ? "value_smooth" : "value"} stroke={color} strokeWidth={2.5}
+            dot={!smooth && showDots?{r:3,fill:C.white,stroke:color,strokeWidth:2}:false}
             activeDot={{r:5,fill:color}} name={label} />
         </LineChart>
       </ResponsiveContainer>
@@ -2159,9 +2247,9 @@ function OverlayChart({ selectedKeys, allHistories, sources, verticals }) {
     const allPoints = [];
     selectedKeys.forEach((sk) => {
       const hist = allHistories[sk] || [];
-      hist.forEach(h => {
-        const ts = new Date(h.isoDate || h.ts).getTime();
-        allPoints.push({ _ts: ts, sk, value: h.value });
+      const sanitized = sanitizeTimeSeries(hist.map(h => ({ ...h, _ts: new Date(h.isoDate || h.ts).getTime() })).sort((a,b) => a._ts - b._ts), "value");
+      sanitized.forEach(h => {
+        allPoints.push({ _ts: h._ts, sk, value: h.value });
       });
     });
     allPoints.sort((a,b) => a._ts - b._ts);
@@ -2180,7 +2268,11 @@ function OverlayChart({ selectedKeys, allHistories, sources, verticals }) {
       });
       return row;
     });
-    return { data: rows };
+    let smoothed = rows;
+    if (rows.length >= 4) {
+      selectedKeys.forEach(sk => { smoothed = smoothEMA(smoothed, sk, 0.25); });
+    }
+    return { data: smoothed };
   }, [selectedKeys, allHistories]);
 
   const divergences = useMemo(() => {
@@ -2275,7 +2367,7 @@ function OverlayChart({ selectedKeys, allHistories, sources, verticals }) {
             <Legend wrapperStyle={{fontSize:11,...font.sans}} />
             <ReferenceLine y={50} stroke={C.border} strokeDasharray="4 4" />
             {selectedKeys.map((sk, i) => (
-              <Line key={sk} type="monotone" dataKey={sk} stroke={PALETTE[i % PALETTE.length]} strokeWidth={2.5} dot={showDots?{r:3}:false} name={labelFor(sk)} connectNulls />
+              <Line key={sk} type="monotone" dataKey={data.length >= 4 && data[0]?.[`${sk}_smooth`] != null ? `${sk}_smooth` : sk} stroke={PALETTE[i % PALETTE.length]} strokeWidth={2.5} dot={showDots?{r:3}:false} name={labelFor(sk)} connectNulls />
             ))}
           </LineChart>
         </ResponsiveContainer>
@@ -2325,7 +2417,7 @@ function LaborMacroPanel({ onAfterLoad }) {
   const [laborErr, setLaborErr] = useState(null);
   const [fredCat, setFredCat] = useState("labor");
   const [snapTick, setSnapTick] = useState(0);
-  const [timeRange, setTimeRange] = useState("1y");
+  const [timeRange, setTimeRange] = useState("5y");
   const onAfterRef = useRef(onAfterLoad);
   useEffect(() => {
     onAfterRef.current = onAfterLoad;
@@ -2375,16 +2467,23 @@ function LaborMacroPanel({ onAfterLoad }) {
 
   const snapHist = useMemo(() => getLaborMacroHistory(), [laborOverview, snapTick]);
   const snapChart = useMemo(
-    () =>
-      snapHist
-        .filter((r) => r.ts)
-        .slice(-80)
+    () => {
+      const raw = snapHist.filter((r) => r.ts);
+      const byDay = new Map();
+      raw.forEach((r) => {
+        const dayKey = new Date(r.ts).toISOString().slice(0, 10);
+        byDay.set(dayKey, r);
+      });
+      return Array.from(byDay.values())
+        .sort((a, b) => a.ts - b.ts)
+        .slice(-120)
         .map((r) => ({
           t: r.ts,
           label: new Date(r.ts).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
           forecast_u: r.forecast_u,
           jolts: r.jolts,
-        })),
+        }));
+    },
     [snapHist],
   );
 
@@ -2418,54 +2517,99 @@ function LaborMacroPanel({ onAfterLoad }) {
           <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
         </div>
 
-        {laborOverview?.chicago_fed && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginBottom: 14 }}>
-            <div style={{ background: C.nested, borderRadius: 10, padding: 10 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>UR forecast (50th)</div>
-              <div style={{ ...font.mono, fontSize: 18, fontWeight: 800, color: C.text }}>{laborOverview.chicago_fed.forecast_unemployment != null ? `${laborOverview.chicago_fed.forecast_unemployment}%` : "—"}</div>
-            </div>
-            <div style={{ background: C.nested, borderRadius: 10, padding: 10 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Layoffs &amp; sep.</div>
-              <div style={{ ...font.mono, fontSize: 18, fontWeight: 800, color: C.text }}>{laborOverview.chicago_fed.layoffs_separations_rate != null ? laborOverview.chicago_fed.layoffs_separations_rate.toFixed(2) : "—"}</div>
-            </div>
-            <div style={{ background: C.nested, borderRadius: 10, padding: 10 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Hiring (unemp.)</div>
-              <div style={{ ...font.mono, fontSize: 18, fontWeight: 800, color: C.text }}>{laborOverview.chicago_fed.hiring_rate_unemployed != null ? laborOverview.chicago_fed.hiring_rate_unemployed.toFixed(1) : "—"}</div>
-            </div>
-            {laborOverview.chicago_fed.official_u3 != null && (
-              <div style={{ background: C.nested, borderRadius: 10, padding: 10 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>BLS U-3</div>
-                <div style={{ ...font.mono, fontSize: 18, fontWeight: 800, color: C.text }}>{laborOverview.chicago_fed.official_u3}%</div>
+        {laborOverview?.chicago_fed && (()=>{
+          const cf = laborOverview.chicago_fed;
+          const urVal = cf.forecast_unemployment;
+          const urColor = urVal == null ? C.textMuted : urVal < 4.0 ? C.green : urVal < 5.0 ? C.amber : C.red;
+          const urLabel = urVal == null ? "" : urVal < 4.0 ? "Tight labor market" : urVal < 4.5 ? "Healthy range" : urVal < 5.0 ? "Softening" : "Elevated — recession watch";
+          const layVal = cf.layoffs_separations_rate;
+          const layColor = layVal == null ? C.textMuted : layVal < 2.0 ? C.green : layVal < 2.5 ? C.amber : C.red;
+          const layLabel = layVal == null ? "" : layVal < 2.0 ? "Below avg — stable" : layVal < 2.5 ? "Normal range" : "Elevated — stress signal";
+          const hireVal = cf.hiring_rate_unemployed;
+          const hireColor = hireVal == null ? C.textMuted : hireVal > 50 ? C.green : hireVal > 40 ? C.amber : C.red;
+          const hireLabel = hireVal == null ? "" : hireVal > 50 ? "Strong hiring" : hireVal > 40 ? "Moderate pace" : "Weak — hiring freeze risk";
+          return (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 10, marginBottom: 14 }}>
+            <div style={{ background: C.nested, borderRadius: 10, padding: "10px 12px" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Unemployment nowcast</div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                <div style={{ ...font.mono, fontSize: 20, fontWeight: 800, color: urColor }}>{urVal != null ? `${urVal}%` : "—"}</div>
+                {cf.official_u3 != null && <div style={{ ...font.sans, fontSize: 10, color: C.textMuted }}>vs {cf.official_u3}% BLS</div>}
               </div>
-            )}
+              {urLabel && <div style={{ ...font.sans, fontSize: 9, color: urColor, marginTop: 2 }}>{urLabel}</div>}
+              <div style={{ ...font.sans, fontSize: 9, color: C.textMuted, marginTop: 3 }}>Chicago Fed 50th pctl forecast. Higher = weaker job market = less enterprise hiring.</div>
+            </div>
+            <div style={{ background: C.nested, borderRadius: 10, padding: "10px 12px" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Layoffs &amp; separations rate</div>
+              <div style={{ ...font.mono, fontSize: 20, fontWeight: 800, color: layColor }}>{layVal != null ? layVal.toFixed(2) : "—"}<span style={{ fontSize: 11, fontWeight: 600 }}>%</span></div>
+              {layLabel && <div style={{ ...font.sans, fontSize: 9, color: layColor, marginTop: 2 }}>{layLabel}</div>}
+              <div style={{ ...font.sans, fontSize: 9, color: C.textMuted, marginTop: 3 }}>Monthly rate of workers leaving/losing jobs. Rising = budget cuts, hiring freezes ahead.</div>
+            </div>
+            <div style={{ background: C.nested, borderRadius: 10, padding: "10px 12px" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Hiring rate (unemployed)</div>
+              <div style={{ ...font.mono, fontSize: 20, fontWeight: 800, color: hireColor }}>{hireVal != null ? hireVal.toFixed(1) : "—"}<span style={{ fontSize: 11, fontWeight: 600 }}>%</span></div>
+              {hireLabel && <div style={{ ...font.sans, fontSize: 9, color: hireColor, marginTop: 2 }}>{hireLabel}</div>}
+              <div style={{ ...font.sans, fontSize: 9, color: C.textMuted, marginTop: 3 }}>Rate at which unemployed find work. Falling = longer job searches, weaker demand.</div>
+            </div>
           </div>
-        )}
+          );
+        })()}
+
+        {laborOverview?.chicago_fed && (()=>{
+          const cf = laborOverview.chicago_fed;
+          const ur = cf.forecast_unemployment;
+          const lay = cf.layoffs_separations_rate;
+          const hire = cf.hiring_rate_unemployed;
+          const signals = [];
+          let regime = "neutral";
+          let regimeColor = C.textMuted;
+          let regimeLabel = "Mixed / Neutral";
+          if (ur != null && lay != null && hire != null) {
+            if (ur < 4.2 && lay < 2.1 && hire > 45) { regime = "expansion"; regimeColor = C.green; regimeLabel = "Expansion"; signals.push("Labor market is tight — enterprise budgets are growing, AI hiring should be strong."); }
+            else if (ur > 5.0 || (lay > 2.5 && hire < 38)) { regime = "contraction"; regimeColor = C.red; regimeLabel = "Contraction risk"; signals.push("Weakening labor market — expect hiring freezes and slower vendor procurement. Defensive positioning."); }
+            else if (ur >= 4.2 && ur <= 5.0) { regime = "softening"; regimeColor = C.amber; regimeLabel = "Late-cycle softening"; signals.push("Labor market cooling — AI budgets may tighten in 1–2 quarters. Watch for divergence: if AI hiring holds up while broad market weakens, that's a bullish signal for AI-specific vendors."); }
+          }
+          if (ur != null && cf.official_u3 != null && ur > cf.official_u3 + 0.15) signals.push(`Nowcast (${ur}%) is above official BLS (${cf.official_u3}%) — real conditions may be worse than headline data suggests.`);
+          if (ur != null && cf.official_u3 != null && ur < cf.official_u3 - 0.15) signals.push(`Nowcast (${ur}%) is below official BLS (${cf.official_u3}%) — conditions may be better than the latest headline.`);
+          return signals.length > 0 && (
+            <div style={{ marginBottom: 14, padding: "10px 14px", background: regimeColor + "0A", border: `1px solid ${regimeColor}30`, borderRadius: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <div style={{ ...font.sans, fontSize: 11, fontWeight: 700, color: regimeColor, textTransform: "uppercase", letterSpacing: "0.05em" }}>Regime: {regimeLabel}</div>
+              </div>
+              {signals.map((s, i) => <div key={i} style={{ ...font.sans, fontSize: 11, color: C.textSec, lineHeight: 1.5 }}>{s}</div>)}
+            </div>
+          );
+        })()}
 
         {(()=>{ const filteredChi = filterByTimeRange(chiTs, timeRange, "date"); return filteredChi.length >= 2 && (
           <div style={{ marginBottom: 18 }}>
-            <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 6 }}>Chicago Fed — unemployment nowcast vs official U-3 ({filteredChi.length} weekly points)</div>
-            <div style={{ height: 200, width: "100%" }}>
+            <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 4 }}>Chicago Fed — unemployment nowcast vs official U-3 ({filteredChi.length} weekly points)</div>
+            <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginBottom: 6, lineHeight: 1.4 }}>Brown line = Chicago Fed real-time estimate (leads BLS by weeks). Blue = official BLS U-3. When brown rises above blue, the economy is weakening faster than official data shows — enterprise hiring budgets tighten 1–2 quarters later.</div>
+            <div style={{ height: 240, width: "100%" }}>
               <ResponsiveContainer>
                 <LineChart data={filteredChi} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                  <XAxis dataKey="date" tick={{ fontSize: 9, fill: C.textMuted }} interval="preserveStartEnd" />
+                  <XAxis dataKey="date" tick={{ fontSize: 9, fill: C.textMuted }} interval="preserveStartEnd" tickCount={8} />
                   <YAxis tick={{ fontSize: 9, fill: C.textMuted }} width={36} domain={["auto", "auto"]} />
+                  <ReferenceLine y={4.5} stroke={C.textMuted} strokeDasharray="4 4" strokeWidth={1} label={{ value: "~Natural rate", position: "right", style: { fontSize: 8, fill: C.textMuted } }} />
                   <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
                   <Legend wrapperStyle={{ fontSize: 10 }} />
                   <Line type="monotone" dataKey="official_u3" name="Official U-3" stroke={C.blue} strokeWidth={2} dot={false} connectNulls />
-                  <Line type="monotone" dataKey="forecast_unemployment" name="Nowcast (50th)" stroke={C.amber} strokeWidth={2} dot={false} connectNulls />
+                  <Line type="monotone" dataKey="forecast_unemployment" name="Nowcast (50th)" stroke={C.amber} strokeWidth={2.5} dot={false} connectNulls />
                 </LineChart>
               </ResponsiveContainer>
             </div>
             <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, margin: "14px 0 6px" }}>Chicago Fed — layoffs / separations vs hiring (unemployed)</div>
-            <div style={{ height: 200, width: "100%" }}>
+            <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginBottom: 4, lineHeight: 1.4 }}>Dual axes: layoffs rate (left, red — lower is better) vs hiring rate of unemployed (right, green — higher is better). When red rises and green falls, labor market is weakening.</div>
+            <div style={{ height: 220, width: "100%" }}>
               <ResponsiveContainer>
                 <LineChart data={filteredChi} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                   <XAxis dataKey="date" tick={{ fontSize: 9, fill: C.textMuted }} interval="preserveStartEnd" />
-                  <YAxis tick={{ fontSize: 9, fill: C.textMuted }} width={36} domain={["auto", "auto"]} />
+                  <YAxis yAxisId="layoffs" tick={{ fontSize: 9, fill: C.red }} width={40} domain={["auto", "auto"]} label={{ value: "Layoffs %", angle: -90, position: "insideLeft", style: { fontSize: 9, fill: C.red } }} />
+                  <YAxis yAxisId="hiring" orientation="right" tick={{ fontSize: 9, fill: C.green }} width={40} domain={["auto", "auto"]} label={{ value: "Hiring rate", angle: 90, position: "insideRight", style: { fontSize: 9, fill: C.green } }} />
                   <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
                   <Legend wrapperStyle={{ fontSize: 10 }} />
-                  <Line type="monotone" dataKey="layoffs_separations_rate" name="Layoffs & sep. rate" stroke={C.red} strokeWidth={2} dot={false} connectNulls />
-                  <Line type="monotone" dataKey="hiring_rate_unemployed" name="Hiring rate (U)" stroke={C.green} strokeWidth={2} dot={false} connectNulls />
+                  <Line yAxisId="layoffs" type="monotone" dataKey="layoffs_separations_rate" name="Layoffs & sep. rate" stroke={C.red} strokeWidth={2} dot={false} connectNulls />
+                  <Line yAxisId="hiring" type="monotone" dataKey="hiring_rate_unemployed" name="Hiring rate (U)" stroke={C.green} strokeWidth={2} dot={false} connectNulls />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -2475,7 +2619,7 @@ function LaborMacroPanel({ onAfterLoad }) {
         {(()=>{const filteredSnap=filterByTimeRange(snapChart.map(d=>({...d,_iso:new Date(d.t).toISOString()})), timeRange, "_iso");return filteredSnap.length >= 2 && (
           <div style={{ marginBottom: 18 }}>
             <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 4 }}>Your refresh snapshots (stored locally)</div>
-            <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 6 }}>Each macro refresh records Chicago nowcast, JOLTS openings, and UI claims when FRED is configured.</div>
+            <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 6 }}>Each macro refresh saves that day's values. Over weeks/months this builds your own tracking history. Deduplicated to one snapshot per day. Left axis: nowcast %; right axis: JOLTS openings (thousands).</div>
             <div style={{ height: 160, width: "100%" }}>
               <ResponsiveContainer>
                 <LineChart data={filteredSnap} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
@@ -2719,7 +2863,7 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                    res ? <div>
                      <div style={{...font.mono,fontSize:22,fontWeight:800,color:C.text,letterSpacing:"-0.03em"}}>{(res.count||0).toLocaleString()}</div>
                      {trend!=null&&<Badge color={trend>=0?C.green:C.red} bg={trend>=0?C.greenBg:C.redBg} size="sm">{trend>=0?"+":""}{trend}%</Badge>}
-                     {source.id==="github_repos"&&res.count>50000&&<div style={{...font.sans,fontSize:9,color:C.amber,marginTop:2}} title="Very high count suggests keywords are too broad. Add more specific terms.">⚠ keywords may be too broad</div>}
+                     {source.id==="github_repos"&&res.count>500000&&<div style={{...font.sans,fontSize:9,color:C.amber,marginTop:2}} title="Very high count suggests keywords are too broad. Add more specific terms.">⚠ keywords may be too broad</div>}
                    </div> :
                    <span style={{color:C.textMuted,fontSize:13}}>No data</span>}
                 </div>
@@ -2735,11 +2879,11 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                 <div style={{flex:1,minWidth:80,maxWidth:200}}>
                   {hist.length>=2 ? (
                     <div style={{height:36}}>
-                      {(()=>{const sd=hist.map(p=>({...p,_ts:new Date(p.isoDate||p.ts).getTime()})).sort((a,b)=>a._ts-b._ts);const yd=zoomedYDomain(sd.map(d=>d.value));return(
+                      {(()=>{const sd0=sanitizeTimeSeries(hist.map(p=>({...p,_ts:new Date(p.isoDate||p.ts).getTime()})).sort((a,b)=>a._ts-b._ts),"value");const sd=sd0.length>=4?smoothEMA(sd0,"value",0.15):sd0;const dk=sd0.length>=4?"value_smooth":"value";const yd=zoomedYDomain(sd.map(d=>d[dk]));return(
                       <ResponsiveContainer><LineChart data={sd} margin={{top:2,right:2,bottom:2,left:2}}>
                         <XAxis dataKey="_ts" type="number" scale="time" domain={["dataMin","dataMax"]} hide />
                         <YAxis hide domain={yd} allowDataOverflow={true} />
-                        <Line type="monotone" dataKey="value" stroke={v.color||C.cyan} strokeWidth={2} dot={false}/>
+                        <Line type="monotone" dataKey={dk} stroke={v.color||C.cyan} strokeWidth={2} dot={false}/>
                       </LineChart></ResponsiveContainer>);})()}
                     </div>
                   ) : <div style={{height:36,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{fontSize:10,color:C.textMuted}}>No history</span></div>}
@@ -2753,7 +2897,7 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                     </Btn>
                   )}
                   {(source.id === "google_trends" || source.id === "github_repos" || source.id === "claude_attrib") && (
-                    <Btn variant="default" size="sm" onClick={()=>onBackfillSignal?.(v.id, source.id)} disabled={historyProgress?.active} title={source.id === "google_trends" ? "Backfill ~12 months of Google Trends (needs SerpAPI key)" : source.id === "github_repos" ? "Rebuild history: 30-day repo counts sampled weekly (matches Refresh)" : "Rebuild history: 7-day Claude counts sampled weekly (matches Refresh)"}>
+                    <Btn variant="default" size="sm" onClick={()=>onBackfillSignal?.(v.id, source.id)} disabled={historyProgress?.active} title={source.id === "google_trends" ? "Backfill ~12 months of Google Trends (needs SerpAPI key)" : source.id === "github_repos" ? "Rebuild history: weekly repo push counts (matches Refresh)" : "Rebuild history: weekly Claude commit counts (matches Refresh)"}>
                       <IcoC name="layers" size={13} color={C.textSec}/> Backfill
                     </Btn>
                   )}
@@ -2780,14 +2924,14 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                         </div>}
                       </div>
                       <div style={{height:120}}>
-                        {(()=>{const yd=zoomedYDomain(tsHist.weekly.map(w=>w.count));return(
+                        {(()=>{const wdSan=sanitizeTimeSeries(tsHist.weekly,"count");const wd=wdSan.length>=4?smoothEMA(wdSan,"count",0.2):wdSan;const yd=zoomedYDomain(wd.map(w=>w.count_smooth??w.count));return(
                         <ResponsiveContainer>
-                          <ComposedChart data={tsHist.weekly} margin={{top:4,right:8,bottom:4,left:4}}>
+                          <ComposedChart data={wd} margin={{top:4,right:8,bottom:4,left:4}}>
                             <XAxis dataKey="week" tick={{fontSize:9,fill:C.textMuted}} interval="preserveStartEnd" />
                             <YAxis tick={{fontSize:9,fill:C.textMuted}} width={50} domain={yd} allowDataOverflow={true} />
                             <Tooltip contentStyle={{fontSize:11,borderRadius:8}} />
-                            <Bar dataKey="count" fill={v.color || C.cyan} opacity={0.5} radius={[2,2,0,0]} />
-                            <Line type="monotone" dataKey="count" stroke={v.color || C.cyan} strokeWidth={2} dot={false} />
+                            <Bar dataKey="count" fill={v.color || C.cyan} opacity={0.3} radius={[2,2,0,0]} />
+                            <Line type="monotone" dataKey={wd.length>=4?"count_smooth":"count"} stroke={v.color || C.cyan} strokeWidth={2} dot={false} />
                           </ComposedChart>
                         </ResponsiveContainer>);})()}
                       </div>
@@ -2834,7 +2978,7 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                           </div>
                         );
                         const queryPreview = source.id === "github_repos"
-                          ? kwArr.map(k => k.includes(" ") ? `"${k}"` : k).join("+") + "+pushed:>YYYY-MM-DD"
+                          ? kwArr.map(k => k.includes(" ") ? `"${k}"` : k).join("+") + "+pushed:YYYY-MM-DD..YYYY-MM-DD"
                           : kwArr.length > 0
                             ? `"Co-Authored-By: Claude"+${kwArr.map(k => k.includes(" ") ? `"${k}"` : k).join("+")}+committer-date:YYYY-MM-DD..YYYY-MM-DD`
                             : `"Co-Authored-By: Claude"+committer-date:YYYY-MM-DD..YYYY-MM-DD`;
@@ -2846,14 +2990,14 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                             <code style={{ ...font.mono, fontSize: 10, color: C.cyan, display: "block", padding: "6px 10px", background: C.nested, borderRadius: 6, wordBreak: "break-all", lineHeight: 1.5 }}>
                               {queryPreview}
                             </code>
-                            {source.id === "github_repos" && res?.count > 50000 && (
+                            {source.id === "github_repos" && res?.count > 500000 && (
                               <div style={{ ...font.sans, fontSize: 11, color: C.amber, marginTop: 6, lineHeight: 1.5 }}>
                                 <strong>⚠ Count is very high ({(res.count || 0).toLocaleString()}).</strong> Your keywords may be too broad. Try more specific terms — e.g. instead of "AI" use "LangChain" or "vector database".
                               </div>
                             )}
                             <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginTop: 6, lineHeight: 1.4 }}>
                               {source.id === "github_repos"
-                                ? "Counts public repos matching these terms with pushes in the last 30 days. Overly generic keywords (e.g. 'AI', 'machine learning') will match too many repos."
+                                ? "Counts public repos matching these terms with recent pushes. Overly generic keywords (e.g. 'AI', 'machine learning') will match too many repos."
                                 : kwArr.length > 0
                                   ? "Counts Claude-attributed commits filtered to your keywords. Remove keywords to track the global total instead."
                                   : "Tracks ALL Claude-attributed commits on GitHub — a macro signal of AI coding tool adoption. Add keywords to narrow to a specific domain."}
@@ -3004,7 +3148,7 @@ function HuggingFaceLeaderboard({onDataChanged}) {
           </div>
           <div style={{...font.sans,fontSize:10,color:C.textMuted,marginBottom:6}}>{hfHist.length} data points since {formatChartDateShort(new Date(hfHist[0]?.ts).toISOString())}</div>
           <div style={{width:"100%",height:200}}>
-            {(()=>{const hdAll=hfHist.map(p=>({...p,_ts:p.ts||Date.now(),_iso:new Date(p.ts||Date.now()).toISOString()}));const hd=filterByTimeRange(hdAll,hfRange,"_iso");const allVals=hd.flatMap(p=>HF_ORGS.map(o=>p[o.id]).filter(v=>typeof v==="number"&&v>0));const yd=zoomedYDomain(allVals);return(
+            {(()=>{const hdAll=sanitizeTimeSeries(hfHist.map(p=>({...p,_ts:p.ts||Date.now(),_iso:new Date(p.ts||Date.now()).toISOString()})).sort((a,b)=>a._ts-b._ts),"_ts");let hd=filterByTimeRange(hdAll,hfRange,"_iso");if(hd.length>=4){HF_ORGS.forEach(o=>{hd=smoothEMA(hd,o.id,0.2);});}const smK=hd.length>=4;const allVals=hd.flatMap(p=>HF_ORGS.map(o=>p[smK?`${o.id}_smooth`:o.id]).filter(v=>typeof v==="number"&&v>0));const yd=zoomedYDomain(allVals);return(
             <ResponsiveContainer>
               <LineChart data={hd} margin={{top:8,right:16,bottom:8,left:8}}>
                 <XAxis dataKey="_ts" type="number" scale="time" domain={["dataMin","dataMax"]}
@@ -3013,7 +3157,7 @@ function HuggingFaceLeaderboard({onDataChanged}) {
                 <YAxis tick={{fontSize:10,fill:C.textMuted,...font.mono}} width={55} tickFormatter={fmtDL} domain={yd} allowDataOverflow={true}/>
                 <Tooltip contentStyle={{...font.sans,fontSize:12,background:C.white,border:`1px solid ${C.border}`,borderRadius:10,boxShadow:"0 4px 12px rgba(0,0,0,.08)"}} formatter={v=>fmtDL(v)} labelFormatter={ts=>formatChartDate(new Date(ts).toISOString())} />
                 <Legend wrapperStyle={{fontSize:10,...font.sans}}/>
-                {HF_ORGS.map(org=>(<Line key={org.id} type="monotone" dataKey={org.id} stroke={org.color} strokeWidth={2} dot={false} name={org.name} connectNulls/>))}
+                {HF_ORGS.map(org=>(<Line key={org.id} type="monotone" dataKey={smK?`${org.id}_smooth`:org.id} stroke={org.color} strokeWidth={2} dot={false} name={org.name} connectNulls/>))}
               </LineChart>
             </ResponsiveContainer>);})()}
           </div>
@@ -3065,11 +3209,11 @@ function HuggingFaceLeaderboard({onDataChanged}) {
 // ── EARNINGS CALL ANALYZER ──────────────────────────────────────────────────
 
 const EC_COMPANIES = [
-  { id: "GOOGL", name: "Alphabet (Google)", color: "#4285F4" },
-  { id: "AMZN", name: "Amazon", color: "#FF9900" },
-  { id: "MSFT", name: "Microsoft", color: "#00A4EF" },
-  { id: "META", name: "Meta", color: "#0668E1" },
-  { id: "NVDA", name: "NVIDIA", color: "#76B900" },
+  { id: "GOOGL", name: "Alphabet (Google)", color: "#4a6fa5" },
+  { id: "AMZN", name: "Amazon", color: "#8a6a2d" },
+  { id: "MSFT", name: "Microsoft", color: "#4a7a8a" },
+  { id: "META", name: "Meta", color: "#3d5a9e" },
+  { id: "NVDA", name: "NVIDIA", color: "#5a7a3d" },
   { id: "CUSTOM", name: "Custom Company", color: C.cyan },
 ];
 
@@ -3330,17 +3474,18 @@ Return this exact JSON structure (no markdown fences, no text before/after — p
 
   if (!ecOpen) {
     return (
-      <Card style={{ cursor: "pointer" }} onClick={() => setEcOpen(true)}>
+      <Card style={{ cursor: "pointer", transition: "border-color .15s, box-shadow .15s" }} className="metric-card" onClick={() => setEcOpen(true)}>
         <SectionHeader
-          icon={<IcoC name="layers" size={18} color={C.purple} />}
+          icon={<IcoC name="layers" size={18} color={C.textSec} />}
           title="LLM Earnings Call Analyzer"
-          subtitle="Detect whether management is communicating from operational reality or managing a narrative."
-          badge={ecHistory.length > 0 ? <Badge color={C.purple} bg={C.purpleBg} size="sm">{ecHistory.length} analyzed</Badge> : null}
+          subtitle="Paste or upload a transcript — score management communication quality on 5 dimensions. Click to open."
+          badge={ecHistory.length > 0 ? <Badge color={C.textSec} bg={C.nested} size="sm">{ecHistory.length} analyzed</Badge> : null}
         />
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8, alignItems: "center" }}>
           {EC_COMPANIES.filter(c => c.id !== "CUSTOM").map(c => (
-            <span key={c.id} style={{ ...font.sans, fontSize: 11, padding: "3px 10px", borderRadius: 6, background: c.color + "14", color: c.color, fontWeight: 600 }}>{c.id}</span>
+            <span key={c.id} style={{ ...font.sans, fontSize: 11, padding: "3px 10px", borderRadius: 4, background: C.nested, color: C.textSec, fontWeight: 600 }}>{c.id}</span>
           ))}
+          <span style={{ ...font.sans, fontSize: 11, fontWeight: 600, color: C.cyan, marginLeft: 8 }}>Open analyzer &rarr;</span>
         </div>
       </Card>
     );
@@ -3393,18 +3538,34 @@ Return this exact JSON structure (no markdown fences, no text before/after — p
             </div>
 
             <div style={{ marginBottom: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                 <label style={{ ...font.sans, fontSize: 11, fontWeight: 600, color: C.textSec }}>Earnings Call Transcript</label>
-                <label style={{ ...font.sans, fontSize: 11, color: C.cyan, cursor: "pointer" }}>
-                  <input type="file" accept=".txt,.md,.csv,.rtf,.html,.json" onChange={e => handleFileUpload(e, "main")} style={{ display: "none" }} /> Upload file
+                <label style={{ ...font.sans, fontSize: 11, fontWeight: 600, color: C.text, cursor: "pointer", padding: "4px 12px", border: `1.5px solid ${C.border}`, borderRadius: 6, background: C.white, display: "inline-flex", alignItems: "center", gap: 5, transition: "border-color .15s" }}>
+                  <IcoC name="cloudUp" size={13} color={C.textSec} />
+                  <input type="file" accept=".txt,.md,.csv,.rtf,.html,.json,.pdf" onChange={e => handleFileUpload(e, "main")} style={{ display: "none" }} /> Upload file
                 </label>
               </div>
-              <textarea value={ecTranscript} onChange={e => setEcTranscript(e.target.value)}
-                placeholder="Paste the full earnings call transcript here..."
-                style={{ width: "100%", minHeight: 200, fontSize: 12, padding: "10px 14px", borderRadius: 10, border: `1px solid ${C.border}`, resize: "vertical", fontFamily: "'JetBrains Mono', monospace", lineHeight: 1.6 }} />
-              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 2 }}>
-                <span style={{ ...font.sans, fontSize: 10, color: C.textMuted }}>Accepts .txt, .md, .csv, .rtf — or paste text directly from any source</span>
-                <span style={{ ...font.sans, fontSize: 10, color: C.textMuted }}>{ecTranscript.split(/\s+/).filter(Boolean).length.toLocaleString()} words</span>
+              <div
+                style={{ position: "relative", borderRadius: 8, border: `1.5px dashed ${C.border}`, background: C.white, transition: "border-color .2s" }}
+                onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderColor = C.cyan; }}
+                onDragLeave={e => { e.currentTarget.style.borderColor = C.border; }}
+                onDrop={e => { e.preventDefault(); e.currentTarget.style.borderColor = C.border; const f = e.dataTransfer.files?.[0]; if (f) { const r = new FileReader(); r.onload = ev => setEcTranscript(ev.target.result); r.readAsText(f); } }}
+              >
+                <textarea value={ecTranscript} onChange={e => setEcTranscript(e.target.value)}
+                  placeholder="Paste the full earnings call transcript here, or drag & drop a file (.txt, .md, .csv, .rtf, .pdf)..."
+                  style={{ width: "100%", minHeight: 200, fontSize: 12, padding: "10px 14px", borderRadius: 8, border: "none", resize: "vertical", fontFamily: "'JetBrains Mono', monospace", lineHeight: 1.6, background: "transparent" }} />
+                {!ecTranscript && (
+                  <div style={{ position: "absolute", bottom: 12, left: 0, right: 0, textAlign: "center", pointerEvents: "none" }}>
+                    <div style={{ ...font.sans, fontSize: 11, color: C.textMuted }}>
+                      <IcoC name="cloudUp" size={16} color={C.textMuted} style={{ verticalAlign: "middle", marginRight: 6 }} />
+                      Drag &amp; drop a transcript file here
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+                <span style={{ ...font.sans, fontSize: 10, color: C.textMuted }}>Accepts .txt, .md, .csv, .rtf, .pdf — or paste text directly</span>
+                <span style={{ ...font.mono, fontSize: 10, color: ecTranscript.length > 500 ? C.green : C.textMuted }}>{ecTranscript.split(/\s+/).filter(Boolean).length.toLocaleString()} words</span>
               </div>
             </div>
 
@@ -3745,7 +3906,9 @@ function HistoryChart({ vertical, hist, mode, resolution, range, showBand, showI
   const xKey = resolution === "weekly" ? "week" : "month";
   const baseline = hist.derived?.baseline || 0;
   const std = hist.derived?.baselineStdDev || 0;
-  const withBand = data.map(d => ({ ...d, bandLow: Math.max(0, baseline - std), bandHigh: baseline + std }));
+  let withBand = sanitizeTimeSeries(data.map(d => ({ ...d, bandLow: Math.max(0, baseline - std), bandHigh: baseline + std })), yKey);
+  if (withBand.length >= 4) withBand = smoothEMA(withBand, yKey, 0.2);
+  if (mode === "count" && withBand.length >= 4) withBand = smoothEMA(withBand, "rolling3", 0.2);
   const overlayData = (overlay || []).reduce((acc, ov) => {
     const shifted = (ov.series || []).map((d, i) => ({ x: d.month, val: d.index || 0, idx: i + (overlayLag ? (ov.lag || 0) : 0) }));
     shifted.forEach((s) => { if (!acc[s.idx]) acc[s.idx] = {}; acc[s.idx].x = s.x; acc[s.idx][ov.id] = s.val; });
@@ -4100,7 +4263,7 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
       {[
         { icon: "briefcase", color: C.cyan, title: "Job Postings (TheirStack)", desc: "Counts AI-related job postings matching your keywords across US employers. Tracks hiring volume, language stage classification (exploration vs. deployment), and historical trends back to 2021. Requires TheirStack API key." },
         { icon: "trendUp", color: C.blue, title: "Google Trends (SerpAPI)", desc: "Measures relative search interest (0\u2013100) for your keywords on Google. Computes momentum vs. 4-week rolling average. Backfills 12 months of weekly data in a single API call. Leads enterprise procurement by 3\u20139 months. Requires SerpAPI key." },
-        { icon: "code", color: C.green, title: "GitHub Repos", desc: "Counts active repositories matching your keywords with pushes in the last 30 days. Tracks open-source ecosystem growth \u2014 leads enterprise adoption by 6\u201318 months. Backfills monthly repo counts for the past year. Requires GitHub PAT." },
+        { icon: "code", color: C.green, title: "GitHub Repos", desc: "Counts active repositories matching your keywords with recent pushes. Tracks open-source ecosystem growth \u2014 leads enterprise adoption by 6\u201318 months. Backfills weekly repo counts for the past 18 months. Requires GitHub PAT." },
         { icon: "bot", color: C.purple, title: "Claude Code Attribution", desc: "Counts GitHub commits with 'Co-Authored-By: Claude' signatures in the past 7 days. The most real-time signal \u2014 0\u20133 month lead on AI platform revenue. Backfills monthly counts for the past year. Requires GitHub PAT." },
         { icon: "database", color: C.amber, title: "Hugging Face Leaderboard", desc: "Tracks model download volumes across major AI companies (OpenAI, Google, Meta, Microsoft, etc.) from the Hugging Face API. Measures supply-side AI capability growth. No API key required \u2014 public API." },
         { icon: "barChart", color: C.orange, title: "Composite Scoring & Stages", desc: "Combines all signals into a weighted composite score (0\u2013100) per vertical. Classifies each into adoption stages: Watchlist \u2192 Validating \u2192 Rolling Out \u2192 Committed. Weights are adjustable in settings." },
@@ -4119,7 +4282,7 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
     <div style={{...font.sans,fontSize:13,fontWeight:700,color:C.text,marginBottom:10}}>Additional capabilities</div>
     <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
       {[
-        { title: "Historical Backfill", desc: "Every signal source has a Backfill button. TheirStack queries monthly job counts from Jan 2021. Google Trends fetches 5 years of weekly data in one call. GitHub counts repos/commits per month going back to 2021 (or 2023 for Claude). All historical data is stored permanently. Backfills are resilient — individual API errors are skipped rather than aborting the entire run." },
+        { title: "Historical Backfill", desc: "Every signal source has a Backfill button. TheirStack queries monthly job counts from Jan 2021. Google Trends fetches 5 years of weekly data in one call. GitHub repos and Claude attribution both backfill 78 weeks (~18 months) of weekly data points. All historical data is stored permanently. Backfills are resilient — individual API errors are skipped rather than aborting the entire run." },
         { title: "Growth Charts & Signal Divergence Overlay", desc: "Every metric records a data point on each refresh, building a persistent time-series graph. Click the chart icon to see growth trends. Select 2–4 signals across verticals and metric types to overlay them on a normalized 0–100 scale. The system automatically detects divergences (e.g., job postings rising while API wrapper traffic drops = CIO mandate without real adoption) — these are your actual investment signals." },
         { title: "AI-Powered Divergence Analysis", desc: "When you overlay 2+ signals, the system uses z-score statistics (1.5σ threshold) and Pearson correlation to detect when historically co-moving signals diverge. Click 'AI Interpret' to have Claude generate a narrative explaining what the divergence means for investment timing (e.g., 'RFP spike → jobs lag → budget confirm' pattern detection)." },
         { title: "Alert Threshold (adjustable)", desc: "Set a % change threshold (1–50%) in Settings → Scoring. Any signal (job postings, Google Trends, GitHub repos, Claude attribution) that changes by more than this threshold week-over-week triggers a divergence alert. Default is 10%. Lower values generate more alerts (sensitive), higher values surface only major moves." },
@@ -4600,36 +4763,24 @@ export default function App() {
       }
       const baseQ = buildGitHubQuery(vert, sourceId);
       if (!baseQ) {
-        setErrors(prev => ({ ...prev, [signalKey]: "No keywords configured for GitHub Repos. Add keywords in your signal group (e.g. 'LangChain', 'vector database', 'RAG')." }));
+        setErrors(prev => ({ ...prev, [signalKey]: `No keywords configured for ${sourceId === "github_repos" ? "GitHub Repos" : "Claude Attribution"}. Add keywords in your signal group settings.` }));
         return;
       }
       const weeks = weekIntervals(78, new Date());
-      setHistoryProgress({ active: true, verticalId, current: 0, total: weeks.length, label: `Backfilling ${vert.name} ${sourceId === "github_repos" ? "GitHub Repos (30d windows)" : "Claude (7d windows)"}...` });
+      setHistoryProgress({ active: true, verticalId, current: 0, total: weeks.length, label: `Backfilling ${vert.name} ${sourceId === "github_repos" ? "GitHub Repos" : "Claude"} (weekly windows)...` });
       const recorded = [];
       let consecutiveErrors = 0;
       for (let i = 0; i < weeks.length; i++) {
         if (cancelHistoryRef.current) break;
         const w = weeks[i];
         try {
-          let count;
-          let gteR = w.gte;
-          let lteR = w.lte;
-          if (sourceId === "github_repos") {
-            const lteD = new Date(w.lte + "T12:00:00Z");
-            const gteD = new Date(lteD);
-            gteD.setUTCDate(gteD.getUTCDate() - 29);
-            gteR = gteD.toISOString().slice(0, 10);
-            lteR = w.lte;
-            count = await fetchGitHubCountInRange(vert, sourceId, gteR, lteR);
-          } else {
-            count = await fetchGitHubCountInRange(vert, sourceId, w.gte, w.lte);
-          }
+          const count = await fetchGitHubCountInRange(vert, sourceId, w.gte, w.lte);
           consecutiveErrors = 0;
           const ts = new Date(w.lte + "T12:00:00Z").getTime();
           const entry = { ts, isoDate: new Date(ts).toISOString(), value: count, date: w.key };
           recorded.push(entry);
           const h = ld(`hist_${signalKey}`, []);
-          if (!h.some(x => Math.abs(x.ts - ts) < 86400000 * 4)) {
+          if (!h.some(x => Math.abs(x.ts - ts) < 86400000 * 3)) {
             h.push(entry);
             h.sort((a, b) => a.ts - b.ts);
             if (h.length > 500) h.splice(0, h.length - 500);
@@ -5398,7 +5549,7 @@ INSTRUCTIONS:
 
         {/* ─── Empty state prompt ─── */}
         {config.verticals.length === 0 && (
-          <Card className="fade-in" style={{padding:"28px 32px",marginBottom:20,textAlign:"center",background:`linear-gradient(135deg,${C.cyan}06,${C.blue}06)`}}>
+          <Card className="fade-in" style={{padding:"28px 32px",marginBottom:20,textAlign:"center"}}>
             <IcoC name="trendUp" size={24} color={C.cyan}/>
             <div style={{...font.sans,fontSize:16,fontWeight:700,color:C.text,margin:"12px 0 6px"}}>Create your first tracking group to get started</div>
             <p style={{...font.sans,fontSize:12,color:C.textSec,margin:"0 0 16px",lineHeight:1.6,maxWidth:520,marginLeft:"auto",marginRight:"auto"}}>
