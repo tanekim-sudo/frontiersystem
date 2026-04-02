@@ -632,7 +632,7 @@ function smoothEMA(data, key, alpha = 0.3) {
   });
 }
 
-/** Comprehensive time-series sanitizer: dedup by day, reject outlier spikes, ensure monotonic timestamps, clamp impossible swings. */
+/** Comprehensive time-series sanitizer: dedup by day, detect structural scale changes, reject outlier spikes, clamp impossible swings. */
 function sanitizeTimeSeries(data, valueKey = "value", opts = {}) {
   if (!data || data.length < 2) return data;
   const { maxSwingPct = 300, iqrMultiplier = 2.5 } = opts;
@@ -648,9 +648,37 @@ function sanitizeTimeSeries(data, valueKey = "value", opts = {}) {
   });
   sorted = Array.from(byDay.values());
   if (sorted.length < 3) return sorted;
+
   const vals = sorted.map(d => d[valueKey]).filter(v => typeof v === "number" && isFinite(v));
   if (vals.length < 4) return sorted;
-  const sortedVals = [...vals].sort((a, b) => a - b);
+
+  // Detect structural scale changes: if early data is near-zero and late data is on a completely
+  // different magnitude, trim the leading garbage (artifact of broken queries or collection changes).
+  const recentCount = Math.max(4, Math.ceil(sorted.length * 0.15));
+  const earlyCount = Math.max(4, Math.ceil(sorted.length * 0.5));
+  const recentVals = sorted.slice(-recentCount).map(d => d[valueKey]).filter(v => typeof v === "number" && isFinite(v));
+  const earlyVals = sorted.slice(0, earlyCount).map(d => d[valueKey]).filter(v => typeof v === "number" && isFinite(v));
+  if (recentVals.length >= 2 && earlyVals.length >= 2) {
+    const recentMedian = [...recentVals].sort((a, b) => a - b)[Math.floor(recentVals.length / 2)];
+    const earlyMedian = [...earlyVals].sort((a, b) => a - b)[Math.floor(earlyVals.length / 2)];
+    const scaleRatio = recentMedian / Math.max(earlyMedian, 1);
+    // If recent data is >50x larger than early data and early median is near zero (<1% of recent),
+    // the early data is from a broken collection method — trim it.
+    if (scaleRatio > 50 && earlyMedian < recentMedian * 0.01) {
+      const threshold = recentMedian * 0.05;
+      let trimIdx = 0;
+      for (let i = 0; i < sorted.length; i++) {
+        const v = sorted[i][valueKey];
+        if (typeof v === "number" && v >= threshold) { trimIdx = Math.max(0, i - 1); break; }
+      }
+      if (trimIdx > 0) sorted = sorted.slice(trimIdx);
+      if (sorted.length < 3) return sorted;
+    }
+  }
+
+  const filteredVals = sorted.map(d => d[valueKey]).filter(v => typeof v === "number" && isFinite(v));
+  if (filteredVals.length < 4) return sorted;
+  const sortedVals = [...filteredVals].sort((a, b) => a - b);
   const q1 = sortedVals[Math.floor(sortedVals.length * 0.25)];
   const q3 = sortedVals[Math.floor(sortedVals.length * 0.75)];
   const iqr = q3 - q1;
@@ -4430,6 +4458,40 @@ export default function App() {
     rows.sort((a,b)=>new Date(b.generated_at)-new Date(a.generated_at));
     setBriefHistory(rows);
   }, []);
+
+  // One-time migration: purge corrupted backfill v2 caches and near-zero github_repos history
+  useEffect(() => {
+    const migKey = `${HSPFX}hist_purge_v3`;
+    if (localStorage.getItem(migKey)) return;
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k?.includes("backfill_v2_")) keysToRemove.push(k);
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+    // Purge near-zero points from github_repos history that came from the broken pushed:> query
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k?.includes("hist_") || !k?.includes("github_repos")) continue;
+      try {
+        const raw = JSON.parse(localStorage.getItem(k) || "[]");
+        if (!Array.isArray(raw) || raw.length < 5) continue;
+        const recentVals = raw.slice(-4).map(p => p.value).filter(v => typeof v === "number" && v > 0);
+        if (recentVals.length === 0) continue;
+        const recentMedian = [...recentVals].sort((a, b) => a - b)[Math.floor(recentVals.length / 2)];
+        if (recentMedian < 100) continue;
+        const cleaned = raw.filter(p => {
+          const v = p.value;
+          return typeof v === "number" && v >= recentMedian * 0.01;
+        });
+        if (cleaned.length < raw.length) {
+          localStorage.setItem(k, JSON.stringify(cleaned));
+        }
+      } catch {}
+    }
+    localStorage.setItem(migKey, new Date().toISOString());
+  }, []);
+
   useEffect(()=>{
     if(migratedLabelsRef.current) return;
     migratedLabelsRef.current = true;
@@ -4715,9 +4777,9 @@ export default function App() {
     if (!vert) return;
     cancelHistoryRef.current = false;
     const signalKey = `${verticalId}_${sourceId}`;
-    const histCacheKey = `backfill_v2_${signalKey}`;
+    const histCacheKey = `backfill_v3_${signalKey}`;
     const cached = ld(histCacheKey, null);
-    if (cached?.version === 2 && cached?.points?.length >= 50) {
+    if (cached?.version === 3 && cached?.points?.length >= 50) {
       cached.points.forEach(p => {
         const h = ld(`hist_${signalKey}`, []);
         if (!h.some(x => x.isoDate === p.isoDate)) {
@@ -4746,7 +4808,7 @@ export default function App() {
             sv(`hist_${signalKey}`, h);
           }
         });
-        sv(histCacheKey, { version: 2, generatedAt: new Date().toISOString(), points: recorded });
+        sv(histCacheKey, { version: 3, generatedAt: new Date().toISOString(), points: recorded });
         setAllHistories(prev => ({ ...prev, [signalKey]: getSignalHistory(signalKey) }));
       } catch (e) {
         setErrors(prev => ({ ...prev, [signalKey]: e.message }));
@@ -4798,7 +4860,7 @@ export default function App() {
         await sleep(4500);
       }
       if (recorded.length > 0) {
-        sv(histCacheKey, { version: 2, generatedAt: new Date().toISOString(), points: recorded });
+        sv(histCacheKey, { version: 3, generatedAt: new Date().toISOString(), points: recorded });
         setAllHistories(prev => ({ ...prev, [signalKey]: getSignalHistory(signalKey) }));
       }
       setHistoryProgress({ active: false, verticalId: null, current: 0, total: 0, label: "" });
