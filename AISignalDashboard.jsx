@@ -4408,6 +4408,7 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
   const items=[
     {id:"instructions",label:"Instructions",content:instructionsContent},
     {id:"groups",label:"Signal Groups",content:groupsContent},
+    {id:"scoring",label:"Scoring & Thresholds",content:scoringContent},
     {id:"mailing",label:"Mailing List",content:mailingContent},
   ];
 
@@ -5775,6 +5776,48 @@ INSTRUCTIONS:
 
         {/* Overlay chart */}
         {overlaySelected.length>=2 && <OverlayChart selectedKeys={overlaySelected} allHistories={allHistories} sources={config.sources} verticals={config.verticals}/>}
+
+        {/* ─── Brief Flagging Thresholds (inline-editable) ─── */}
+        <Card style={{marginBottom:20,padding:"14px 18px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div>
+              <div style={{...font.sans,fontSize:13,fontWeight:700,color:C.text}}>Brief flagging thresholds</div>
+              <div style={{...font.sans,fontSize:11,color:C.textMuted,marginTop:2,lineHeight:1.4}}>A signal must change by at least this % (week-over-week) to be highlighted in the weekly brief. Quiet signals are mentioned but not dramatized.</div>
+            </div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:10}}>
+            {[
+              { key: "theirstack", label: "Job Postings", color: "#3b82f6" },
+              { key: "google_trends", label: "Google Trends", color: "#8b5cf6" },
+              { key: "github_repos", label: "GitHub Repos", color: "#06b6d4" },
+              { key: "claude_attrib", label: "Claude Attribution", color: "#10b981" },
+              { key: "hf_downloads", label: "HuggingFace", color: "#f59e0b" },
+              { key: "composite", label: "Composite", color: "#ef4444" },
+            ].map(({ key, label, color }) => {
+              const bt = config.briefThresholds || {};
+              const val = bt[key] ?? 10;
+              return (
+                <div key={key} style={{padding:"8px 10px",background:C.nested,borderRadius:6,border:`1px solid ${C.borderLight}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                    <span style={{...font.sans,fontSize:11,fontWeight:600,color:C.text}}>{label}</span>
+                    <span style={{...font.mono,fontSize:13,fontWeight:800,color}}>{val}%</span>
+                  </div>
+                  <input type="range" min="1" max="50" step="1" value={val}
+                    onChange={e => setConfig(prev => {
+                      const next = { ...prev, briefThresholds: { ...(prev.briefThresholds || {}), [key]: parseInt(e.target.value, 10) || 10 } };
+                      sv("config", next);
+                      return next;
+                    })}
+                    style={{width:"100%",accentColor:color}} />
+                  <div style={{display:"flex",justifyContent:"space-between",marginTop:1}}>
+                    <span style={{...font.sans,fontSize:8.5,color:C.textMuted}}>1%</span>
+                    <span style={{...font.sans,fontSize:8.5,color:C.textMuted}}>50%</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
 
         {/* ─── Per-group signal metrics (each row = one source × your groups & keywords) ─── */}
         <div style={{marginBottom:10}}>
