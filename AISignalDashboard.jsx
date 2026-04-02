@@ -1638,7 +1638,7 @@ async function callSource(source, vertical, configKeys) {
   }
   if (resolveTheirStackMocking(source, configKeys)) {
     const lte = new Date().toISOString().slice(0, 10);
-    const gte = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const gte = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
     const count = mockTheirStackCountForRange(vertical, gte, lte);
     const sample = Math.min(25, Math.max(5, Math.ceil(count / 50)));
     return {
@@ -1689,7 +1689,7 @@ async function callSource(source, vertical, configKeys) {
   }
   if (source.id === "theirstack" && !resolveTheirStackMocking(source, configKeys) && (res.status === 402 || res.status === 429)) {
     const lte = new Date().toISOString().slice(0, 10);
-    const gte = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const gte = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
     const count = mockTheirStackCountForRange(vertical, gte, lte);
     const sample = Math.min(25, Math.max(5, Math.ceil(count / 50)));
     return {
