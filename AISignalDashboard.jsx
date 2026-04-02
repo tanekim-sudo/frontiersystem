@@ -3509,14 +3509,35 @@ Return this exact JSON structure (no markdown fences, no text before/after — p
         <SectionHeader
           icon={<IcoC name="layers" size={18} color={C.textSec} />}
           title="LLM Earnings Call Analyzer"
-          subtitle="Paste or upload a transcript — score management communication quality on 5 dimensions. Click to open."
+          subtitle="Detect whether management is communicating from operational reality or managing a narrative."
           badge={ecHistory.length > 0 ? <Badge color={C.textSec} bg={C.nested} size="sm">{ecHistory.length} analyzed</Badge> : null}
         />
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8, alignItems: "center" }}>
+        <div style={{ ...font.sans, fontSize:11.5, color: C.textSec, lineHeight: 1.6, marginBottom: 10, maxWidth: 800 }}>
+          Upload or paste a full earnings call transcript. Claude analyzes the language on <strong style={{color:C.text}}>5 dimensions</strong> to score whether management is operationally grounded or narrative-managing:
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8, marginBottom: 12 }}>
+          {[
+            { name: "Tense Distribution", desc: "Present-tense specifics (operational) vs future-tense aspiration (narrative)" },
+            { name: "Specificity Gradient", desc: "Do claims get more or less specific as significance increases?" },
+            { name: "Sincerity Signal", desc: "Volunteered bad news and error acknowledgment vs superlative inflation" },
+            { name: "Absorption Failure", desc: "Does explanation scale proportionally with metric severity?" },
+            { name: "Register Consistency", desc: "Does language shift between strong and weak quarters?" },
+          ].map(d => (
+            <div key={d.name} style={{ padding: "8px 10px", background: C.nested, borderRadius: 6, border: `1px solid ${C.borderLight}` }}>
+              <div style={{ ...font.sans, fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 2 }}>{d.name}</div>
+              <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, lineHeight: 1.4 }}>{d.desc}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ ...font.sans, fontSize: 10.5, color: C.textMuted, lineHeight: 1.5, marginBottom: 10 }}>
+          Each dimension scored 0–100 with exact quote evidence. Outputs an overall quality score, investment signal (LONG / SHORT / WATCH / NEUTRAL), and cross-quarter trajectory tracking. Claude also web-searches live stock prices, analyst reactions, and financial context for the company analyzed.
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           {EC_COMPANIES.filter(c => c.id !== "CUSTOM").map(c => (
             <span key={c.id} style={{ ...font.sans, fontSize: 11, padding: "3px 10px", borderRadius: 4, background: C.nested, color: C.textSec, fontWeight: 600 }}>{c.id}</span>
           ))}
-          <span style={{ ...font.sans, fontSize: 11, fontWeight: 600, color: C.cyan, marginLeft: 8 }}>Open analyzer &rarr;</span>
+          <span style={{ ...font.sans, fontSize: 10.5, color: C.textMuted, marginLeft: 4 }}>or any custom company</span>
+          <span style={{ ...font.sans, fontSize: 11, fontWeight: 600, color: C.cyan, marginLeft: "auto" }}>Open analyzer &rarr;</span>
         </div>
       </Card>
     );
@@ -3529,7 +3550,7 @@ Return this exact JSON structure (no markdown fences, no text before/after — p
           <IcoC name="layers" size={18} color={C.purple} />
           <div>
             <div style={{ ...font.sans, fontSize: 14, fontWeight: 700, color: C.text }}>LLM Earnings Call Analyzer</div>
-            <div style={{ ...font.sans, fontSize: 11, color: C.textMuted }}>Management communication quality scoring</div>
+            <div style={{ ...font.sans, fontSize: 11, color: C.textMuted }}>Score management on 5 linguistic dimensions — tense, specificity, sincerity, absorption, register — with exact quote evidence</div>
           </div>
         </div>
         <Btn size="sm" variant="ghost" onClick={() => setEcOpen(false)}>Collapse</Btn>
