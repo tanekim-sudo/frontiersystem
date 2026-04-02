@@ -1884,7 +1884,7 @@ function Badge({children,color=C.textSec,bg,size="sm",...rest}){
   return <span {...rest} style={{display:"inline-flex",alignItems:"center",gap:4,...sz,borderRadius:4,fontWeight:600,...font.sans,background:bg||color+"10",color,whiteSpace:"nowrap",letterSpacing:"0.01em"}}>{children}</span>;
 }
 function Spinner({size=14,color:cl=C.cyan}){ return <svg width={size} height={size} viewBox="0 0 24 24" style={{animation:"spin .7s linear infinite",flexShrink:0}}><circle cx="12" cy="12" r="10" fill="none" stroke={C.border} strokeWidth="3"/><path d="M12 2 a10 10 0 0 1 10 10" fill="none" stroke={cl} strokeWidth="3" strokeLinecap="round"/></svg>; }
-function Card({children,style:sx,className,hover}){ return <div className={className} style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,padding:20,boxShadow:"0 1px 2px rgba(0,0,0,.03)",...sx}}>{children}</div>; }
+function Card({children,style:sx,className,hover,...rest}){ return <div className={className} {...rest} style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,padding:20,boxShadow:"0 1px 2px rgba(0,0,0,.03)",...sx}}>{children}</div>; }
 
 function SectionHeader({icon,title,subtitle,right,badge}){
   return(<div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14,flexWrap:"wrap",gap:8}}>
@@ -5786,6 +5786,11 @@ INSTRUCTIONS:
           </div>
         </div>
 
+        {/* ─── Earnings Call Analyzer ─── */}
+        <div style={{marginBottom:28}}>
+          <EarningsCallPanel />
+        </div>
+
         <div style={{marginBottom:10}}>
           <div style={{...font.sans,fontSize:13,fontWeight:700,color:C.text}}>National context</div>
           <div style={{...font.sans,fontSize:11,color:C.textMuted,marginTop:4}}>US-wide labor indicators — not filtered by your keywords.</div>
@@ -5816,11 +5821,6 @@ INSTRUCTIONS:
         {/* ─── Hugging Face ─── */}
         <div style={{marginBottom:28}}>
           <HuggingFaceLeaderboard onDataChanged={()=>{const pat=resolveGitPat();if(pat||signalStoreSecret()||databaseStoreSecret())debouncedSyncToGist(pat,3000);}}/>
-        </div>
-
-        {/* ─── Earnings Call Analyzer ─── */}
-        <div style={{marginBottom:28}}>
-          <EarningsCallPanel />
         </div>
 
         {/* ─── Alerts ─── */}
