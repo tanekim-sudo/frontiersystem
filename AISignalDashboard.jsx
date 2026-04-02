@@ -2866,7 +2866,8 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
           const tsHist = tsHistoryByVertical?.[v.id];
           const hist = getSignalHistory(key);
           const prevVal = hist.length >= 2 ? hist[hist.length-2].value : null;
-          const trend = prevVal && res?.count ? Math.round(((res.count - prevVal)/Math.max(prevVal,1))*100) : null;
+          const rawTrend = prevVal && res?.count ? Math.round(((res.count - prevVal)/Math.max(prevVal,1))*100) : null;
+          const trend = (demoTheirStack && rawTrend != null && Math.abs(rawTrend) > 50) ? null : rawTrend;
 
           return (
             <div key={v.id} style={{borderTop: vi===0?`1px solid ${C.border}`:`1px solid ${C.borderLight}`}}>
@@ -2921,7 +2922,7 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
 
                 {/* Actions */}
                 <div style={{display:"flex",gap:4,flexShrink:0}} onClick={e=>e.stopPropagation()}>
-                  {source.id === "theirstack" && !tsHist?.monthly?.length && (
+                  {source.id === "theirstack" && !demoTheirStack && !tsHist?.monthly?.length && (
                     <Btn variant="default" size="sm" onClick={()=>onBackfillHistory?.(v.id)} disabled={historyProgress?.active} title="Backfill TheirStack history from 2021">
                       <IcoC name="layers" size={13} color={C.textSec}/> Backfill Jobs
                     </Btn>
@@ -2944,7 +2945,7 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                 <div className="fade-in" style={{padding:"8px 22px 16px",background:C.nested,borderTop:`1px solid ${C.borderLight}`}}>
                   <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:6}}>Growth Trend — {v.name}</div>
                   <SignalHistoryChart signalKey={key} color={v.color||C.cyan} label={source.name} />
-                  {source.id === "theirstack" && tsHist?.weekly?.length >= 2 && (
+                  {source.id === "theirstack" && !demoTheirStack && tsHist?.weekly?.length >= 2 && (
                     <div style={{marginTop:12}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
                         <div style={{...font.sans,fontSize:11,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Weekly Historical ({tsHist.weekly.length} weeks)</div>
