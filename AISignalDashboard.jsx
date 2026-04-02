@@ -4890,6 +4890,8 @@ export default function App() {
       setPatternNotes(ld(patternNoteKey(verticalId), {}));
       return;
     }
+    const tsSource = configRef.current.sources.find(s => s.id === "theirstack");
+    const isMock = resolveTheirStackMocking(tsSource, configRef.current.apiKeys);
     cancelHistoryRef.current = false;
     setHistoryProgress({active:true,verticalId,current:0,total:0,label:`Backfilling ${vert.name}...`});
     const months = monthIntervals(HIST_START, new Date());
@@ -4901,7 +4903,7 @@ export default function App() {
       const count = await fetchTheirStackCountInRange(vert, m.gte, m.lte);
       monthly.push({ month: m.key, count });
       setHistoryProgress({active:true,verticalId,current:i+1,total:months.length + 52,label:`Backfilling ${vert.name} monthly...`});
-      await sleep(300);
+      if (!isMock) await sleep(300);
     }
     if (cancelHistoryRef.current) { setHistoryProgress({active:false,verticalId:null,current:0,total:0,label:""}); return; }
     const weeks = weekIntervals(52, new Date());
@@ -4912,7 +4914,7 @@ export default function App() {
       const count = await fetchTheirStackCountInRange(vert, w.gte, w.lte);
       weekly.push({ week: w.key, count });
       setHistoryProgress({active:true,verticalId,current:months.length + i + 1,total:months.length + 52,label:`Backfilling ${vert.name} weekly...`});
-      await sleep(300);
+      if (!isMock) await sleep(300);
     }
     if (cancelHistoryRef.current) { setHistoryProgress({active:false,verticalId:null,current:0,total:0,label:""}); return; }
     const derivedPack = deriveHistoryMetrics(monthly, weekly);
@@ -4937,7 +4939,8 @@ export default function App() {
     const source = configRef.current.sources.find(s => s.id === "theirstack");
     if (!source) return;
     const keys = configRef.current.apiKeys;
-    if (!resolveTheirStackMocking(source, keys) && !resolveKey(source, keys)) return;
+    const isMock = resolveTheirStackMocking(source, keys);
+    if (!isMock && !resolveKey(source, keys)) return;
     const kh = hashKeywordsForVertical(vert);
     const existing = tsHistoryByVertical[verticalId];
     const numWeeks = existing ? 8 : 12;
@@ -4952,7 +4955,7 @@ export default function App() {
         if (e.message?.includes("402") || e.message?.includes("credits")) break;
         break;
       }
-      await sleep(400);
+      if (!isMock) await sleep(400);
     }
     if (!fresh.length) return;
     const oldMonthly = existing?.monthly || [];
