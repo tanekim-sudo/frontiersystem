@@ -652,27 +652,32 @@ function sanitizeTimeSeries(data, valueKey = "value", opts = {}) {
   const vals = sorted.map(d => d[valueKey]).filter(v => typeof v === "number" && isFinite(v));
   if (vals.length < 4) return sorted;
 
-  // Detect structural scale changes: if early data is near-zero and late data is on a completely
-  // different magnitude, trim the leading garbage (artifact of broken queries or collection changes).
-  const recentCount = Math.max(4, Math.ceil(sorted.length * 0.15));
-  const earlyCount = Math.max(4, Math.ceil(sorted.length * 0.5));
-  const recentVals = sorted.slice(-recentCount).map(d => d[valueKey]).filter(v => typeof v === "number" && isFinite(v));
-  const earlyVals = sorted.slice(0, earlyCount).map(d => d[valueKey]).filter(v => typeof v === "number" && isFinite(v));
-  if (recentVals.length >= 2 && earlyVals.length >= 2) {
-    const recentMedian = [...recentVals].sort((a, b) => a - b)[Math.floor(recentVals.length / 2)];
-    const earlyMedian = [...earlyVals].sort((a, b) => a - b)[Math.floor(earlyVals.length / 2)];
-    const scaleRatio = recentMedian / Math.max(earlyMedian, 1);
-    // If recent data is >50x larger than early data and early median is near zero (<1% of recent),
-    // the early data is from a broken collection method — trim it.
-    if (scaleRatio > 50 && earlyMedian < recentMedian * 0.01) {
-      const threshold = recentMedian * 0.05;
-      let trimIdx = 0;
-      for (let i = 0; i < sorted.length; i++) {
-        const v = sorted[i][valueKey];
-        if (typeof v === "number" && v >= threshold) { trimIdx = Math.max(0, i - 1); break; }
-      }
-      if (trimIdx > 0) sorted = sorted.slice(trimIdx);
-      if (sorted.length < 3) return sorted;
+  // Detect bimodal / structural scale changes caused by broken data collection.
+  // Strategy: partition values into "near-zero" (< 1% of the max) and "large". If the series
+  // has a clear split — most points near-zero and a few large ones (or vice versa) — keep only
+  // the cluster that matches the most recent live data point.
+  const maxVal = Math.max(...vals);
+  if (maxVal > 1000) {
+    const zeroThreshold = maxVal * 0.01;
+    const nearZeroCount = vals.filter(v => v < zeroThreshold).length;
+    const largeCount = vals.length - nearZeroCount;
+    // If >60% of points are near-zero but the last data point is large, the near-zero
+    // points are garbage from a broken collection method
+    const lastVal = sorted[sorted.length - 1]?.[valueKey] || 0;
+    if (nearZeroCount > vals.length * 0.6 && lastVal >= zeroThreshold) {
+      sorted = sorted.filter(d => {
+        const v = d[valueKey];
+        return typeof v === "number" && v >= zeroThreshold;
+      });
+      if (sorted.length < 2) return sorted;
+    }
+    // Opposite: if the last point is near-zero but most points are large, drop the trailing zeros
+    else if (largeCount > vals.length * 0.6 && lastVal < zeroThreshold) {
+      sorted = sorted.filter(d => {
+        const v = d[valueKey];
+        return typeof v !== "number" || v >= zeroThreshold;
+      });
+      if (sorted.length < 2) return sorted;
     }
   }
 
@@ -4461,7 +4466,7 @@ export default function App() {
 
   // One-time migration: purge corrupted backfill v2 caches and near-zero github_repos history
   useEffect(() => {
-    const migKey = `${HSPFX}hist_purge_v3`;
+    const migKey = `${HSPFX}hist_purge_v3b`;
     if (localStorage.getItem(migKey)) return;
     const keysToRemove = [];
     for (let i = 0; i < localStorage.length; i++) {
@@ -4469,20 +4474,24 @@ export default function App() {
       if (k?.includes("backfill_v2_")) keysToRemove.push(k);
     }
     keysToRemove.forEach(k => localStorage.removeItem(k));
-    // Purge near-zero points from github_repos history that came from the broken pushed:> query
+    // Purge near-zero points from github_repos history that came from the broken pushed:> query.
+    // Use max value as reference instead of last-4 median, since the last points may also be corrupt.
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
       if (!k?.includes("hist_") || !k?.includes("github_repos")) continue;
       try {
         const raw = JSON.parse(localStorage.getItem(k) || "[]");
         if (!Array.isArray(raw) || raw.length < 5) continue;
-        const recentVals = raw.slice(-4).map(p => p.value).filter(v => typeof v === "number" && v > 0);
-        if (recentVals.length === 0) continue;
-        const recentMedian = [...recentVals].sort((a, b) => a - b)[Math.floor(recentVals.length / 2)];
-        if (recentMedian < 100) continue;
+        const allVals = raw.map(p => p.value).filter(v => typeof v === "number" && v > 0);
+        if (allVals.length === 0) continue;
+        const maxV = Math.max(...allVals);
+        if (maxV < 1000) continue;
+        const zeroThreshold = maxV * 0.01;
+        const nearZeroCount = allVals.filter(v => v < zeroThreshold).length;
+        if (nearZeroCount < allVals.length * 0.3) continue;
         const cleaned = raw.filter(p => {
           const v = p.value;
-          return typeof v === "number" && v >= recentMedian * 0.01;
+          return typeof v === "number" && v >= zeroThreshold;
         });
         if (cleaned.length < raw.length) {
           localStorage.setItem(k, JSON.stringify(cleaned));
