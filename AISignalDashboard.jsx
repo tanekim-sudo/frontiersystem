@@ -1522,7 +1522,7 @@ const DEFAULT_SOURCES = [
     apiConfig: { endpoint: "/api/google-trends", method: "GET", authType: "query_param", authHeader: "api_key", proxyPrefix: "", bodyTemplate: "engine=google_trends&data_type=TIMESERIES&q={{keywords}}" },
     responsePaths: { countPath: "", itemsPath: "interest_over_time.timeline_data", titleField: "", bodyField: "" } },
   { id: "github_repos", name: "GitHub Repos", type: "count", weight: 0.15, cadence: "weekly", enabled: true,
-    apiConfig: { endpoint: "https://api.github.com/search/repositories", method: "GET", authType: "bearer", authHeader: "", proxyPrefix: "", bodyTemplate: "q={{keywords}}+pushed:{{since30d}}..{{today}}&sort=updated&per_page=1" },
+    apiConfig: { endpoint: "https://api.github.com/search/repositories", method: "GET", authType: "bearer", authHeader: "", proxyPrefix: "", bodyTemplate: "q={{keywords}}+pushed:{{since7d}}..{{today}}&sort=updated&per_page=1" },
     responsePaths: { countPath: "total_count", itemsPath: "items", titleField: "full_name", bodyField: "description" } },
   { id: "claude_attrib", name: "Claude Code Attribution", type: "count", weight: 0.2, cadence: "weekly", enabled: true,
     apiConfig: { endpoint: "https://api.github.com/search/commits", method: "GET", authType: "bearer", authHeader: "", proxyPrefix: "", bodyTemplate: 'q="Co-Authored-By: Claude"+committer-date:{{since7d}}..{{today}}&sort=committer-date&order=desc&per_page=1' },
@@ -2794,6 +2794,30 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
   const [expandedVert, setExpandedVert] = useState(null);
   const [showChart, setShowChart] = useState(null);
   const [showInfo, setShowInfo] = useState(false);
+
+  // Auto-seed mock history for demo TheirStack so the Growth Trend chart has data
+  useEffect(() => {
+    if (!demoTheirStack) return;
+    verticals.forEach(v => {
+      const key = `${v.id}_${source.id}`;
+      const existing = getSignalHistory(key);
+      if (existing.length >= 40) return;
+      const weeks = weekIntervals(78, new Date());
+      const points = [];
+      weeks.forEach(w => {
+        const count = mockTheirStackCountForRange(v, w.gte, w.lte);
+        const ts = new Date(w.lte + "T12:00:00Z").getTime();
+        points.push({ ts, isoDate: new Date(ts).toISOString(), value: count, date: w.key });
+      });
+      const merged = [...existing];
+      points.forEach(p => {
+        if (!merged.some(x => Math.abs(x.ts - p.ts) < 86400000 * 3)) merged.push(p);
+      });
+      merged.sort((a, b) => a.ts - b.ts);
+      if (merged.length > 500) merged.splice(0, merged.length - 500);
+      sv(`hist_${key}`, merged);
+    });
+  }, [demoTheirStack, verticals, source.id]);
   const kwLabel = { titleKeywords:"Title keywords", descriptionKeywords:"Description keywords", keywords:"Search query" };
   const info = SOURCE_INFO[source.id];
   const iconMap = {theirstack:"briefcase",google_trends:"trendUp",github_repos:"code",claude_attrib:"bot"};
@@ -2894,7 +2918,7 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                    res ? <div>
                      <div style={{...font.mono,fontSize:22,fontWeight:800,color:C.text,letterSpacing:"-0.03em"}}>{(res.count||0).toLocaleString()}</div>
                      {trend!=null&&<Badge color={trend>=0?C.green:C.red} bg={trend>=0?C.greenBg:C.redBg} size="sm">{trend>=0?"+":""}{trend}%</Badge>}
-                     {source.id==="github_repos"&&res.count>500000&&<div style={{...font.sans,fontSize:9,color:C.amber,marginTop:2}} title="Very high count suggests keywords are too broad. Add more specific terms.">⚠ keywords may be too broad</div>}
+                     {source.id==="github_repos"&&res.count>100000&&<div style={{...font.sans,fontSize:9,color:C.amber,marginTop:2}} title="Very high count suggests keywords are too broad. Add more specific terms.">⚠ keywords may be too broad</div>}
                    </div> :
                    <span style={{color:C.textMuted,fontSize:13}}>No data</span>}
                 </div>
@@ -3021,7 +3045,7 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                             <code style={{ ...font.mono, fontSize: 10, color: C.cyan, display: "block", padding: "6px 10px", background: C.nested, borderRadius: 6, wordBreak: "break-all", lineHeight: 1.5 }}>
                               {queryPreview}
                             </code>
-                            {source.id === "github_repos" && res?.count > 500000 && (
+                            {source.id === "github_repos" && res?.count > 100000 && (
                               <div style={{ ...font.sans, fontSize: 11, color: C.amber, marginTop: 6, lineHeight: 1.5 }}>
                                 <strong>⚠ Count is very high ({(res.count || 0).toLocaleString()}).</strong> Your keywords may be too broad. Try more specific terms — e.g. instead of "AI" use "LangChain" or "vector database".
                               </div>
@@ -4123,12 +4147,6 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
     <Btn variant="default" size="sm" onClick={()=>update(c=>({...c,verticals:[...c.verticals,{id:`v_${Date.now()}`,name:"New Group",color:PALETTE[c.verticals.length%PALETTE.length],description:"",keywords:{theirstack:{titleKeywords:[],descriptionKeywords:[]},google_trends:{keywords:[]},github_repos:{keywords:[]},claude_attrib:{keywords:[]}}}]}))}>+ Add group</Btn>
   </div>);
 
-  const stageHelp = {
-    s1: "Mostly research-oriented language in job posts.",
-    s2: "Signals active proofs of concept and small pilots.",
-    s3: "Signals real deployment and implementation activity.",
-    s4: "Signals procurement, ownership, and committed spend.",
-  };
   const sourceHelp = {
     theirstack: "Hiring demand",
     google_trends: "Buyer interest",
@@ -4137,48 +4155,24 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
   };
 
   const scoringContent=(<div>
-    <div style={{marginBottom:14,padding:"10px 12px",background:C.nested,border:`1px solid ${C.borderLight}`,borderRadius:10}}>
-      <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:2}}>Simple mode</div>
-      <div style={{...font.sans,fontSize:12,color:C.textSec,lineHeight:1.45}}>
-        1) Choose how important each signal is in the overall score. 2) Give each language stage a boost multiplier.
-        Higher multiplier = stronger pressure score when those job-language patterns appear.
+    <div style={{marginBottom:14}}>
+      <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:8}}>Signal importance (weights)</div>
+      <div style={{...font.sans,fontSize:11,color:C.textSec,marginBottom:10,lineHeight:1.45}}>
+        How much each data source contributes to the composite demand score.
       </div>
-    </div>
-
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:18}}>
-      <div>
-        <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:8}}>Signal importance (weights)</div>
-        {config.sources.map((src,si)=>{
-          const pct=Math.round((src.weight||0)*100);
-          return(<div key={src.id} style={{marginBottom:10}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-              <span style={{...font.sans,fontSize:12,fontWeight:600,color:C.text}}>{src.name}</span>
-              <span style={{...font.mono,fontSize:12,color:C.textSec}}>{pct}%</span>
-            </div>
-            <input type="range" min="0" max="100" step="5" value={pct}
-              onChange={e=>update(c=>{const ss=[...c.sources];ss[si]={...ss[si],weight:(parseInt(e.target.value,10)||0)/100};return{...c,sources:ss};})}
-              style={{width:"100%"}}/>
-            <div style={{...font.sans,fontSize:10.5,color:C.textMuted,marginTop:2}}>{sourceHelp[src.id]||"Signal contribution"}</div>
-          </div>);
-        })}
-      </div>
-
-      <div>
-        <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:8}}>Job language stages</div>
-        {config.stages.map((stg,si)=>(
-          <div key={stg.id} style={{marginBottom:10,padding:"8px 10px",border:`1px solid ${C.borderLight}`,borderRadius:10,background:C.white}}>
-            <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:5}}>
-              <input type="color" value={stg.color} onChange={e=>update(c=>{const ss=[...c.stages];ss[si]={...ss[si],color:e.target.value};return{...c,stages:ss};})} style={{width:20,height:20,padding:1,border:`1px solid ${C.border}`,borderRadius:4}}/>
-              <input value={stg.name} onChange={e=>update(c=>{const ss=[...c.stages];ss[si]={...ss[si],name:e.target.value};return{...c,stages:ss};})} style={{flex:1,fontSize:12,fontWeight:600,padding:"4px 8px"}}/>
-              <span style={{...font.sans,fontSize:10.5,color:C.textMuted}}>boost</span>
-              <input type="number" step="0.1" min="0.5" max="3" value={config.stageMultipliers[stg.id]||1}
-                onChange={e=>update(c=>({...c,stageMultipliers:{...c.stageMultipliers,[stg.id]:parseFloat(e.target.value)||1}}))}
-                style={{width:58,fontSize:12,padding:"4px 6px"}}/>
-            </div>
-            <div style={{...font.sans,fontSize:10.5,color:C.textMuted}}>{stageHelp[stg.id]||"Language classification stage"}</div>
+      {config.sources.map((src,si)=>{
+        const pct=Math.round((src.weight||0)*100);
+        return(<div key={src.id} style={{marginBottom:10}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+            <span style={{...font.sans,fontSize:12,fontWeight:600,color:C.text}}>{src.name}</span>
+            <span style={{...font.mono,fontSize:12,color:C.textSec}}>{pct}%</span>
           </div>
-        ))}
-      </div>
+          <input type="range" min="0" max="100" step="5" value={pct}
+            onChange={e=>update(c=>{const ss=[...c.sources];ss[si]={...ss[si],weight:(parseInt(e.target.value,10)||0)/100};return{...c,sources:ss};})}
+            style={{width:"100%"}}/>
+          <div style={{...font.sans,fontSize:10.5,color:C.textMuted,marginTop:2}}>{sourceHelp[src.id]||"Signal contribution"}</div>
+        </div>);
+      })}
     </div>
 
     <div style={{marginTop:16,padding:"12px 14px",background:C.nested,border:`1px solid ${C.borderLight}`,borderRadius:10}}>
@@ -4198,41 +4192,11 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
       </div>
     </div>
 
-    <div style={{marginTop:16,padding:"12px 14px",background:C.nested,border:`1px solid ${C.borderLight}`,borderRadius:10}}>
-      <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:8}}>Brief flagging thresholds</div>
-      <div style={{...font.sans,fontSize:11,color:C.textSec,marginBottom:10,lineHeight:1.45}}>
-        Each metric must change by at least this % (week-over-week) to be flagged as a significant mover in the weekly brief. Metrics below their threshold are included as context but not highlighted.
-      </div>
-      {[
-        { key: "theirstack", label: "Job Postings", desc: "WoW change in AI job volume", icon: "briefcase" },
-        { key: "google_trends", label: "Google Trends", desc: "WoW change in search interest index", icon: "search" },
-        { key: "github_repos", label: "GitHub Repos", desc: "WoW change in active repo count", icon: "code" },
-        { key: "claude_attrib", label: "Claude Attribution", desc: "WoW change in co-authored commits", icon: "terminal" },
-        { key: "hf_downloads", label: "HuggingFace Downloads", desc: "WoW change in total model downloads", icon: "download" },
-        { key: "composite", label: "Composite Score", desc: "WoW change in overall demand score", icon: "activity" },
-      ].map(({ key, label, desc }) => {
-        const bt = config.briefThresholds || {};
-        const val = bt[key] ?? 10;
-        return (
-          <div key={key} style={{marginBottom:10}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
-              <span style={{...font.sans,fontSize:11,fontWeight:600,color:C.text}}>{label}</span>
-              <span style={{...font.mono,fontSize:12,fontWeight:700,color: val <= 5 ? C.green : val <= 15 ? C.cyan : C.amber}}>{val}%</span>
-            </div>
-            <input type="range" min="1" max="50" step="1" value={val}
-              onChange={e => update(c => ({ ...c, briefThresholds: { ...(c.briefThresholds || {}), [key]: parseInt(e.target.value, 10) || 10 } }))}
-              style={{width:"100%"}} />
-            <div style={{...font.sans,fontSize:9.5,color:C.textMuted,marginTop:1}}>{desc}</div>
-          </div>
-        );
-      })}
-      <Btn size="sm" style={{marginTop:4}} onClick={() => update(c => ({ ...c, briefThresholds: { theirstack: 8, google_trends: 10, github_repos: 5, claude_attrib: 5, hf_downloads: 10, composite: 8 } }))}>Reset thresholds to defaults</Btn>
+    <div style={{marginTop:12}}>
+      <div style={{...font.sans,fontSize:11,color:C.textMuted}}>Brief flagging thresholds are editable on the main dashboard.</div>
     </div>
 
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8,gap:8,flexWrap:"wrap"}}>
-      <span style={{...font.sans,fontSize:11,color:C.textMuted}}>Don’t overthink it: the defaults are already tuned for directional monitoring.</span>
-      <Btn size="sm" onClick={()=>update(c=>({...c,stages:JSON.parse(JSON.stringify(DEFAULT_STAGES)),stageTaxonomy:JSON.parse(JSON.stringify(DEFAULT_STAGE_TAXONOMY)),stageMultipliers:{s1:0.7,s2:1,s3:1.2,s4:1.5},alertThreshold:10,briefThresholds:{theirstack:8,google_trends:10,github_repos:5,claude_attrib:5,hf_downloads:10,composite:8}}))}>Reset to recommended labels</Btn>
-    </div>
+
   </div>);
 
   const githubContent=(<div>
@@ -4408,7 +4372,7 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
   const items=[
     {id:"instructions",label:"Instructions",content:instructionsContent},
     {id:"groups",label:"Signal Groups",content:groupsContent},
-    {id:"scoring",label:"Scoring & Thresholds",content:scoringContent},
+    {id:"scoring",label:"Weights & Alerts",content:scoringContent},
     {id:"mailing",label:"Mailing List",content:mailingContent},
   ];
 
@@ -4515,40 +4479,20 @@ export default function App() {
     setBriefHistory(rows);
   }, []);
 
-  // One-time migration: purge corrupted backfill v2 caches and near-zero github_repos history
+  // One-time migration: wipe all github_repos history and backfill caches.
+  // Previous data mixed 30-day and 7-day query windows, making charts unusable.
+  // Live query now uses 7-day windows matching backfill — start fresh.
   useEffect(() => {
-    const migKey = `${HSPFX}hist_purge_v3b`;
+    const migKey = `${HSPFX}hist_purge_v4`;
     if (localStorage.getItem(migKey)) return;
     const keysToRemove = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k?.includes("backfill_v2_")) keysToRemove.push(k);
+      if (!k) continue;
+      if (k.includes("backfill_v2_") || k.includes("backfill_v3_")) keysToRemove.push(k);
+      if (k.includes("github_repos") && (k.includes("hist_") || k.includes("backfill_"))) keysToRemove.push(k);
     }
     keysToRemove.forEach(k => localStorage.removeItem(k));
-    // Purge near-zero points from github_repos history that came from the broken pushed:> query.
-    // Use max value as reference instead of last-4 median, since the last points may also be corrupt.
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (!k?.includes("hist_") || !k?.includes("github_repos")) continue;
-      try {
-        const raw = JSON.parse(localStorage.getItem(k) || "[]");
-        if (!Array.isArray(raw) || raw.length < 5) continue;
-        const allVals = raw.map(p => p.value).filter(v => typeof v === "number" && v > 0);
-        if (allVals.length === 0) continue;
-        const maxV = Math.max(...allVals);
-        if (maxV < 1000) continue;
-        const zeroThreshold = maxV * 0.01;
-        const nearZeroCount = allVals.filter(v => v < zeroThreshold).length;
-        if (nearZeroCount < allVals.length * 0.3) continue;
-        const cleaned = raw.filter(p => {
-          const v = p.value;
-          return typeof v === "number" && v >= zeroThreshold;
-        });
-        if (cleaned.length < raw.length) {
-          localStorage.setItem(k, JSON.stringify(cleaned));
-        }
-      } catch {}
-    }
     localStorage.setItem(migKey, new Date().toISOString());
   }, []);
 
@@ -4837,9 +4781,9 @@ export default function App() {
     if (!vert) return;
     cancelHistoryRef.current = false;
     const signalKey = `${verticalId}_${sourceId}`;
-    const histCacheKey = `backfill_v3_${signalKey}`;
+    const histCacheKey = `backfill_v4_${signalKey}`;
     const cached = ld(histCacheKey, null);
-    if (cached?.version === 3 && cached?.points?.length >= 50) {
+    if (cached?.version === 4 && cached?.points?.length >= 50) {
       cached.points.forEach(p => {
         const h = ld(`hist_${signalKey}`, []);
         if (!h.some(x => x.isoDate === p.isoDate)) {
@@ -4868,7 +4812,7 @@ export default function App() {
             sv(`hist_${signalKey}`, h);
           }
         });
-        sv(histCacheKey, { version: 3, generatedAt: new Date().toISOString(), points: recorded });
+        sv(histCacheKey, { version: 4, generatedAt: new Date().toISOString(), points: recorded });
         setAllHistories(prev => ({ ...prev, [signalKey]: getSignalHistory(signalKey) }));
       } catch (e) {
         setErrors(prev => ({ ...prev, [signalKey]: e.message }));
@@ -4920,7 +4864,7 @@ export default function App() {
         await sleep(4500);
       }
       if (recorded.length > 0) {
-        sv(histCacheKey, { version: 3, generatedAt: new Date().toISOString(), points: recorded });
+        sv(histCacheKey, { version: 4, generatedAt: new Date().toISOString(), points: recorded });
         setAllHistories(prev => ({ ...prev, [signalKey]: getSignalHistory(signalKey) }));
       }
       setHistoryProgress({ active: false, verticalId: null, current: 0, total: 0, label: "" });
