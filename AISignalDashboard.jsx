@@ -632,7 +632,7 @@ function smoothEMA(data, key, alpha = 0.3) {
   });
 }
 
-/** Comprehensive time-series sanitizer: dedup by day, detect structural scale changes, reject outlier spikes, clamp impossible swings. */
+/** Time-series sanitizer: dedup by day, reject point-level outlier spikes, clamp impossible swings. */
 function sanitizeTimeSeries(data, valueKey = "value", opts = {}) {
   if (!data || data.length < 2) return data;
   const { maxSwingPct = 300, iqrMultiplier = 2.5 } = opts;
@@ -648,38 +648,6 @@ function sanitizeTimeSeries(data, valueKey = "value", opts = {}) {
   });
   sorted = Array.from(byDay.values());
   if (sorted.length < 3) return sorted;
-
-  const vals = sorted.map(d => d[valueKey]).filter(v => typeof v === "number" && isFinite(v));
-  if (vals.length < 4) return sorted;
-
-  // Detect bimodal / structural scale changes caused by broken data collection.
-  // Strategy: partition values into "near-zero" (< 1% of the max) and "large". If the series
-  // has a clear split — most points near-zero and a few large ones (or vice versa) — keep only
-  // the cluster that matches the most recent live data point.
-  const maxVal = Math.max(...vals);
-  if (maxVal > 1000) {
-    const zeroThreshold = maxVal * 0.01;
-    const nearZeroCount = vals.filter(v => v < zeroThreshold).length;
-    const largeCount = vals.length - nearZeroCount;
-    // If >60% of points are near-zero but the last data point is large, the near-zero
-    // points are garbage from a broken collection method
-    const lastVal = sorted[sorted.length - 1]?.[valueKey] || 0;
-    if (nearZeroCount > vals.length * 0.6 && lastVal >= zeroThreshold) {
-      sorted = sorted.filter(d => {
-        const v = d[valueKey];
-        return typeof v === "number" && v >= zeroThreshold;
-      });
-      if (sorted.length < 2) return sorted;
-    }
-    // Opposite: if the last point is near-zero but most points are large, drop the trailing zeros
-    else if (largeCount > vals.length * 0.6 && lastVal < zeroThreshold) {
-      sorted = sorted.filter(d => {
-        const v = d[valueKey];
-        return typeof v !== "number" || v >= zeroThreshold;
-      });
-      if (sorted.length < 2) return sorted;
-    }
-  }
 
   const filteredVals = sorted.map(d => d[valueKey]).filter(v => typeof v === "number" && isFinite(v));
   if (filteredVals.length < 4) return sorted;
@@ -2167,7 +2135,28 @@ function SignalHistoryChart({ signalKey, color, label }) {
   const [smooth, setSmooth] = useState(true);
   const raw = getSignalHistory(signalKey);
   if (raw.length < 2) return <div style={{...font.sans,fontSize:12,color:C.textMuted,padding:"12px 0",textAlign:"center"}}>Chart appears after 2+ data points. Data is recorded permanently on each refresh.</div>;
-  const allData = sanitizeTimeSeries(raw.map(p => ({ ...p, _ts: new Date(p.isoDate || p.ts).getTime() })).sort((a,b)=>a._ts-b._ts), "value");
+  let allData = sanitizeTimeSeries(raw.map(p => ({ ...p, _ts: new Date(p.isoDate || p.ts).getTime() })).sort((a,b)=>a._ts-b._ts), "value");
+
+  // Handle scale breaks: when live-refresh and backfill data use different query windows
+  // (30d live vs 7d backfill) or when old corrupt data exists at a completely different magnitude.
+  // Strategy: find the majority cluster and keep it, filtering out the minority scale.
+  if (allData.length >= 5) {
+    const posVals = allData.map(d => d.value).filter(v => typeof v === "number" && isFinite(v) && v > 0);
+    if (posVals.length >= 5) {
+      const svs = [...posVals].sort((a, b) => a - b);
+      const scaleRange = svs[svs.length - 1] / Math.max(svs[0], 1);
+      if (scaleRange > 20) {
+        const median = svs[Math.floor(svs.length / 2)];
+        const loBound = median / 10, hiBound = median * 10;
+        const majority = allData.filter(d => {
+          const v = d.value;
+          return typeof v === "number" && v >= loBound && v <= hiBound;
+        });
+        if (majority.length >= 3 && majority.length >= allData.length * 0.4) allData = majority;
+      }
+    }
+  }
+
   const filtered = filterByTimeRange(allData, sigRange, "isoDate");
   if (filtered.length < 2) return <div style={{...font.sans,fontSize:12,color:C.textMuted,padding:"12px 0",textAlign:"center"}}>Not enough data in selected range. <TimeRangeSelector value={sigRange} onChange={setSigRange} style={{marginLeft:8}} /></div>;
   const emaAlpha = filtered.length <= 10 ? 0.15 : filtered.length <= 30 ? 0.2 : 0.25;
