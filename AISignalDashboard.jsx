@@ -1077,41 +1077,26 @@ function buildBriefAsciiCharts(snapshot) {
 function simpleMarkdownToHtml(md) {
   if (!md) return "";
   const esc = (s) => escapeHtml(s);
+  const F = "Inter,system-ui,-apple-system,sans-serif";
   const lines = String(md).split("\n");
   const out = [];
   let para = [];
   const flush = () => {
     if (!para.length) return;
-    const raw = esc(para.join(" ")).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-    out.push(`<p style="margin:0 0 12px;line-height:1.65;color:#1a1d26">${raw}</p>`);
+    let raw = esc(para.join(" "));
+    raw = raw.replace(/\*\*(.+?)\*\*/g, "<strong style=\"font-weight:600\">$1</strong>");
+    raw = raw.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer" style="color:#2563eb;text-decoration:underline;font-weight:500">$1</a>');
+    out.push(`<p style="margin:0 0 14px;line-height:1.75;color:#1f2937;font:400 14px/1.75 ${F}">${raw}</p>`);
     para = [];
   };
   for (const line of lines) {
     const t = line.trim();
-    if (!t) {
-      flush();
-      continue;
-    }
-    if (t.startsWith("### ")) {
-      flush();
-      out.push(`<h3 style="font:700 15px Inter,system-ui,sans-serif;margin:18px 0 6px;color:#1a1d26">${esc(t.slice(4))}</h3>`);
-      continue;
-    }
-    if (t.startsWith("## ")) {
-      flush();
-      out.push(`<h2 style="font:700 17px Inter,system-ui,sans-serif;margin:20px 0 8px;color:#1a1d26">${esc(t.slice(3))}</h2>`);
-      continue;
-    }
-    if (t.startsWith("# ")) {
-      flush();
-      out.push(`<h1 style="font:700 20px Inter,system-ui,sans-serif;margin:0 0 10px;color:#1a1d26">${esc(t.slice(2))}</h1>`);
-      continue;
-    }
-    if (/^━+$/.test(t) || t === "---") {
-      flush();
-      out.push("<hr style=\"border:none;border-top:1px solid #e1e4ea;margin:16px 0\" />");
-      continue;
-    }
+    if (!t) { flush(); continue; }
+    if (t.startsWith("### ")) { flush(); out.push(`<h3 style="font:600 14px/1.3 ${F};margin:20px 0 8px;color:#111827">${esc(t.slice(4))}</h3>`); continue; }
+    if (t.startsWith("## ")) { flush(); out.push(`<h2 style="font:700 16px/1.3 ${F};margin:24px 0 10px;color:#111827">${esc(t.slice(3))}</h2>`); continue; }
+    if (t.startsWith("# ")) { flush(); out.push(`<h1 style="font:700 20px/1.2 ${F};margin:0 0 12px;color:#111827;letter-spacing:-0.02em">${esc(t.slice(2))}</h1>`); continue; }
+    if (/^━+$/.test(t) || t === "---") { flush(); out.push(`<hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0" />`); continue; }
+    if (t.startsWith("• ") || t.startsWith("- ")) { flush(); out.push(`<div style="display:flex;gap:8px;margin:0 0 8px;font:400 14px/1.65 ${F};color:#1f2937"><span style="color:#9ca3af;flex-shrink:0;font-size:8px;margin-top:7px">●</span><span>${esc(t.slice(2)).replace(/\*\*(.+?)\*\*/g, "<strong style=\"font-weight:600\">$1</strong>")}</span></div>`); continue; }
     para.push(t);
   }
   flush();
@@ -1120,16 +1105,20 @@ function simpleMarkdownToHtml(md) {
 function buildSvgSparkline(vals, w, h, stroke) {
   const v = (vals || []).map(Number);
   if (v.length < 2) return "";
-  const pad = 6;
+  const pad = { t: 8, r: 8, b: 8, l: 8 };
   const lo = Math.min(...v), hi = Math.max(...v);
   const span = hi - lo || 1;
-  const step = (w - 2 * pad) / (v.length - 1);
-  const d = v.map((n, i) => {
-    const x = pad + i * step;
-    const y = pad + (1 - (n - lo) / span) * (h - 2 * pad);
-    return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block;max-width:100%"><rect fill="#f8fafc" width="100%" height="100%" rx="6"/><path d="${d}" fill="none" stroke="${stroke}" stroke-width="2"/></svg>`;
+  const cw = w - pad.l - pad.r, ch = h - pad.t - pad.b;
+  const step = cw / (v.length - 1);
+  const pts = v.map((n, i) => {
+    const x = pad.l + i * step;
+    const y = pad.t + (1 - (n - lo) / span) * ch;
+    return [x, y];
+  });
+  const d = pts.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`).join("");
+  const areaD = d + `L${pts[pts.length - 1][0].toFixed(1)},${(h - pad.b).toFixed(1)}L${pts[0][0].toFixed(1)},${(h - pad.b).toFixed(1)}Z`;
+  const gradId = `sg_${Math.random().toString(36).slice(2, 8)}`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block;max-width:100%"><defs><linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${stroke}" stop-opacity="0.12"/><stop offset="100%" stop-color="${stroke}" stop-opacity="0.01"/></linearGradient></defs><rect fill="#f9fafb" width="100%" height="100%" rx="6"/><path d="${areaD}" fill="url(#${gradId})"/><path d="${d}" fill="none" stroke="${stroke}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="${pts[pts.length - 1][0].toFixed(1)}" cy="${pts[pts.length - 1][1].toFixed(1)}" r="2.5" fill="${stroke}"/></svg>`;
 }
 function buildBriefChartsHtml(ctx) {
   if (!ctx?.verticals?.length) return "";
@@ -1156,35 +1145,37 @@ function buildBriefChartsHtml(ctx) {
   return `<div style="margin:0 0 20px 0">${parts.join("")}</div>`;
 }
 function briefEmailHtmlDocument(week, snapshot, markdownBody, diffMode, baseForDiff) {
-  if (!diffMode && snapshot) return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Weekly Brief ${escapeHtml(week)}</title></head><body style="margin:0;padding:28px;background:#f0f2f5;font-family:Inter,system-ui,sans-serif">${buildVisualBriefHtml(markdownBody, snapshot, week)}</body></html>`;
+  const F = "Inter,system-ui,-apple-system,sans-serif";
+  if (!diffMode && snapshot) return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Weekly Brief ${escapeHtml(week)}</title></head><body style="margin:0;padding:32px;background:#f3f4f6;font-family:${F}">${buildVisualBriefHtml(markdownBody, snapshot, week)}</body></html>`;
   const charts = buildBriefChartsHtml(snapshot);
   const inner = diffMode
     ? paragraphDiffHtml(baseForDiff, markdownBody)
-    : `${charts}<div style="font:15px/1.65 Georgia,serif;color:#1a1d26">${simpleMarkdownToHtml(markdownBody)}</div>`;
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Weekly Brief ${escapeHtml(week)}</title></head><body style="margin:0;padding:28px;background:#f0f2f5;font-family:Inter,system-ui,sans-serif"><div style="max-width:720px;margin:0 auto;background:#fff;border:1px solid #e1e4ea;border-radius:12px;padding:24px 28px">${inner}</div></body></html>`;
+    : `${charts}<div style="font:14px/1.75 ${F};color:#1f2937">${simpleMarkdownToHtml(markdownBody)}</div>`;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Weekly Brief ${escapeHtml(week)}</title></head><body style="margin:0;padding:32px;background:#f3f4f6;font-family:${F}"><div style="max-width:740px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:32px 36px">${inner}</div></body></html>`;
 }
 
-function buildSvgBarChart(values, labels, w, h, color, labelColor = "#4b5163") {
+function buildSvgBarChart(values, labels, w, h, color, labelColor = "#9ca3af") {
   if (!values?.length || values.length < 2) return "";
-  const pad = { t: 8, r: 8, b: 20, l: 40 };
+  const pad = { t: 10, r: 10, b: 22, l: 42 };
   const cw = w - pad.l - pad.r, ch = h - pad.t - pad.b;
   const max = Math.max(...values, 1);
-  const barW = Math.max(4, Math.min(24, (cw / values.length) * 0.7));
+  const barW = Math.max(4, Math.min(20, (cw / values.length) * 0.65));
   const gap = (cw - barW * values.length) / Math.max(1, values.length - 1);
-  let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block;max-width:100%"><rect fill="#f8fafc" width="100%" height="100%" rx="8"/>`;
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block;max-width:100%"><rect fill="#f9fafb" width="100%" height="100%" rx="6"/>`;
   for (let i = 0; i <= 3; i++) {
     const y = pad.t + ch - (ch * i / 3);
     const lbl = Math.round(max * i / 3);
-    svg += `<line x1="${pad.l}" y1="${y}" x2="${w - pad.r}" y2="${y}" stroke="#e1e4ea" stroke-width="0.5"/>`;
-    svg += `<text x="${pad.l - 4}" y="${y + 3}" text-anchor="end" fill="${labelColor}" font-size="8" font-family="Inter,system-ui,sans-serif">${lbl}</text>`;
+    svg += `<line x1="${pad.l}" y1="${y}" x2="${w - pad.r}" y2="${y}" stroke="#f3f4f6" stroke-width="1"/>`;
+    svg += `<text x="${pad.l - 6}" y="${y + 3}" text-anchor="end" fill="${labelColor}" font-size="8" font-family="Inter,system-ui,sans-serif">${lbl}</text>`;
   }
   values.forEach((v, i) => {
-    const bh = (v / max) * ch;
+    const bh = Math.max(1, (v / max) * ch);
     const x = pad.l + i * (barW + gap);
     const y = pad.t + ch - bh;
-    svg += `<rect x="${x}" y="${y}" width="${barW}" height="${bh}" fill="${color}" rx="2" opacity="0.85"/>`;
+    const isLast = i === values.length - 1;
+    svg += `<rect x="${x}" y="${y}" width="${barW}" height="${bh}" fill="${color}" rx="2" opacity="${isLast ? "1" : "0.6"}"/>`;
     if (labels?.[i] && (i === 0 || i === values.length - 1 || i % Math.max(1, Math.floor(values.length / 5)) === 0)) {
-      svg += `<text x="${x + barW / 2}" y="${h - 4}" text-anchor="middle" fill="${labelColor}" font-size="7" font-family="Inter,system-ui,sans-serif">${escapeHtml(String(labels[i]).slice(-5))}</text>`;
+      svg += `<text x="${x + barW / 2}" y="${h - 5}" text-anchor="middle" fill="${labelColor}" font-size="7" font-family="Inter,system-ui,sans-serif">${escapeHtml(String(labels[i]).slice(-5))}</text>`;
     }
   });
   svg += `</svg>`;
@@ -1192,34 +1183,43 @@ function buildSvgBarChart(values, labels, w, h, color, labelColor = "#4b5163") {
 }
 
 function buildVisualBriefHtml(text, ctx, week) {
-  if (!ctx) return `<div style="max-width:720px;margin:0 auto;background:#fff;border:1px solid #e1e4ea;border-radius:12px;padding:24px 28px"><div style="font:15px/1.65 Georgia,serif;color:#1a1d26">${simpleMarkdownToHtml(text)}</div></div>`;
+  if (!ctx) return `<div style="max-width:740px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:32px 36px"><div style="font:15px/1.75 Georgia,serif;color:#1a1d26">${simpleMarkdownToHtml(text)}</div></div>`;
   const esc = escapeHtml;
-  const card = (content, opts = {}) => `<div style="background:#fff;border:1px solid #e1e4ea;border-radius:12px;padding:18px 22px;margin-bottom:16px;${opts.border ? `border-left:4px solid ${opts.border};` : ""}">${content}</div>`;
-  const sectionHdr = (title, color = "#0284c7") => `<div style="font:700 11px Inter,system-ui,sans-serif;text-transform:uppercase;letter-spacing:0.08em;color:#4b5163;border-left:4px solid ${color};padding-left:10px;margin-bottom:12px">${esc(title)}</div>`;
+  const F = "Inter,system-ui,-apple-system,sans-serif";
+  const card = (content, opts = {}) => `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:24px 28px;margin-bottom:14px;${opts.accent ? `border-top:3px solid ${opts.accent}` : ""}">${content}</div>`;
+  const secLabel = (title) => `<div style="font:600 10px/1 ${F};text-transform:uppercase;letter-spacing:0.1em;color:#9ca3af;margin-bottom:14px">${esc(title)}</div>`;
   const badge = (label, level) => {
-    const m = { HIGH: { bg: "#ecfdf5", fg: "#0f7b55" }, MEDIUM: { bg: "#fef3c7", fg: "#b45309" }, LOW: { bg: "#fef2f2", fg: "#c0392b" }, ACCELERATING: { bg: "#ecfdf5", fg: "#0f7b55" }, STEADY_GROWTH: { bg: "#ecfdf5", fg: "#0f7b55" }, INFLECTING_UP: { bg: "#dbeafe", fg: "#1d4ed8" }, PLATEAUING: { bg: "#fef3c7", fg: "#b45309" }, DECELERATING: { bg: "#fef2f2", fg: "#c0392b" }, CONTRACTING: { bg: "#fef2f2", fg: "#c0392b" }, BOTTOMING: { bg: "#f3e8ff", fg: "#6d28d9" } };
+    const m = { HIGH: { bg: "#ecfdf5", fg: "#059669" }, MEDIUM: { bg: "#fefce8", fg: "#a16207" }, LOW: { bg: "#fef2f2", fg: "#dc2626" }, ACCELERATING: { bg: "#ecfdf5", fg: "#059669" }, STEADY_GROWTH: { bg: "#ecfdf5", fg: "#059669" }, INFLECTING_UP: { bg: "#eff6ff", fg: "#2563eb" }, PLATEAUING: { bg: "#fefce8", fg: "#a16207" }, DECELERATING: { bg: "#fef2f2", fg: "#dc2626" }, CONTRACTING: { bg: "#fef2f2", fg: "#dc2626" }, BOTTOMING: { bg: "#faf5ff", fg: "#7c3aed" } };
     const s = m[level] || m.MEDIUM;
-    return `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font:700 10px Inter,system-ui,sans-serif;background:${s.bg};color:${s.fg}">${esc(label)}</span>`;
+    return `<span style="display:inline-block;padding:3px 10px;border-radius:99px;font:600 9px/1.2 ${F};background:${s.bg};color:${s.fg};letter-spacing:0.02em">${esc(label)}</span>`;
   };
-  const fmtPct = (v) => v == null ? "n/a" : `${v >= 0 ? "+" : ""}${v}%`;
+  const fmtPct = (v) => v == null ? "—" : `${v >= 0 ? "+" : ""}${v}%`;
   const fmtNum = (v) => v == null ? "—" : typeof v === "number" ? v.toLocaleString() : v;
+  const kpiCell = (label, value, color) => `<div style="flex:1;min-width:100px;padding:12px 14px;background:#f9fafb;border-radius:8px;border:1px solid #f3f4f6"><div style="font:500 9px/1 ${F};color:#9ca3af;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">${esc(label)}</div><div style="font:700 18px/1 ${F};color:${color || "#111827"}">${value}</div></div>`;
 
   const parts = [];
-  parts.push(`<div style="max-width:900px;margin:0 auto;font-family:Inter,system-ui,sans-serif;color:#1a1d26">`);
+  parts.push(`<div style="max-width:860px;margin:0 auto;font-family:${F};color:#111827">`);
 
-  // Header
-  parts.push(card(`<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><div><div style="font:800 22px Inter,system-ui,sans-serif;color:#1a1d26;margin-bottom:4px">AI Demand Signal Intelligence</div><div style="font:400 13px Inter,system-ui,sans-serif;color:#4b5163">Week of ${esc(week)} · ${esc(new Date(ctx.generated_at).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }))} · ${ctx.total_verticals_tracked || 0} verticals</div></div><div style="text-align:right"><div style="font:800 32px Inter,system-ui,sans-serif;color:#0284c7">${ctx.composite_score_summary?.average || 0}</div><div style="font:600 10px Inter,system-ui,sans-serif;color:#4b5163;text-transform:uppercase;letter-spacing:0.06em">composite avg</div></div></div>`, { border: "#0284c7" }));
+  // ── MASTHEAD ──
+  const dateStr = ctx.generated_at ? new Date(ctx.generated_at).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }) : "";
+  parts.push(`<div style="background:#111827;color:#fff;border-radius:10px;padding:28px 32px;margin-bottom:14px">` +
+    `<div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px">` +
+    `<div><div style="font:300 10px/1 ${F};text-transform:uppercase;letter-spacing:0.14em;color:#6b7280;margin-bottom:8px">Weekly Intelligence Brief</div>` +
+    `<div style="font:700 24px/1.1 ${F};letter-spacing:-0.02em">AI Demand Signals</div>` +
+    `<div style="font:400 12px/1 ${F};color:#9ca3af;margin-top:8px">Week of ${esc(week)} · ${esc(dateStr)}</div></div>` +
+    `<div style="text-align:right"><div style="font:700 36px/1 ${F};color:#60a5fa">${ctx.composite_score_summary?.average || 0}</div>` +
+    `<div style="font:500 9px/1 ${F};color:#6b7280;text-transform:uppercase;letter-spacing:0.08em;margin-top:4px">Composite</div></div>` +
+    `</div></div>`);
 
-  // Regime dashboard table
+  // ── REGIME TABLE ──
   if (ctx.verticals?.length) {
-    let table = `${sectionHdr("Regime Dashboard")}`;
-    table += `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr>`;
+    let table = secLabel("Signal Regime Dashboard");
+    table += `<div style="overflow-x:auto;border:1px solid #e5e7eb;border-radius:8px"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#f9fafb">`;
     ["Vertical", "Regime", "Score", "Jobs", "Trends", "Repos", "Claude"].forEach((h) => {
-      table += `<th style="text-align:left;padding:8px 10px;border-bottom:2px solid #e1e4ea;font-weight:700;color:#4b5163;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;white-space:nowrap">${h}</th>`;
+      table += `<th style="text-align:left;padding:10px 12px;font:600 9px/1 ${F};color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;border-bottom:1px solid #e5e7eb;white-space:nowrap">${h}</th>`;
     });
     table += `</tr></thead><tbody>`;
     ctx.verticals.forEach((v, i) => {
-      const bg = i % 2 === 0 ? "#fff" : "#f7f8fa";
       const jobs = v.signals?.job_postings;
       const trends = v.signals?.google_trends;
       const repos = v.signals?.github_repos;
@@ -1231,23 +1231,21 @@ function buildVisualBriefHtml(text, ctx, week) {
       else if (mom < -15) regime = "DECELERATING";
       else if (mom != null && Math.abs(mom) <= 5) regime = "PLATEAUING";
       else if (stage?.label) regime = stage.label.toUpperCase().replace(/\s+/g, "_");
-      table += `<tr style="background:${bg}">`;
-      table += `<td style="padding:8px 10px;font-weight:600">${esc(v.name)}</td>`;
-      table += `<td style="padding:8px 10px">${badge(regime.replace(/_/g, " "), regime)}</td>`;
-      table += `<td style="padding:8px 10px;font-weight:700">${v.composite_score || 0}</td>`;
-      table += `<td style="padding:8px 10px">${fmtNum(jobs?.current_count)} <span style="color:#4b5163;font-size:10px">${fmtPct(jobs?.time_series?.pct_change_vs_previous)}</span></td>`;
-      table += `<td style="padding:8px 10px">${fmtNum(trends?.current_index)}</td>`;
-      table += `<td style="padding:8px 10px">${fmtNum(repos?.active_repos_30d)}</td>`;
-      table += `<td style="padding:8px 10px">${fmtNum(claude?.commits_7d)}</td>`;
-      table += `</tr>`;
+      const bdr = i < ctx.verticals.length - 1 ? "border-bottom:1px solid #f3f4f6;" : "";
+      table += `<tr><td style="padding:10px 12px;font:600 12px/1.3 ${F};${bdr}">${esc(v.name)}</td>`;
+      table += `<td style="padding:10px 12px;${bdr}">${badge(regime.replace(/_/g, " "), regime)}</td>`;
+      table += `<td style="padding:10px 12px;font:700 13px/1 ${F};${bdr}">${v.composite_score || 0}</td>`;
+      table += `<td style="padding:10px 12px;font:500 12px ${F};${bdr}">${fmtNum(jobs?.current_count)} <span style="color:#9ca3af;font-size:10px">${fmtPct(jobs?.time_series?.pct_change_vs_previous)}</span></td>`;
+      table += `<td style="padding:10px 12px;font:500 12px ${F};${bdr}">${fmtNum(trends?.current_index)}</td>`;
+      table += `<td style="padding:10px 12px;font:500 12px ${F};${bdr}">${fmtNum(repos?.active_repos_30d)}</td>`;
+      table += `<td style="padding:10px 12px;font:500 12px ${F};${bdr}">${fmtNum(claude?.commits_7d)}</td></tr>`;
     });
     table += `</tbody></table></div>`;
     parts.push(card(table));
   }
 
-  // Visual charts per vertical
+  // ── SIGNAL CHARTS PER VERTICAL ──
   if (ctx.verticals?.length) {
-    parts.push(sectionHdr("Signal Trends", "#0284c7"));
     ctx.verticals.forEach((v) => {
       const mon = v.theirstack_historical?.recent_monthly || [];
       const jobVals = mon.length >= 2 ? mon.map((m) => m.count || 0) : (v.signals?.job_postings?.time_series?.recent_values || []).map((p) => p.value || 0);
@@ -1256,113 +1254,101 @@ function buildVisualBriefHtml(text, ctx, week) {
       const trendLabels = (v.signals?.google_trends?.time_series?.recent_values || []).map((p) => p.date?.slice(5, 10) || "");
       const repoVals = (v.signals?.github_repos?.time_series?.recent_values || []).map((p) => p.value || 0);
       const claudeVals = (v.signals?.claude_code_attribution?.time_series?.recent_values || []).map((p) => p.value || 0);
+      const noData = `<div style="font:400 11px ${F};color:#d1d5db;padding:18px 0;text-align:center">No data</div>`;
+      const chartLabel = (t) => `<div style="font:600 9px/1 ${F};color:#9ca3af;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">${t}</div>`;
+      const chartDates = (labels) => labels.length >= 2 ? `<div style="display:flex;justify-content:space-between;font:400 8px ${F};color:#d1d5db;margin-top:3px"><span>${esc(labels[0])}</span><span>${esc(labels[labels.length - 1])}</span></div>` : "";
 
-      let chartHtml = `<div style="font:700 15px Inter,system-ui,sans-serif;color:#1a1d26;margin-bottom:4px">${esc(v.name)}</div>`;
-      chartHtml += `<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">`;
-      chartHtml += `<span style="font:600 11px Inter,system-ui,sans-serif;padding:3px 8px;border-radius:4px;background:#f0f7ff;color:#0284c7">Score: ${v.composite_score || 0}</span>`;
-      if (v.pipeline_stage?.label) chartHtml += `<span style="font:600 11px Inter,system-ui,sans-serif;padding:3px 8px;border-radius:4px;background:#f0fdf4;color:#0f7b55">${esc(v.pipeline_stage.label)}</span>`;
-      chartHtml += `</div>`;
-      chartHtml += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">`;
-      chartHtml += `<div><div style="font:700 10px Inter,system-ui,sans-serif;color:#4b5163;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Job Postings</div>`;
-      chartHtml += jobVals.length >= 2 ? buildSvgBarChart(jobVals, jobLabels, 320, 100, "#0284c7") : `<div style="font:400 11px Inter,system-ui,sans-serif;color:#8b92a5;padding:20px 0">Insufficient history</div>`;
-      chartHtml += `</div>`;
-      chartHtml += `<div><div style="font:700 10px Inter,system-ui,sans-serif;color:#4b5163;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Google Trends</div>`;
-      chartHtml += trendVals.length >= 2 ? buildSvgSparkline(trendVals, 320, 80, "#2563eb") : `<div style="font:400 11px Inter,system-ui,sans-serif;color:#8b92a5;padding:20px 0">Insufficient history</div>`;
-      if (trendLabels.length >= 2) chartHtml += `<div style="display:flex;justify-content:space-between;font:400 7px Inter,system-ui,sans-serif;color:#8b92a5;margin-top:2px"><span>${esc(trendLabels[0])}</span><span>${esc(trendLabels[trendLabels.length - 1])}</span></div>`;
-      chartHtml += `</div>`;
-      if (repoVals.length >= 2) {
-        chartHtml += `<div><div style="font:700 10px Inter,system-ui,sans-serif;color:#4b5163;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">GitHub Repos</div>${buildSvgSparkline(repoVals, 320, 60, "#0f7b55")}</div>`;
-      }
-      if (claudeVals.length >= 2) {
-        chartHtml += `<div><div style="font:700 10px Inter,system-ui,sans-serif;color:#4b5163;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Claude Attribution</div>${buildSvgSparkline(claudeVals, 320, 60, "#6d28d9")}</div>`;
-      }
-      chartHtml += `</div>`;
+      let html = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">` +
+        `<div style="font:700 15px/1 ${F};color:#111827">${esc(v.name)}</div>` +
+        `<span style="font:600 12px/1 ${F};padding:3px 10px;border-radius:99px;background:#eff6ff;color:#2563eb">${v.composite_score || 0}</span>` +
+        (v.pipeline_stage?.label ? ` ${badge(v.pipeline_stage.label, v.pipeline_stage.label.toUpperCase().replace(/\s+/g, "_"))}` : "") +
+        `</div>`;
+      html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">`;
+      html += `<div>${chartLabel("Job Postings")}${jobVals.length >= 2 ? buildSvgBarChart(jobVals, jobLabels, 360, 90, "#2563eb", "#9ca3af") : noData}</div>`;
+      html += `<div>${chartLabel("Google Trends")}${trendVals.length >= 2 ? buildSvgSparkline(trendVals, 360, 80, "#7c3aed") : noData}${chartDates(trendLabels)}</div>`;
+      if (repoVals.length >= 2) html += `<div>${chartLabel("GitHub Repos")}${buildSvgSparkline(repoVals, 360, 70, "#059669")}</div>`;
+      if (claudeVals.length >= 2) html += `<div>${chartLabel("Claude Attribution")}${buildSvgSparkline(claudeVals, 360, 70, "#7c3aed")}</div>`;
+      html += `</div>`;
 
-      // Key metrics row
+      // KPI strip
       const jobs = v.signals?.job_postings;
       const trends = v.signals?.google_trends;
-      chartHtml += `<div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">`;
-      if (jobs?.time_series) {
-        chartHtml += `<div style="flex:1;min-width:120px;padding:8px 10px;background:#f7f8fa;border-radius:8px"><div style="font:600 9px Inter,system-ui,sans-serif;color:#8b92a5;text-transform:uppercase">Jobs momentum</div><div style="font:700 16px Inter,system-ui,sans-serif;color:${(jobs.time_series.rolling_momentum_5pt_pct || 0) >= 0 ? "#0f7b55" : "#c0392b"}">${fmtPct(jobs.time_series.rolling_momentum_5pt_pct)}</div></div>`;
-      }
-      if (trends?.momentum_pct != null) {
-        chartHtml += `<div style="flex:1;min-width:120px;padding:8px 10px;background:#f7f8fa;border-radius:8px"><div style="font:600 9px Inter,system-ui,sans-serif;color:#8b92a5;text-transform:uppercase">Trends momentum</div><div style="font:700 16px Inter,system-ui,sans-serif;color:${trends.momentum_pct >= 0 ? "#0f7b55" : "#c0392b"}">${fmtPct(trends.momentum_pct)}</div></div>`;
-      }
-      if (jobs?.time_series?.z_score_current != null) {
-        chartHtml += `<div style="flex:1;min-width:120px;padding:8px 10px;background:#f7f8fa;border-radius:8px"><div style="font:600 9px Inter,system-ui,sans-serif;color:#8b92a5;text-transform:uppercase">Z-score</div><div style="font:700 16px Inter,system-ui,sans-serif;color:#1a1d26">${jobs.time_series.z_score_current}</div></div>`;
-      }
-      if (v.theirstack_historical?.current_vs_baseline_pct != null) {
-        chartHtml += `<div style="flex:1;min-width:120px;padding:8px 10px;background:#f7f8fa;border-radius:8px"><div style="font:600 9px Inter,system-ui,sans-serif;color:#8b92a5;text-transform:uppercase">vs Baseline</div><div style="font:700 16px Inter,system-ui,sans-serif;color:#1a1d26">${fmtPct(v.theirstack_historical.current_vs_baseline_pct)}</div></div>`;
-      }
-      chartHtml += `</div>`;
+      const kpis = [];
+      if (jobs?.time_series) kpis.push(kpiCell("Jobs Momentum", fmtPct(jobs.time_series.rolling_momentum_5pt_pct), (jobs.time_series.rolling_momentum_5pt_pct || 0) >= 0 ? "#059669" : "#dc2626"));
+      if (trends?.momentum_pct != null) kpis.push(kpiCell("Trends Momentum", fmtPct(trends.momentum_pct), trends.momentum_pct >= 0 ? "#059669" : "#dc2626"));
+      if (jobs?.time_series?.z_score_current != null) kpis.push(kpiCell("Z-Score", String(jobs.time_series.z_score_current), "#111827"));
+      if (v.theirstack_historical?.current_vs_baseline_pct != null) kpis.push(kpiCell("vs Baseline", fmtPct(v.theirstack_historical.current_vs_baseline_pct), "#111827"));
+      if (kpis.length) html += `<div style="display:flex;gap:10px;flex-wrap:wrap">${kpis.join("")}</div>`;
 
-      // Divergences
       if (v.divergence_signals?.length) {
-        chartHtml += `<div style="margin-top:12px">`;
+        html += `<div style="margin-top:14px">`;
         v.divergence_signals.forEach((d) => {
-          const dc = d.direction?.includes("leading") ? "#b45309" : "#6d28d9";
-          chartHtml += `<div style="padding:8px 10px;margin-bottom:6px;border-left:3px solid ${dc};background:#fffbeb;border-radius:0 6px 6px 0;font:400 12px Inter,system-ui,sans-serif;color:#1a1d26"><strong>${esc(d.pair?.replace(/_/g, " ") || "divergence")}</strong>: ${esc(d.interpretation || "")}</div>`;
+          html += `<div style="padding:10px 14px;margin-bottom:6px;border-left:3px solid #f59e0b;background:#fffbeb;border-radius:0 6px 6px 0;font:400 12px/1.5 ${F};color:#111827"><strong style="font-weight:600">${esc(d.pair?.replace(/_/g, " ") || "divergence")}</strong> — ${esc(d.interpretation || "")}</div>`;
         });
-        chartHtml += `</div>`;
+        html += `</div>`;
       }
-      parts.push(card(chartHtml, { border: v.pipeline_stage?.index >= 3 ? "#0f7b55" : v.pipeline_stage?.index <= 1 ? "#c0392b" : "#0284c7" }));
+      parts.push(card(html, { accent: v.pipeline_stage?.index >= 3 ? "#059669" : v.pipeline_stage?.index <= 1 ? "#dc2626" : "#2563eb" }));
     });
   }
 
-  // Macro context
+  // ── MACRO CONTEXT ──
   if (ctx.macro_labor_context && ctx.macro_labor_context.fred_headlines?.length) {
-    let macroHtml = sectionHdr("Macro Context", "#b45309");
+    let macroHtml = secLabel("Macro Context");
     if (ctx.macro_labor_context.chicago_recent_weeks?.length >= 2) {
       const cw = ctx.macro_labor_context.chicago_recent_weeks;
       const uVals = cw.map((r) => r.forecast_u).filter((v) => v != null);
       const u3Vals = cw.map((r) => r.u3).filter((v) => v != null);
       const cwLabels = cw.map((r) => r.date?.slice(5) || "");
       if (uVals.length >= 2) {
-        macroHtml += `<div style="margin-bottom:12px"><div style="font:700 10px Inter,system-ui,sans-serif;color:#4b5163;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Chicago Fed Nowcast vs U-3</div>`;
-        macroHtml += buildSvgSparkline(uVals, 400, 60, "#b45309");
-        if (u3Vals.length >= 2) macroHtml += buildSvgSparkline(u3Vals, 400, 60, "#2563eb");
-        macroHtml += `<div style="display:flex;justify-content:space-between;font:400 7px Inter,system-ui,sans-serif;color:#8b92a5;margin-top:2px"><span>${esc(cwLabels[0])}</span><span>${esc(cwLabels[cwLabels.length - 1])}</span></div></div>`;
+        macroHtml += `<div style="margin-bottom:14px"><div style="font:600 9px/1 ${F};color:#9ca3af;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">Chicago Fed Nowcast vs U-3</div>`;
+        macroHtml += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">`;
+        macroHtml += `<div>${buildSvgSparkline(uVals, 380, 60, "#f59e0b")}<div style="font:400 8px ${F};color:#9ca3af;margin-top:2px">Nowcast</div></div>`;
+        if (u3Vals.length >= 2) macroHtml += `<div>${buildSvgSparkline(u3Vals, 380, 60, "#2563eb")}<div style="font:400 8px ${F};color:#9ca3af;margin-top:2px">U-3</div></div>`;
+        macroHtml += `</div></div>`;
       }
     }
     const headlines = ctx.macro_labor_context.fred_headlines.slice(0, 12);
-    macroHtml += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">`;
+    macroHtml += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px">`;
     headlines.forEach((h) => {
-      macroHtml += `<div style="padding:6px 8px;background:#f7f8fa;border-radius:6px"><div style="font:600 8px Inter,system-ui,sans-serif;color:#8b92a5;text-transform:uppercase">${esc(h.name?.slice(0, 28) || h.id)}</div><div style="font:700 14px Inter,system-ui,sans-serif;color:#1a1d26">${h.value != null ? h.value : "—"}</div><div style="font:400 8px Inter,system-ui,sans-serif;color:#8b92a5">${esc(h.date || "")}</div></div>`;
+      macroHtml += `<div style="padding:10px 12px;background:#f9fafb;border-radius:8px;border:1px solid #f3f4f6"><div style="font:500 8px/1 ${F};color:#9ca3af;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px">${esc((h.name || h.id || "").slice(0, 28))}</div><div style="font:700 15px/1 ${F};color:#111827">${h.value != null ? h.value : "—"}</div><div style="font:400 8px/1 ${F};color:#d1d5db;margin-top:3px">${esc(h.date || "")}</div></div>`;
     });
     macroHtml += `</div>`;
-    parts.push(card(macroHtml, { border: "#b45309" }));
+    parts.push(card(macroHtml, { accent: "#f59e0b" }));
   }
 
-  // HuggingFace
+  // ── HUGGINGFACE ──
   if (ctx.ai_supply_side?.hugging_face_leaderboard?.length) {
-    let hfHtml = sectionHdr("AI Supply Side — HuggingFace", "#6d28d9");
+    let hfHtml = secLabel("AI Supply Side — HuggingFace");
     const hfOrgs = ctx.ai_supply_side.hugging_face_leaderboard;
     const maxDl = Math.max(...hfOrgs.map((o) => o.total_downloads || 0), 1);
-    hfHtml += `<div style="display:grid;gap:6px">`;
+    hfHtml += `<div style="display:grid;gap:8px">`;
     hfOrgs.forEach((o, i) => {
       const pct = ((o.total_downloads || 0) / maxDl * 100).toFixed(0);
-      hfHtml += `<div style="display:flex;align-items:center;gap:8px"><span style="font:600 10px Inter,system-ui,sans-serif;color:#4b5163;min-width:20px;text-align:right">${i + 1}</span><span style="font:600 11px Inter,system-ui,sans-serif;color:#1a1d26;min-width:100px">${esc(o.org)}</span><div style="flex:1;height:14px;background:#f3e8ff;border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:#6d28d9;border-radius:3px"></div></div><span style="font:600 10px Inter,system-ui,sans-serif;color:#4b5163;min-width:60px;text-align:right">${(o.total_downloads || 0).toLocaleString()}</span></div>`;
+      hfHtml += `<div style="display:flex;align-items:center;gap:10px"><span style="font:600 10px ${F};color:#9ca3af;min-width:18px;text-align:right">${i + 1}</span><span style="font:600 11px ${F};color:#111827;min-width:90px">${esc(o.org)}</span><div style="flex:1;height:16px;background:#f5f3ff;border-radius:4px;overflow:hidden"><div style="height:100%;width:${pct}%;background:#7c3aed;border-radius:4px;transition:width .3s"></div></div><span style="font:500 10px ${F};color:#6b7280;min-width:64px;text-align:right">${(o.total_downloads || 0).toLocaleString()}</span></div>`;
     });
     hfHtml += `</div>`;
     if (ctx.ai_supply_side.hf_download_trend?.recent_values?.length >= 2) {
       const dlVals = ctx.ai_supply_side.hf_download_trend.recent_values.map((p) => p.value || 0);
-      hfHtml += `<div style="margin-top:12px"><div style="font:700 10px Inter,system-ui,sans-serif;color:#4b5163;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Download Trend</div>${buildSvgSparkline(dlVals, 400, 60, "#6d28d9")}</div>`;
+      hfHtml += `<div style="margin-top:14px"><div style="font:600 9px/1 ${F};color:#9ca3af;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">Download Trend</div>${buildSvgSparkline(dlVals, 420, 60, "#7c3aed")}</div>`;
     }
-    parts.push(card(hfHtml, { border: "#6d28d9" }));
+    parts.push(card(hfHtml, { accent: "#7c3aed" }));
   }
 
-  // Claude analysis text — parse sections
+  // ── ANALYSIS TEXT (from Claude) ──
   const analysisHtml = buildAnalysisSectionsHtml(text);
   if (analysisHtml) parts.push(analysisHtml);
 
-  // Data quality
+  // ── DATA QUALITY ──
   if (ctx.data_quality_flags?.length) {
-    let dqHtml = sectionHdr("Data Quality Flags", "#c0392b");
+    let dqHtml = secLabel("Data Quality");
     ctx.data_quality_flags.forEach((f) => {
-      dqHtml += `<div style="padding:4px 0;font:400 11px Inter,system-ui,sans-serif;color:#c0392b">⚠ ${esc(f)}</div>`;
+      dqHtml += `<div style="padding:4px 0;font:400 11px/1.5 ${F};color:#dc2626">⚠ ${esc(f)}</div>`;
     });
-    parts.push(card(dqHtml, { border: "#c0392b" }));
+    parts.push(card(dqHtml, { accent: "#dc2626" }));
   }
+
+  // ── FOOTER ──
+  parts.push(`<div style="text-align:center;padding:16px 0 8px;font:400 10px ${F};color:#d1d5db">Generated by AI Demand Signal Tracker · ${esc(dateStr)}</div>`);
 
   parts.push(`</div>`);
   return parts.join("");
@@ -1371,23 +1357,25 @@ function buildVisualBriefHtml(text, ctx, week) {
 function buildAnalysisSectionsHtml(text) {
   if (!text) return "";
   const esc = escapeHtml;
-  const sectionColors = {
-    "WEEK IN 60": "#0284c7", "60 SECONDS": "#0284c7", "KEY TAKEAWAYS": "#0284c7",
-    "STREET IS MISSING": "#b45309", "WHAT THE STREET": "#b45309",
-    "STOCK PULSE": "#6d28d9", "AI STOCK": "#6d28d9",
-    "SIGNAL DEEP": "#2563eb", "SIGNAL MOVEMENT": "#2563eb",
-    "DIVERGENCE": "#b45309", "CORRELATIONS": "#6d28d9",
-    "HEARING": "#0f7b55", "WHAT I": "#0f7b55",
-    "CONVICTION": "#0f7b55", "INVESTMENT PREDICTIONS": "#0f7b55", "ACTIONABLE": "#0f7b55",
-    "RISK RADAR": "#c0392b", "RISK FACTORS": "#c0392b", "CONTRARIAN": "#c0392b",
-    "DATA QUALITY": "#4b5163", "DATA CONFIDENCE": "#4b5163", "SOURCES": "#4b5163",
-    "EXECUTIVE SUMMARY": "#0284c7", "VERTICAL DEEP": "#0284c7",
-    "INTERPRETATION": "#2563eb", "MACRO": "#b45309", "REGIME": "#0284c7",
+  const F = "Inter,system-ui,-apple-system,sans-serif";
+  const sectionMeta = {
+    "WEEK IN 60": { color: "#2563eb", icon: "01" }, "60 SECONDS": { color: "#2563eb", icon: "01" }, "KEY TAKEAWAYS": { color: "#2563eb", icon: "01" },
+    "MACRO LANDSCAPE": { color: "#f59e0b", icon: "02" }, "MACRO": { color: "#f59e0b", icon: "02" },
+    "STOCK PULSE": { color: "#7c3aed", icon: "03" }, "AI STOCK": { color: "#7c3aed", icon: "03" },
+    "STREET IS MISSING": { color: "#f59e0b", icon: "04" }, "WHAT THE STREET": { color: "#f59e0b", icon: "04" },
+    "SIGNAL DEEP": { color: "#2563eb", icon: "05" }, "SIGNAL MOVEMENT": { color: "#2563eb", icon: "05" },
+    "DIVERGENCE": { color: "#f59e0b", icon: "06" }, "CORRELATIONS": { color: "#7c3aed", icon: "06" },
+    "HEARING": { color: "#059669", icon: "07" }, "WHAT I": { color: "#059669", icon: "07" },
+    "CONVICTION": { color: "#059669", icon: "08" }, "INVESTMENT PREDICTIONS": { color: "#059669", icon: "08" }, "ACTIONABLE": { color: "#059669", icon: "08" },
+    "RISK RADAR": { color: "#dc2626", icon: "09" }, "RISK FACTORS": { color: "#dc2626", icon: "09" }, "CONTRARIAN": { color: "#dc2626", icon: "09" },
+    "DATA QUALITY": { color: "#6b7280", icon: "10" }, "DATA CONFIDENCE": { color: "#6b7280", icon: "10" }, "SOURCES": { color: "#6b7280", icon: "10" },
+    "EXECUTIVE SUMMARY": { color: "#2563eb", icon: "00" }, "VERTICAL DEEP": { color: "#2563eb", icon: "05" },
+    "INTERPRETATION": { color: "#2563eb", icon: "05" }, "REGIME": { color: "#2563eb", icon: "02" },
   };
-  const getSectionColor = (title) => {
+  const getMeta = (title) => {
     const upper = title.toUpperCase();
-    for (const [k, c] of Object.entries(sectionColors)) { if (upper.includes(k)) return c; }
-    return "#4b5163";
+    for (const [k, m] of Object.entries(sectionMeta)) { if (upper.includes(k)) return m; }
+    return { color: "#6b7280", icon: "—" };
   };
   const sections = text.split(/━{3,}|═{3,}/).map((s) => s.trim()).filter(Boolean);
   const parts = [];
@@ -1400,18 +1388,20 @@ function buildAnalysisSectionsHtml(text) {
       bodyLines = lines.slice(1);
     }
     if (title.includes("VISUAL TREND") || title.includes("REGIME DASHBOARD")) continue;
-    const color = getSectionColor(title);
+    const meta = getMeta(title);
     let body = bodyLines.join("\n").trim();
     if (!body) continue;
     body = body.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '%%LINK%%$1%%HREF%%$2%%ENDLINK%%');
     body = esc(body);
-    body = body.replace(/%%LINK%%(.+?)%%HREF%%(https?:\/\/[^%]+)%%ENDLINK%%/g, '<a href="$2" target="_blank" rel="noreferrer" style="color:#0284c7;text-decoration:underline">$1</a>');
-    body = body.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\n/g, "<br/>");
-    body = body.replace(/^• /gm, `<span style="color:${color};margin-right:4px">●</span> `);
-    body = body.replace(/((?:^|<br\/>)\d+\.\s)/g, `<span style="font-weight:700;color:${color}">$1</span>`);
-    const html = `<div style="background:#fff;border:1px solid #e1e4ea;border-radius:12px;padding:18px 22px;margin-bottom:16px;border-left:4px solid ${color}">` +
-      (title ? `<div style="font:700 11px Inter,system-ui,sans-serif;text-transform:uppercase;letter-spacing:0.08em;color:#4b5163;margin-bottom:10px">${esc(title)}</div>` : "") +
-      `<div style="font:400 13px/1.7 Inter,system-ui,sans-serif;color:#1a1d26">${body}</div></div>`;
+    body = body.replace(/%%LINK%%(.+?)%%HREF%%(https?:\/\/[^%]+)%%ENDLINK%%/g, `<a href="$2" target="_blank" rel="noreferrer" style="color:${meta.color};text-decoration:underline;font-weight:500">$1</a>`);
+    body = body.replace(/\*\*(.+?)\*\*/g, "<strong style=\"font-weight:600\">$1</strong>");
+    body = body.replace(/\n\n/g, "</p><p style=\"margin:0 0 14px;line-height:1.7\">");
+    body = body.replace(/\n/g, "<br/>");
+    body = body.replace(/• /g, `<span style="color:${meta.color};font-size:7px;vertical-align:middle;margin-right:6px">●</span>`);
+    body = `<p style="margin:0 0 14px;line-height:1.7">${body}</p>`;
+    const html = `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:0;margin-bottom:14px;overflow:hidden">` +
+      (title ? `<div style="display:flex;align-items:center;gap:10px;padding:14px 24px 12px;border-bottom:1px solid #f3f4f6;background:#f9fafb"><span style="font:700 11px/1 ${F};color:${meta.color};min-width:18px">${meta.icon}</span><div style="font:600 11px/1 ${F};text-transform:uppercase;letter-spacing:0.08em;color:#4b5163">${esc(title)}</div></div>` : "") +
+      `<div style="padding:18px 24px;font:400 13.5px/1.7 ${F};color:#1f2937">${body}</div></div>`;
     parts.push(html);
   }
   return parts.join("");
@@ -5863,46 +5853,55 @@ INSTRUCTIONS:
       )}
 
       {briefOpen && (
-        <div style={{position:"fixed",inset:0,zIndex:230,background:"rgba(245,247,250,.97)",display:"flex",flexDirection:"column"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 20px",borderBottom:`1px solid ${C.border}`}}>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <div style={{width:18,height:18,borderRadius:99,background:C.cyan,opacity:briefLoading?0.6:1,animation:briefLoading?"pulse 1.2s ease-in-out infinite":"none"}} />
-              <div style={{fontSize:14,fontWeight:700}}>AI Demand Signal Weekly Brief</div>
+        <div style={{position:"fixed",inset:0,zIndex:230,background:"#f3f4f6",display:"flex",flexDirection:"column"}}>
+          {/* Toolbar */}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 24px",background:"#fff",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <div style={{width:8,height:8,borderRadius:99,background:briefLoading?"#f59e0b":C.cyan,animation:briefLoading?"pulse 1.2s ease-in-out infinite":"none"}} />
+              <span style={{...font.sans,fontSize:13,fontWeight:700,color:C.text,letterSpacing:"-0.01em"}}>Weekly Brief</span>
+              <span style={{...font.sans,fontSize:11,color:C.textMuted}}>{briefWeek}</span>
             </div>
-            <div style={{display:"flex",alignItems:"center",gap:6}}>
-              <label style={{display:"flex",alignItems:"center",gap:4,fontSize:12,color:C.textSec}}><input type="checkbox" checked={briefDiffMode} onChange={e=>setBriefDiffMode(e.target.checked)} /> Show Changes</label>
+            <div style={{display:"flex",alignItems:"center",gap:4}}>
+              <label style={{display:"flex",alignItems:"center",gap:4,...font.sans,fontSize:11,color:C.textMuted,cursor:"pointer",padding:"4px 8px",borderRadius:6,background:briefDiffMode?C.cyanBg:"transparent"}}>
+                <input type="checkbox" checked={briefDiffMode} onChange={e=>setBriefDiffMode(e.target.checked)} style={{width:12,height:12}} /> Diff
+              </label>
+              <div style={{width:1,height:16,background:C.border,margin:"0 4px"}} />
+              <Btn size="sm" onClick={()=>{const tmp=document.createElement("div");tmp.innerHTML=briefContent||"";navigator.clipboard?.writeText(tmp.textContent||tmp.innerText||"");}}>Copy Text</Btn>
               <Btn size="sm" onClick={()=>navigator.clipboard?.writeText(briefContent || "")}>Copy HTML</Btn>
-              <Btn size="sm" onClick={()=>{const tmp=document.createElement("div");tmp.innerHTML=briefContent||"";navigator.clipboard?.writeText(tmp.textContent||tmp.innerText||"");}}>Copy as Plain Text</Btn>
-              <Btn size="sm" variant={mailingList.length>0?"primary":"default"} disabled={emailSending||!briefContent} onClick={()=>sendReportEmail(briefContent,briefWeek,briefSnapshot)}>
-                {emailSending ? <><Spinner size={11} color="#fff"/> Sending</> : <><IcoC name="mail" size={12} color={mailingList.length>0?"#fff":C.textSec}/> Email to Team ({mailingList.length})</>}
-              </Btn>
-              {emailStatus && <span style={{...font.sans,fontSize:11,color:emailStatus.startsWith("Failed")?C.red:emailStatus.startsWith("Sent")?C.green:C.textSec}}>{emailStatus}</span>}
               <Btn size="sm" onClick={()=>{
                 const w = window.open("", "_blank");
                 if (!w) return;
                 w.document.write(briefEmailHtmlDocument(briefWeek, briefSnapshot, briefContent || "", briefDiffMode, briefBaseForDiff));
                 w.document.close();
-              }}>Open in New Tab</Btn>
-              <Btn size="sm" variant="ghost" onClick={()=>setBriefOpen(false)}>Close</Btn>
+              }}>Preview</Btn>
+              <div style={{width:1,height:16,background:C.border,margin:"0 4px"}} />
+              <Btn size="sm" variant={mailingList.length>0?"primary":"default"} disabled={emailSending||!briefContent} onClick={()=>sendReportEmail(briefContent,briefWeek,briefSnapshot)}>
+                {emailSending ? <><Spinner size={11} color="#fff"/> Sending</> : <><IcoC name="mail" size={12} color={mailingList.length>0?"#fff":C.textSec}/> Email ({mailingList.length})</>}
+              </Btn>
+              {emailStatus && <span style={{...font.sans,fontSize:10,color:emailStatus.startsWith("Failed")?C.red:emailStatus.startsWith("Sent")?C.green:C.textSec,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{emailStatus}</span>}
+              <div style={{width:1,height:16,background:C.border,margin:"0 4px"}} />
+              <Btn size="sm" variant="ghost" onClick={()=>setBriefOpen(false)} style={{fontWeight:600}}>Close</Btn>
             </div>
           </div>
-          <div style={{flex:1,overflowY:"auto",padding:"22px 28px"}}>
+          {/* Body */}
+          <div style={{flex:1,overflowY:"auto",padding:"28px 32px"}}>
             {briefLoading ? (
-              <div style={{maxWidth:700,margin:"80px auto",textAlign:"center"}}>
-                <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Researching markets & building brief...</div>
-                <div style={{fontSize:12,color:C.textMuted,marginBottom:10}}>Searching live stock data, AI industry news, and analyzing dashboard signals — 30-60 seconds</div>
-                <div style={{height:8,background:C.nested,borderRadius:999,overflow:"hidden",maxWidth:360,margin:"0 auto"}}>
-                  <div style={{height:"100%",width:`${Math.min(100,Math.round((briefProgressSec/50)*100))}%`,background:C.cyan,transition:"width .5s"}} />
+              <div style={{maxWidth:480,margin:"120px auto",textAlign:"center"}}>
+                <div style={{...font.sans,fontSize:20,fontWeight:700,color:C.text,marginBottom:10,letterSpacing:"-0.02em"}}>Building your brief</div>
+                <div style={{...font.sans,fontSize:12,color:C.textMuted,marginBottom:16,lineHeight:1.6}}>Searching live markets, AI news, and analyzing your dashboard signals</div>
+                <div style={{height:4,background:"#e5e7eb",borderRadius:999,overflow:"hidden",maxWidth:320,margin:"0 auto"}}>
+                  <div style={{height:"100%",width:`${Math.min(100,Math.round((briefProgressSec/50)*100))}%`,background:C.cyan,borderRadius:999,transition:"width .5s"}} />
                 </div>
+                <div style={{...font.mono,fontSize:11,color:C.textMuted,marginTop:10}}>{briefProgressSec}s</div>
               </div>
             ) : (
-              <div style={{maxWidth:960,margin:"0 auto"}}>
+              <div style={{maxWidth:900,margin:"0 auto"}}>
                 {briefDiffMode ? (
-                  <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:12,padding:"22px 26px"}}>
-                    <div style={{fontSize:12,letterSpacing:"0.08em",textTransform:"uppercase",fontWeight:700,color:C.textMuted,borderBottom:`1px solid ${C.border}`,paddingBottom:8,marginBottom:12}}>
-                      AI Demand Signal Weekly Brief | {briefWeek} — diff view
+                  <div style={{background:"#fff",border:`1px solid #e5e7eb`,borderRadius:10,padding:"28px 32px"}}>
+                    <div style={{...font.sans,fontSize:10,letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600,color:C.textMuted,borderBottom:`1px solid #f3f4f6`,paddingBottom:10,marginBottom:16}}>
+                      Diff View · {briefWeek}
                     </div>
-                    <div style={{fontFamily:"Georgia, serif",fontSize:16,lineHeight:1.7,color:C.text}} dangerouslySetInnerHTML={{ __html: paragraphDiffHtml(briefBaseForDiff, briefContent) }} />
+                    <div style={{fontFamily:"Georgia, serif",fontSize:15,lineHeight:1.75,color:C.text}} dangerouslySetInnerHTML={{ __html: paragraphDiffHtml(briefBaseForDiff, briefContent) }} />
                     {briefSnapshot ? <BriefSnapshotCharts ctx={briefSnapshot} /> : null}
                   </div>
                 ) : (
