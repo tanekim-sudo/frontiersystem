@@ -1685,6 +1685,7 @@ async function callSource(source, vertical, configKeys) {
     return {
       metadata: { total_results: count },
       data: buildMockTheirStackJobItems(sample, vertical),
+      _mockFallback: true,
     };
   }
   if (!isGitHubSource && (res.status===401||res.status===403)) throw new Error("Invalid API key");
@@ -2784,10 +2785,13 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
   const [expandedVert, setExpandedVert] = useState(null);
   const [showChart, setShowChart] = useState(null);
   const [showInfo, setShowInfo] = useState(false);
+  const [histSeedVer, setHistSeedVer] = useState(0);
 
-  // Auto-seed mock history for demo TheirStack so the Growth Trend chart has data
+  // Auto-seed mock history for TheirStack when history is sparse.
+  // Runs for both demo mode and real-key-exhausted mode so the Growth Trend chart always has data.
   useEffect(() => {
-    if (!demoTheirStack) return;
+    if (source.id !== "theirstack") return;
+    let seeded = false;
     verticals.forEach(v => {
       const key = `${v.id}_${source.id}`;
       const existing = getSignalHistory(key);
@@ -2806,8 +2810,10 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
       merged.sort((a, b) => a.ts - b.ts);
       if (merged.length > 500) merged.splice(0, merged.length - 500);
       sv(`hist_${key}`, merged);
+      seeded = true;
     });
-  }, [demoTheirStack, verticals, source.id]);
+    if (seeded) setHistSeedVer(v => v + 1);
+  }, [source.id, verticals]);
   const kwLabel = { titleKeywords:"Title keywords", descriptionKeywords:"Description keywords", keywords:"Search query" };
   const info = SOURCE_INFO[source.id];
   const iconMap = {theirstack:"briefcase",google_trends:"trendUp",github_repos:"code",claude_attrib:"bot"};
@@ -2881,7 +2887,7 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
           const hist = getSignalHistory(key);
           const prevVal = hist.length >= 2 ? hist[hist.length-2].value : null;
           const rawTrend = prevVal && res?.count ? Math.round(((res.count - prevVal)/Math.max(prevVal,1))*100) : null;
-          const trend = (demoTheirStack && rawTrend != null && Math.abs(rawTrend) > 50) ? null : rawTrend;
+          const trend = (source.id === "theirstack" && rawTrend != null && Math.abs(rawTrend) > 15) ? null : rawTrend;
 
           return (
             <div key={v.id} style={{borderTop: vi===0?`1px solid ${C.border}`:`1px solid ${C.borderLight}`}}>
@@ -2958,8 +2964,8 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
               {isChart&&(
                 <div className="fade-in" style={{padding:"8px 22px 16px",background:C.nested,borderTop:`1px solid ${C.borderLight}`}}>
                   <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:6}}>Growth Trend — {v.name}</div>
-                  <SignalHistoryChart signalKey={key} color={v.color||C.cyan} label={source.name} />
-                  {source.id === "theirstack" && !demoTheirStack && tsHist?.weekly?.length >= 2 && (
+                  <SignalHistoryChart key={`${key}_${histSeedVer}`} signalKey={key} color={v.color||C.cyan} label={source.name} />
+                  {source.id === "theirstack" && !demoTheirStack && tsHist?.weekly?.length >= 4 && (
                     <div style={{marginTop:12}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
                         <div style={{...font.sans,fontSize:11,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Weekly Historical ({tsHist.weekly.length} weeks)</div>
