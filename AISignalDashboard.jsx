@@ -480,6 +480,42 @@ const LABOR_FRED_CAT_LABEL = {
   rates: "Rates",
   tech_production: "Tech production",
 };
+const LABOR_FRED_CAT_EXPLAIN = {
+  labor: "Core employment metrics — how many people are working, looking for work, or dropping out. Rising unemployment or falling participation = weaker demand for AI products.",
+  jolts: "Job Openings & Labor Turnover Survey — measures how many positions are open, how many people are being hired, and how many are quitting. High openings + high quits = hot labor market. Falling openings = companies are pulling back.",
+  wages: "How fast paychecks are growing. Rising wages = companies competing for talent = healthy demand. Stalling wages = budget pressure, potential hiring freezes.",
+  growth: "Overall economic output (GDP) and consumer spending. Strong GDP = enterprise budgets grow, more AI procurement. Weak GDP = cost-cutting mode.",
+  housing: "Housing starts and permits signal 6–12 months of economic confidence. Housing slumps often precede broader slowdowns that hit tech budgets.",
+  sentiment: "Consumer and business confidence surveys. When people feel pessimistic, spending and hiring slow down — even before hard data confirms it.",
+  financial_stress: "Measures of banking system strain and credit conditions. High stress = banks tighten lending = less capital for AI investments and startups.",
+  rates: "Federal Reserve interest rates and bond yields. Higher rates = more expensive to borrow = less venture funding = slower AI startup growth.",
+  tech_production: "Industrial production of computers, semiconductors, and electronic components. Direct measure of tech hardware demand — leading indicator for AI infrastructure buildout.",
+};
+const FRED_SERIES_EXPLAIN = {
+  UNRATE: "U-3 unemployment rate — the headline number you see in news. % of labor force actively looking for work but can't find it. Below 4% = very tight. Above 5% = trouble.",
+  U6RATE: "U-6 unemployment — the REAL unemployment rate. Includes people who gave up looking and those stuck in part-time work who want full-time. Always higher than U-3. The gap between U-6 and U-3 shows hidden labor market pain.",
+  EMRATIO: "Employment-to-population ratio — what % of working-age adults actually have a job. More honest than unemployment rate because it counts people who stopped looking. Higher = stronger economy.",
+  PAYEMS: "Total nonfarm payrolls (in thousands) — the single most-watched jobs number. This is the \"economy added X jobs\" headline. Consistently above ~150K/month = healthy.",
+  ICSA: "Initial jobless claims — how many people filed for unemployment for the first time THIS WEEK. The most real-time labor signal. Spikes = sudden layoffs. Below ~225K = stable. Above ~300K = trouble.",
+  CCSA: "Continuing claims — how many people are STILL collecting unemployment. When this rises while initial claims are stable, people can't find new jobs. Bad for AI hiring demand.",
+  JTSJOL: "JOLTS Job Openings — total unfilled positions across the US (in thousands). More openings = companies are growing. When this drops, enterprise procurement slows 1–2 quarters later.",
+  JTSHIR: "JOLTS Hires — how many people were actually hired this month (thousands). Falling hires even when openings are high = companies are posting jobs but not filling them (cautious).",
+  JTSQUR: "JOLTS Quits rate — % of workers voluntarily leaving their jobs. High quits = workers feel confident they can find something better = strong economy. Falling quits = people are scared to leave.",
+  GDPC1: "Real GDP (inflation-adjusted) — total economic output. The ultimate \"is the economy growing\" number. Negative = recession.",
+  INDPRO: "Industrial Production Index — output from factories, mines, utilities. When this falls, physical economy is contracting.",
+  RSXFS: "Retail sales excluding food services — how much consumers are actually spending. Consumer spending is 70% of GDP.",
+  PCEC96: "Real personal consumption — what households spend (inflation-adjusted). The most direct demand signal.",
+  HOUST1: "New housing starts (single-family) — builders break ground only when they're confident. A leading indicator that predicts economic conditions 6–12 months out.",
+  UMCSENT: "University of Michigan Consumer Sentiment — survey of how optimistic Americans feel about the economy. Drops here predict spending pullbacks.",
+  VIXCLS: "VIX — the \"fear index.\" Measures expected stock market volatility. Below 15 = calm. 20–30 = nervous. Above 30 = panic.",
+  NFCI: "National Financial Conditions Index — combines 100+ financial indicators. Negative = easy money. Positive = tight conditions. When this rises, venture capital and AI funding dry up.",
+  STLFSI4: "St. Louis Financial Stress Index — similar to NFCI but focused on stress signals. Above 0 = above-average stress. Spikes during banking crises.",
+  DGS10: "10-Year Treasury yield — the benchmark interest rate for the economy. Higher = more expensive to borrow = harder for startups to raise money.",
+  DGS2: "2-Year Treasury yield — reflects where markets think the Fed will set rates soon. When 2Y > 10Y, that's a yield curve inversion = recession signal.",
+  T10Y2Y: "10Y minus 2Y spread — the yield curve slope. Negative = inverted = historically predicts recessions within 6–18 months. Positive and rising = expansion.",
+  IPG3341S: "Industrial production: computer & electronic products. Direct measure of tech hardware manufacturing output.",
+  IPG3342S: "Industrial production: communications equipment. Signals demand for networking/telecom hardware.",
+};
 
 function timeAgo(ts) {
   if (!ts) return "Never"; const m = Math.floor((Date.now() - ts) / 60000);
@@ -1586,7 +1622,7 @@ async function githubApiErrorMessage(res) {
     if (!Number.isNaN(t)) resetHint = ` Resets ~${new Date(t * 1000).toLocaleString(undefined, { hour: "numeric", minute: "2-digit", timeZoneName: "short" })}.`;
   }
   if (remaining !== null && remaining !== "") resetHint += ` Requests left (this window): ${remaining}.`;
-  const patHint = " Confirm VITE_GITHUB_PAT in .env, restart dev server / redeploy. Space out Refresh and Backfill; Search API has strict per-minute caps.";
+  const patHint = "";
 
   let msg = "";
   try {
@@ -1979,17 +2015,17 @@ const SOURCE_INFO = {
 /** Short, visible blurbs for all teammates — what the number is and how it ties to AI demand. */
 const SOURCE_METRIC_BLURB = {
   theirstack:
-    "Live hiring demand: counts US job posts matching your keywords (titles + descriptions). Rising volume usually means more AI headcount budget and vendor spend over the next several quarters.",
+    "US job postings matching your keywords.",
   google_trends:
-    "Search attention, not revenue: Google’s 0–100 index for your keywords vs their own past peak. Shows awareness and research — often before budgets lock in, but can outpace actual hiring.",
+    "Google search interest (0–100) for your keywords.",
   github_repos:
-    "Builder activity: public repos matching your themes with recent pushes. More activity usually means developers experimenting — often months ahead of enterprise rollouts.",
+    "Active repos matching your keywords.",
   claude_attrib:
-    "Real tool usage: GitHub commits in the last 7 days co-authored by Claude. A fast read on whether AI coding assistants are embedded in day-to-day engineering.",
+    "Claude co-authored commits (last 7 days).",
   historical:
-    "TheirStack history blend: hiring momentum and anomalies from monthly job data — sharpens the composite when backfill has run.",
+    "Historical hiring momentum from backfill data.",
   githubHistorical:
-    "GitHub depth: historical repo/watchlist signal so OSS traction affects the score, not just one snapshot.",
+    "Historical repo activity from backfill data.",
 };
 
 /** Movement-pattern text for weekly brief only (removed from dashboard methodology UI). */
@@ -2133,7 +2169,7 @@ function SignalHistoryChart({ signalKey, color, label }) {
   const [sigRange, setSigRange] = useState("1y");
   const [smooth, setSmooth] = useState(true);
   const raw = getSignalHistory(signalKey);
-  if (raw.length < 2) return <div style={{...font.sans,fontSize:12,color:C.textMuted,padding:"12px 0",textAlign:"center"}}>Chart appears after 2+ data points. Data is recorded permanently on each refresh.</div>;
+  if (raw.length < 2) return <div style={{...font.sans,fontSize:12,color:C.textMuted,padding:"12px 0",textAlign:"center"}}>Chart appears after 2+ data points.</div>;
   let allData = sanitizeTimeSeries(raw.map(p => ({ ...p, _ts: new Date(p.isoDate || p.ts).getTime() })).sort((a,b)=>a._ts-b._ts), "value");
 
   // Handle scale breaks: when live-refresh and backfill data use different query windows
@@ -2375,7 +2411,7 @@ function OverlayChart({ selectedKeys, allHistories, sources, verticals }) {
 
   return (
     <Card style={{ marginBottom: 20, borderLeft:`4px solid ${C.purple}` }}>
-      <SectionHeader icon={<IcoC name="layers" size={18} color={C.purple}/>} title="Signal Divergence Overlay" subtitle="Normalized 0–100. Divergences >1.5σ from historical co-movement are flagged automatically." badge={<Badge color={C.purple} bg={C.purpleBg}>{selectedKeys.length} signals</Badge>}/>
+      <SectionHeader icon={<IcoC name="layers" size={18} color={C.purple}/>} title="Signal Divergence Overlay" subtitle="" badge={<Badge color={C.purple} bg={C.purpleBg}>{selectedKeys.length} signals</Badge>}/>
       <div style={{...font.sans,fontSize:10,color:C.textMuted,marginBottom:4}}>{data.length} data points since {formatChartDateShort(new Date(data[0]?._ts).toISOString())}</div>
       <div style={{ width: "100%", height: 280 }}>
         <ResponsiveContainer>
@@ -2516,7 +2552,7 @@ function LaborMacroPanel({ onAfterLoad }) {
         <SectionHeader
           icon={<IcoC name="barChart" size={18} color={C.amber} />}
           title="Macro labor & economy (US)"
-          subtitle="Chicago Fed nowcast (weekly xlsx, no key) + expanded FRED context (hiring, JOLTS, growth, rates, stress, tech IP). Charts use multi-year history; each refresh appends a snapshot you can compare over time."
+          subtitle="US labor market indicators and economic context."
           badge={<Badge color={C.amber} bg={C.amber + "18"} size="sm">National</Badge>}
         />
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
@@ -2558,19 +2594,19 @@ function LaborMacroPanel({ onAfterLoad }) {
                 {cf.official_u3 != null && <div style={{ ...font.sans, fontSize: 10, color: C.textMuted }}>vs {cf.official_u3}% BLS</div>}
               </div>
               {urLabel && <div style={{ ...font.sans, fontSize: 9, color: urColor, marginTop: 2 }}>{urLabel}</div>}
-              <div style={{ ...font.sans, fontSize: 9, color: C.textMuted, marginTop: 3 }}>Chicago Fed 50th pctl forecast. Higher = weaker job market = less enterprise hiring.</div>
+              <div style={{ ...font.sans, fontSize: 9, color: C.textMuted, marginTop: 3 }}>The Chicago Fed's real-time estimate of true unemployment, updated weekly (before the official BLS number). Above 4.5% is a warning sign for enterprise AI budgets.</div>
             </div>
             <div style={{ background: C.nested, borderRadius: 10, padding: "10px 12px" }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Layoffs &amp; separations rate</div>
               <div style={{ ...font.mono, fontSize: 20, fontWeight: 800, color: layColor }}>{layVal != null ? layVal.toFixed(2) : "—"}<span style={{ fontSize: 11, fontWeight: 600 }}>%</span></div>
               {layLabel && <div style={{ ...font.sans, fontSize: 9, color: layColor, marginTop: 2 }}>{layLabel}</div>}
-              <div style={{ ...font.sans, fontSize: 9, color: C.textMuted, marginTop: 3 }}>Monthly rate of workers leaving/losing jobs. Rising = budget cuts, hiring freezes ahead.</div>
+              <div style={{ ...font.sans, fontSize: 9, color: C.textMuted, marginTop: 3 }}>What % of workers left or lost their job this month. When this rises, companies are cutting costs — expect AI procurement to slow 1–2 quarters later.</div>
             </div>
             <div style={{ background: C.nested, borderRadius: 10, padding: "10px 12px" }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Hiring rate (unemployed)</div>
               <div style={{ ...font.mono, fontSize: 20, fontWeight: 800, color: hireColor }}>{hireVal != null ? hireVal.toFixed(1) : "—"}<span style={{ fontSize: 11, fontWeight: 600 }}>%</span></div>
               {hireLabel && <div style={{ ...font.sans, fontSize: 9, color: hireColor, marginTop: 2 }}>{hireLabel}</div>}
-              <div style={{ ...font.sans, fontSize: 9, color: C.textMuted, marginTop: 3 }}>Rate at which unemployed find work. Falling = longer job searches, weaker demand.</div>
+              <div style={{ ...font.sans, fontSize: 9, color: C.textMuted, marginTop: 3 }}>Of all unemployed people, what % got hired this month. Falling = it's getting harder to find work = companies are pulling back on all hiring, including AI roles.</div>
             </div>
           </div>
           );
@@ -2605,7 +2641,7 @@ function LaborMacroPanel({ onAfterLoad }) {
         {(()=>{ const filteredChi = filterByTimeRange(chiTs, timeRange, "date"); return filteredChi.length >= 2 && (
           <div style={{ marginBottom: 18 }}>
             <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 4 }}>Chicago Fed — unemployment nowcast vs official U-3 ({filteredChi.length} weekly points)</div>
-            <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginBottom: 6, lineHeight: 1.4 }}>Brown line = Chicago Fed real-time estimate (leads BLS by weeks). Blue = official BLS U-3. When brown rises above blue, the economy is weakening faster than official data shows — enterprise hiring budgets tighten 1–2 quarters later.</div>
+            <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginBottom: 6, lineHeight: 1.4 }}>Brown = real-time nowcast. Blue = official BLS U-3.</div>
             <div style={{ height: 240, width: "100%" }}>
               <ResponsiveContainer>
                 <LineChart data={filteredChi} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
@@ -2620,7 +2656,7 @@ function LaborMacroPanel({ onAfterLoad }) {
               </ResponsiveContainer>
             </div>
             <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, margin: "14px 0 6px" }}>Chicago Fed — layoffs / separations vs hiring (unemployed)</div>
-            <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginBottom: 4, lineHeight: 1.4 }}>Dual axes: layoffs rate (left, red — lower is better) vs hiring rate of unemployed (right, green — higher is better). When red rises and green falls, labor market is weakening.</div>
+            <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginBottom: 4, lineHeight: 1.4 }}>Red (left axis) = layoffs rate. Green (right axis) = hiring rate.</div>
             <div style={{ height: 220, width: "100%" }}>
               <ResponsiveContainer>
                 <LineChart data={filteredChi} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
@@ -2639,8 +2675,8 @@ function LaborMacroPanel({ onAfterLoad }) {
 
         {(()=>{const filteredSnap=filterByTimeRange(snapChart.map(d=>({...d,_iso:new Date(d.t).toISOString()})), timeRange, "_iso");return filteredSnap.length >= 2 && (
           <div style={{ marginBottom: 18 }}>
-            <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 4 }}>Your refresh snapshots (stored locally)</div>
-            <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 6 }}>Each macro refresh saves that day's values. Over weeks/months this builds your own tracking history. Deduplicated to one snapshot per day. Left axis: nowcast %; right axis: JOLTS openings (thousands).</div>
+            <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 4 }}>Refresh snapshots</div>
+            <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 6 }}>Left axis: nowcast %. Right axis: JOLTS openings (thousands).</div>
             <div style={{ height: 160, width: "100%" }}>
               <ResponsiveContainer>
                 <LineChart data={filteredSnap} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
@@ -2682,11 +2718,17 @@ function LaborMacroPanel({ onAfterLoad }) {
                 </button>
               ))}
             </div>
+            {LABOR_FRED_CAT_EXPLAIN[fredCat] && (
+              <div style={{ ...font.sans, fontSize: 11, color: C.textSec, lineHeight: 1.55, marginBottom: 12, padding: "8px 12px", background: C.nested, borderRadius: 8, border: `1px solid ${C.borderLight}` }}>
+                {LABOR_FRED_CAT_EXPLAIN[fredCat]}
+              </div>
+            )}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 12 }}>
               {fredSeriesInCat.map((s, idx) => {
                 const col = PALETTE[idx % PALETTE.length];
                 const dataAll = (s.observations || []).map((o) => ({ date: o.date, v: o.value }));
                 const data = filterByTimeRange(dataAll, timeRange, "date");
+                const explain = FRED_SERIES_EXPLAIN[s.id];
                 if (s.error) {
                   return (
                     <div key={s.id} style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.borderLight}`, background: C.nested }}>
@@ -2725,9 +2767,10 @@ function LaborMacroPanel({ onAfterLoad }) {
                 return (
                   <div key={s.id} style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.borderLight}`, background: C.white }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 2 }}>{s.meta?.name || s.id}</div>
-                    <div style={{ fontSize: 9, color: C.textMuted, fontFamily: font.mono.fontFamily, marginBottom: 6 }}>
+                    <div style={{ fontSize: 9, color: C.textMuted, fontFamily: font.mono.fontFamily, marginBottom: explain ? 2 : 6 }}>
                       {s.id}{clamped ? <span style={{ marginLeft: 6, color: C.amber }} title="Outlier spike (e.g. COVID) clipped for readability — actual peak is higher">⚠ outlier clipped</span> : null}
                     </div>
+                    {explain && <div style={{ ...font.sans, fontSize: 9.5, color: C.textSec, lineHeight: 1.45, marginBottom: 6 }}>{explain}</div>}
                     <div style={{ height: 120, width: "100%" }}>
                       <ResponsiveContainer>
                         <LineChart data={data} margin={{ top: 2, right: 4, left: -18, bottom: 0 }}>
@@ -2747,12 +2790,12 @@ function LaborMacroPanel({ onAfterLoad }) {
 
         {laborOverview?.fred_latest?.length > 0 && (
           <div style={{ marginTop: 4 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: C.textSec, marginBottom: 6 }}>FRED — latest print (all series)</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.textSec, marginBottom: 6 }}>FRED — latest values</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, maxHeight: 160, overflowY: "auto", padding: 4, background: C.nested, borderRadius: 10 }}>
               {laborOverview.fred_latest
                 .filter((x) => !x.error)
                 .map((x) => (
-                  <span key={x.series_id} style={{ ...font.sans, fontSize: 10, padding: "4px 8px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 8 }}>
+                  <span key={x.series_id} title={FRED_SERIES_EXPLAIN[x.series_id] || x.series_id} style={{ ...font.sans, fontSize: 10, padding: "4px 8px", background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, cursor: "help" }}>
                     <b>{x.series_id}</b> {x.value != null ? x.value : "—"}{" "}
                     <span style={{ color: C.textMuted }}>({x.date || "—"})</span>
                   </span>
@@ -2768,12 +2811,6 @@ function LaborMacroPanel({ onAfterLoad }) {
             ))}
           </div>
         )}
-        <Expandable title="How this relates to your tracking groups">
-          <div style={{ padding: "10px 14px", fontSize: 12, color: C.textSec, lineHeight: 1.6 }}>
-            <strong style={{ color: C.text }}>Per-group cards</strong> (TheirStack, Trends, etc.) use <em>your</em> keywords. This section is <strong>US-wide context</strong>: regime (unemployment, claims, JOLTS), demand (GDP, retail, consumption), stress (VIX, NFCI), rates (curve), and tech-related industrial production.
-            Chicago Fed data is <strong>backfilled from the public xlsx</strong> each time you refresh. FRED history is <strong>backfilled from the FRED API</strong> when <code style={{ fontSize: 11 }}>FRED_API_KEY</code> is set server-side.
-          </div>
-        </Expandable>
       </div>
     </Card>
   );
@@ -2836,7 +2873,7 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                 <h3 style={{...font.sans,fontSize:16,fontWeight:700,color:C.text,margin:0,letterSpacing:"-0.02em"}}>{source.name}</h3>
                 <Badge color={source.enabled?C.green:C.textMuted} bg={source.enabled?C.greenBg:C.nested} size="sm">{source.enabled?"Live":"Off"}</Badge>
                 <Badge color={C.textMuted} size="sm">{source.cadence}</Badge>
-                {demoTheirStack && <Badge color={C.cyan} bg={C.cyanBg} size="sm" title="No TheirStack API key — counts are deterministic estimates from your keywords">Demo estimates</Badge>}
+                {demoTheirStack && <Badge color={C.cyan} bg={C.cyanBg} size="sm" title="Demo mode — simulated data">Demo</Badge>}
               </div>
             </div>
           </div>
@@ -2849,7 +2886,7 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
         </div>
 
         {info&&(
-          <Expandable title="Show methodology, lead/lag timing & signal interpretation guide">
+          <Expandable title="Methodology">
             <div style={{padding:"10px 14px",background:C.white,borderRadius:10,border:`1px solid ${C.borderLight}`,display:"flex",flexDirection:"column",gap:10}}>
               <div style={{fontSize:12,color:C.textSec,lineHeight:1.6}}>{info.how}</div>
               {info.leadLag&&(
@@ -2860,21 +2897,10 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
               <div style={{fontSize:12,color:C.amber,lineHeight:1.6,padding:"10px 12px",background:C.amberBg,borderRadius:8,border:`1px solid ${C.amber}22`}}>
                 <span style={{fontWeight:700,display:"block",marginBottom:2}}>Investment Implication</span>{info.investment}
               </div>
-              <div style={{fontSize:11,color:C.textMuted,lineHeight:1.5}}>
-                Detailed “what this movement means” patterns (spikes, plateaus, divergences) are attached to the <strong>Generate Brief</strong> data only—see payload <code style={{fontSize:10}}>signal_movement_interpretation</code>.
-              </div>
             </div>
           </Expandable>
         )}
-        {info && (
-          <div style={{ marginTop: 14, padding: "12px 16px", background: "#f4f7fb", borderRadius: 10, border: `1px solid ${C.borderLight}` }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>For the team — what this number means</div>
-            <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.55, maxWidth: 920 }}>
-              {SOURCE_METRIC_BLURB[source.id] || info.metric}
-            </div>
-            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 8, lineHeight: 1.45 }}>Technical: {info.metric}</div>
-          </div>
-        )}
+        
       </div>
 
       {/* Vertical rows */}
@@ -3025,7 +3051,7 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                         const kwArr = Array.isArray(kw.keywords) ? kw.keywords.filter(Boolean) : [];
                         if (kwArr.length === 0 && source.id === "github_repos") return (
                           <div style={{ ...font.sans, fontSize: 11, color: C.red, lineHeight: 1.5 }}>
-                            <strong>No keywords configured.</strong> Add keywords above — without them GitHub Search returns nothing meaningful. Use specific terms like "LangChain", "RAG pipeline", or your product name.
+                            <strong>No keywords configured.</strong> Add keywords above to get results.
                           </div>
                         );
                         const queryPreview = source.id === "github_repos"
@@ -3043,15 +3069,15 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                             </code>
                             {source.id === "github_repos" && res?.count > 100000 && (
                               <div style={{ ...font.sans, fontSize: 11, color: C.amber, marginTop: 6, lineHeight: 1.5 }}>
-                                <strong>⚠ Count is very high ({(res.count || 0).toLocaleString()}).</strong> Your keywords may be too broad. Try more specific terms — e.g. instead of "AI" use "LangChain" or "vector database".
+                                <strong>⚠ High count ({(res.count || 0).toLocaleString()}).</strong> Consider more specific keywords.
                               </div>
                             )}
                             <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginTop: 6, lineHeight: 1.4 }}>
                               {source.id === "github_repos"
-                                ? "Counts public repos matching these terms with recent pushes. Overly generic keywords (e.g. 'AI', 'machine learning') will match too many repos."
+                                ? "Repo count for your search terms."
                                 : kwArr.length > 0
-                                  ? "Counts Claude-attributed commits filtered to your keywords. Remove keywords to track the global total instead."
-                                  : "Tracks ALL Claude-attributed commits on GitHub — a macro signal of AI coding tool adoption. Add keywords to narrow to a specific domain."}
+                                  ? "Claude commit count for your keywords."
+                                  : "Total Claude-attributed commits on GitHub."}
                             </div>
                           </div>
                         );
@@ -3103,6 +3129,9 @@ function HuggingFaceLeaderboard({onDataChanged}) {
   const [expanded,setExpanded]=useState(null);
   const [showHist,setShowHist]=useState(false);
   const [hfRange,setHfRange]=useState("1y");
+  const [compareMode,setCompareMode]=useState(false);
+  const [compareA,setCompareA]=useState(null);
+  const [compareB,setCompareB]=useState(null);
 
   const doFetch=useCallback(async()=>{
     setIsL(true);setErr(null);
@@ -3129,7 +3158,7 @@ function HuggingFaceLeaderboard({onDataChanged}) {
   return (
     <Card style={{padding:0,overflow:"hidden"}} className="fade-in-slow">
       <div style={{padding:"18px 22px 14px",background:C.white}}>
-        <SectionHeader icon={<IcoC name="database" size={18} color={C.blue}/>} title="Hugging Face Leaderboard" subtitle="Open-source model adoption across major AI companies. Download volume = developer ecosystem gravity. Lead time: 3–9 months before enterprise deployment revenue."
+        <SectionHeader icon={<IcoC name="database" size={18} color={C.blue}/>} title="Hugging Face Leaderboard" subtitle="Open-source model adoption and download volume by company."
           badge={<Badge color={C.green} bg={C.greenBg} size="sm">Public API</Badge>}
           right={<>
             {data?.timestamp&&<span style={{...font.sans,fontSize:11,color:C.textMuted}}>{timeAgo(data.timestamp)}</span>}
@@ -3193,25 +3222,109 @@ function HuggingFaceLeaderboard({onDataChanged}) {
 
       {showHist && hfHist.length >= 2 && (
         <div className="fade-in" style={{padding:"14px 22px",borderBottom:`1px solid ${C.border}`}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-            <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text}}>Download Growth Over Time</div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,flexWrap:"wrap",gap:6}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text}}>Download Growth Over Time</div>
+              <button onClick={()=>{setCompareMode(!compareMode);if(!compareMode&&!compareA){const sorted=[...orgs];setCompareA(sorted[0]?.orgId||HF_ORGS[0].id);setCompareB(sorted[1]?.orgId||HF_ORGS[1].id);}}} style={{...font.sans,fontSize:10,fontWeight:600,padding:"3px 10px",borderRadius:6,border:`1px solid ${compareMode?C.cyan:C.border}`,background:compareMode?C.cyan+"14":C.white,color:compareMode?C.cyan:C.textSec,cursor:"pointer",transition:"all .15s"}}>
+                {compareMode?"Exit Compare":"Compare 2"}
+              </button>
+            </div>
             <TimeRangeSelector value={hfRange} onChange={setHfRange} />
           </div>
+
+          {compareMode && (
+            <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:8,flexWrap:"wrap"}}>
+              {[{label:"A",val:compareA,set:setCompareA},{label:"B",val:compareB,set:setCompareB}].map(({label:lbl,val,set})=>(
+                <div key={lbl} style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{...font.sans,fontSize:10,fontWeight:700,color:C.textMuted}}>{lbl}</span>
+                  <select value={val||""} onChange={e=>set(e.target.value)} style={{...font.sans,fontSize:11,padding:"4px 8px",borderRadius:6,border:`1px solid ${C.border}`,background:C.white,color:C.text,cursor:"pointer"}}>
+                    {HF_ORGS.map(o=>(<option key={o.id} value={o.id}>{o.name}</option>))}
+                  </select>
+                </div>
+              ))}
+              <div style={{...font.sans,fontSize:10,color:C.textMuted,marginLeft:4}}>Normalized to % change from first data point</div>
+            </div>
+          )}
+
           <div style={{...font.sans,fontSize:10,color:C.textMuted,marginBottom:6}}>{hfHist.length} data points since {formatChartDateShort(new Date(hfHist[0]?.ts).toISOString())}</div>
-          <div style={{width:"100%",height:200}}>
-            {(()=>{const hdAll=sanitizeTimeSeries(hfHist.map(p=>({...p,_ts:p.ts||Date.now(),_iso:new Date(p.ts||Date.now()).toISOString()})).sort((a,b)=>a._ts-b._ts),"_ts");let hd=filterByTimeRange(hdAll,hfRange,"_iso");if(hd.length>=4){HF_ORGS.forEach(o=>{hd=smoothEMA(hd,o.id,0.2);});}const smK=hd.length>=4;const allVals=hd.flatMap(p=>HF_ORGS.map(o=>p[smK?`${o.id}_smooth`:o.id]).filter(v=>typeof v==="number"&&v>0));const yd=zoomedYDomain(allVals);return(
-            <ResponsiveContainer>
-              <LineChart data={hd} margin={{top:8,right:16,bottom:8,left:8}}>
-                <XAxis dataKey="_ts" type="number" scale="time" domain={["dataMin","dataMax"]}
-                  tickFormatter={ts=>formatChartDateShort(new Date(ts).toISOString())}
-                  tick={{fontSize:9,fill:C.textMuted}} interval="preserveStartEnd" tickCount={6} />
-                <YAxis tick={{fontSize:10,fill:C.textMuted,...font.mono}} width={55} tickFormatter={fmtDL} domain={yd} allowDataOverflow={true}/>
-                <Tooltip contentStyle={{...font.sans,fontSize:12,background:C.white,border:`1px solid ${C.border}`,borderRadius:10,boxShadow:"0 4px 12px rgba(0,0,0,.08)"}} formatter={v=>fmtDL(v)} labelFormatter={ts=>formatChartDate(new Date(ts).toISOString())} />
-                <Legend wrapperStyle={{fontSize:10,...font.sans}}/>
-                {HF_ORGS.map(org=>(<Line key={org.id} type="monotone" dataKey={smK?`${org.id}_smooth`:org.id} stroke={org.color} strokeWidth={2} dot={false} name={org.name} connectNulls/>))}
-              </LineChart>
-            </ResponsiveContainer>);})()}
-          </div>
+
+          {!compareMode ? (
+            <div style={{width:"100%",height:200}}>
+              {(()=>{const hdAll=sanitizeTimeSeries(hfHist.map(p=>({...p,_ts:p.ts||Date.now(),_iso:new Date(p.ts||Date.now()).toISOString()})).sort((a,b)=>a._ts-b._ts),"_ts");let hd=filterByTimeRange(hdAll,hfRange,"_iso");if(hd.length>=4){HF_ORGS.forEach(o=>{hd=smoothEMA(hd,o.id,0.2);});}const smK=hd.length>=4;const allVals=hd.flatMap(p=>HF_ORGS.map(o=>p[smK?`${o.id}_smooth`:o.id]).filter(v=>typeof v==="number"&&v>0));const yd=zoomedYDomain(allVals);return(
+              <ResponsiveContainer>
+                <LineChart data={hd} margin={{top:8,right:16,bottom:8,left:8}}>
+                  <XAxis dataKey="_ts" type="number" scale="time" domain={["dataMin","dataMax"]}
+                    tickFormatter={ts=>formatChartDateShort(new Date(ts).toISOString())}
+                    tick={{fontSize:9,fill:C.textMuted}} interval="preserveStartEnd" tickCount={6} />
+                  <YAxis tick={{fontSize:10,fill:C.textMuted,...font.mono}} width={55} tickFormatter={fmtDL} domain={yd} allowDataOverflow={true}/>
+                  <Tooltip contentStyle={{...font.sans,fontSize:12,background:C.white,border:`1px solid ${C.border}`,borderRadius:10,boxShadow:"0 4px 12px rgba(0,0,0,.08)"}} formatter={v=>fmtDL(v)} labelFormatter={ts=>formatChartDate(new Date(ts).toISOString())} />
+                  <Legend wrapperStyle={{fontSize:10,...font.sans}}/>
+                  {HF_ORGS.map(org=>(<Line key={org.id} type="monotone" dataKey={smK?`${org.id}_smooth`:org.id} stroke={org.color} strokeWidth={2} dot={false} name={org.name} connectNulls/>))}
+                </LineChart>
+              </ResponsiveContainer>);})()}
+            </div>
+          ) : (
+            <div style={{width:"100%",height:280}}>
+              {(()=>{
+                const orgA = HF_ORGS.find(o=>o.id===compareA);
+                const orgB = HF_ORGS.find(o=>o.id===compareB);
+                if(!orgA||!orgB||orgA.id===orgB.id) return <div style={{...font.sans,fontSize:12,color:C.textMuted,textAlign:"center",padding:30}}>Select two different companies to compare.</div>;
+                const hdAll=sanitizeTimeSeries(hfHist.map(p=>({...p,_ts:p.ts||Date.now(),_iso:new Date(p.ts||Date.now()).toISOString()})).sort((a,b)=>a._ts-b._ts),"_ts");
+                let hd=filterByTimeRange(hdAll,hfRange,"_iso");
+                if(hd.length<2) return <div style={{...font.sans,fontSize:12,color:C.textMuted,textAlign:"center",padding:30}}>Not enough data points for comparison.</div>;
+                if(hd.length>=4){[orgA,orgB].forEach(o=>{hd=smoothEMA(hd,o.id,0.2);});}
+                const smK=hd.length>=4;
+                const keyA=smK?`${orgA.id}_smooth`:orgA.id;
+                const keyB=smK?`${orgB.id}_smooth`:orgB.id;
+                const baseA=hd.find(p=>typeof p[keyA]==="number"&&p[keyA]>0)?.[keyA];
+                const baseB=hd.find(p=>typeof p[keyB]==="number"&&p[keyB]>0)?.[keyB];
+                if(!baseA||!baseB) return <div style={{...font.sans,fontSize:12,color:C.textMuted,textAlign:"center",padding:30}}>Insufficient data for one or both companies.</div>;
+                const normalized=hd.map(p=>{
+                  const vA=p[keyA]; const vB=p[keyB];
+                  return {...p,
+                    pctA: typeof vA==="number"?((vA-baseA)/baseA)*100:null,
+                    pctB: typeof vB==="number"?((vB-baseB)/baseB)*100:null,
+                    rawA: vA, rawB: vB,
+                  };
+                });
+                const allPcts=normalized.flatMap(p=>[p.pctA,p.pctB]).filter(v=>v!=null);
+                const minP=Math.min(...allPcts); const maxP=Math.max(...allPcts);
+                const pad=(maxP-minP)*0.1||5;
+                const lastA=normalized.filter(p=>p.pctA!=null).slice(-1)[0];
+                const lastB=normalized.filter(p=>p.pctB!=null).slice(-1)[0];
+                return(<>
+                  <div style={{display:"flex",gap:16,marginBottom:8}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <div style={{width:12,height:3,borderRadius:2,background:orgA.color}}/>
+                      <span style={{...font.sans,fontSize:11,fontWeight:600,color:orgA.color}}>{orgA.name}</span>
+                      {lastA&&<span style={{...font.mono,fontSize:12,fontWeight:800,color:lastA.pctA>=0?C.green:C.red}}>{lastA.pctA>=0?"+":""}{lastA.pctA.toFixed(1)}%</span>}
+                      {lastA&&<span style={{...font.mono,fontSize:10,color:C.textMuted}}>({fmtDL(lastA.rawA)})</span>}
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <div style={{width:12,height:3,borderRadius:2,background:orgB.color}}/>
+                      <span style={{...font.sans,fontSize:11,fontWeight:600,color:orgB.color}}>{orgB.name}</span>
+                      {lastB&&<span style={{...font.mono,fontSize:12,fontWeight:800,color:lastB.pctB>=0?C.green:C.red}}>{lastB.pctB>=0?"+":""}{lastB.pctB.toFixed(1)}%</span>}
+                      {lastB&&<span style={{...font.mono,fontSize:10,color:C.textMuted}}>({fmtDL(lastB.rawB)})</span>}
+                    </div>
+                  </div>
+                  <ResponsiveContainer>
+                    <LineChart data={normalized} margin={{top:8,right:16,bottom:8,left:8}}>
+                      <XAxis dataKey="_ts" type="number" scale="time" domain={["dataMin","dataMax"]}
+                        tickFormatter={ts=>formatChartDateShort(new Date(ts).toISOString())}
+                        tick={{fontSize:9,fill:C.textMuted}} interval="preserveStartEnd" tickCount={6} />
+                      <YAxis tick={{fontSize:10,fill:C.textMuted,...font.mono}} width={48} tickFormatter={v=>`${v>=0?"+":""}${v.toFixed(0)}%`} domain={[Math.floor(minP-pad),Math.ceil(maxP+pad)]}/>
+                      <ReferenceLine y={0} stroke={C.textMuted} strokeDasharray="4 4" strokeWidth={1}/>
+                      <Tooltip contentStyle={{...font.sans,fontSize:12,background:C.white,border:`1px solid ${C.border}`,borderRadius:10,boxShadow:"0 4px 12px rgba(0,0,0,.08)"}}
+                        formatter={(v,name)=>[`${v>=0?"+":""}${v.toFixed(1)}%`,name]}
+                        labelFormatter={ts=>formatChartDate(new Date(ts).toISOString())} />
+                      <Line type="monotone" dataKey="pctA" stroke={orgA.color} strokeWidth={2.5} dot={false} name={orgA.name} connectNulls/>
+                      <Line type="monotone" dataKey="pctB" stroke={orgB.color} strokeWidth={2.5} dot={false} name={orgB.name} connectNulls/>
+                    </LineChart>
+                  </ResponsiveContainer>
+                </>);
+              })()}
+            </div>
+          )}
         </div>
       )}
 
@@ -3230,12 +3343,17 @@ function HuggingFaceLeaderboard({onDataChanged}) {
             const pct=maxDl>0?(org.totalDownloads/maxDl)*100:0;
             const isExp=expanded===org.orgId;
             const rv=rank>0&&orgs[0].totalDownloads>0?(orgs[0].totalDownloads/Math.max(org.totalDownloads,1)).toFixed(1):null;
+            const isSelA=compareMode&&compareA===org.orgId;
+            const isSelB=compareMode&&compareB===org.orgId;
+            const compareHighlight=isSelA?`${meta.color}12`:isSelB?`${meta.color}08`:"transparent";
             return(<React.Fragment key={org.orgId}>
-              <tr style={{cursor:"pointer",transition:"background .15s"}} onClick={()=>setExpanded(isExp?null:org.orgId)} onMouseEnter={e=>e.currentTarget.style.background=C.nested} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+              <tr style={{cursor:"pointer",transition:"background .15s",background:compareHighlight}} onClick={()=>{if(compareMode&&showHist){if(isSelA){/* already A, do nothing */}else if(isSelB){/* already B, do nothing */}else if(compareA&&!compareB){setCompareB(org.orgId);}else{setCompareA(org.orgId);}return;}setExpanded(isExp?null:org.orgId);}} onMouseEnter={e=>{if(!isSelA&&!isSelB)e.currentTarget.style.background=C.nested;}} onMouseLeave={e=>{e.currentTarget.style.background=compareHighlight;}}>
                 <td style={{padding:"12px 14px",textAlign:"center",...font.mono,fontSize:14,fontWeight:800,color:rank<3?meta.color:C.textMuted,width:40}}>{rank+1}</td>
                 <td style={{padding:"12px 14px",fontSize:13,fontWeight:600,color:C.text,whiteSpace:"nowrap"}}>
                   <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:meta.color,marginRight:10,verticalAlign:"middle"}}/>{meta.name}
                   {rv&&<span style={{fontSize:10,color:C.textMuted,marginLeft:8}}>({rv}x less)</span>}
+                  {isSelA&&<span style={{...font.mono,fontSize:9,fontWeight:800,color:C.white,background:meta.color,borderRadius:4,padding:"1px 5px",marginLeft:6,verticalAlign:"middle"}}>A</span>}
+                  {isSelB&&<span style={{...font.mono,fontSize:9,fontWeight:800,color:C.white,background:meta.color,borderRadius:4,padding:"1px 5px",marginLeft:6,verticalAlign:"middle"}}>B</span>}
                 </td>
                 <td style={{padding:"12px 14px",minWidth:250}}>
                   <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -3911,7 +4029,7 @@ function AlertFeed({alerts,onPin}){
   const sevDot=(sev)=><span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:sevC[sev]||C.textMuted,flexShrink:0,marginTop:4}}/>;
   if(sorted.length===0)return null;
   return(<Card>
-    <SectionHeader icon={<IcoC name="zap" size={18} color={C.amber}/>} title="Divergence Alerts" subtitle="Automated signals when metrics diverge from expected patterns." badge={<Badge color={C.amber} bg={C.amberBg} size="sm">{sorted.length} active</Badge>}/>
+    <SectionHeader icon={<IcoC name="zap" size={18} color={C.amber}/>} title="Divergence Alerts" subtitle="" badge={<Badge color={C.amber} bg={C.amberBg} size="sm">{sorted.length} active</Badge>}/>
     <div style={{maxHeight:240,overflowY:"auto"}}>{sorted.map(a=>(<div key={a.id} className="fade-in" style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",marginBottom:6,borderRadius:10,background:sevC[a.severity]?sevC[a.severity]+"08":"transparent",border:`1px solid ${sevC[a.severity]?sevC[a.severity]+"22":C.borderLight}`}}>
       {sevDot(a.severity)}
       <div style={{flex:1}}>
@@ -4295,7 +4413,7 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
           </div>
         ))}
         <div style={{...font.sans,fontSize:11,color:C.textMuted,marginTop:4}}>
-          {mailingList.length} recipient{mailingList.length!==1?"s":""}. Emails sent via EmailJS (free, 200/month).
+          {mailingList.length} recipient{mailingList.length!==1?"s":""}.
         </div>
       </div>
     )}
@@ -4304,12 +4422,12 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
   const instructionsContent=(<div>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
       {[
-        { icon: "briefcase", color: C.cyan, title: "Job Postings (TheirStack)", desc: "Counts AI-related job postings matching your keywords across US employers. Tracks hiring volume, language stage classification (exploration vs. deployment), and historical trends back to 2021. Requires TheirStack API key." },
-        { icon: "trendUp", color: C.blue, title: "Google Trends (SerpAPI)", desc: "Measures relative search interest (0\u2013100) for your keywords on Google. Computes momentum vs. 4-week rolling average. Backfills 12 months of weekly data in a single API call. Leads enterprise procurement by 3\u20139 months. Requires SerpAPI key." },
-        { icon: "code", color: C.green, title: "GitHub Repos", desc: "Counts active repositories matching your keywords with recent pushes. Tracks open-source ecosystem growth \u2014 leads enterprise adoption by 6\u201318 months. Backfills weekly repo counts for the past 18 months. Requires GitHub PAT." },
-        { icon: "bot", color: C.purple, title: "Claude Code Attribution", desc: "Counts GitHub commits with 'Co-Authored-By: Claude' signatures in the past 7 days. The most real-time signal \u2014 0\u20133 month lead on AI platform revenue. Backfills monthly counts for the past year. Requires GitHub PAT." },
-        { icon: "database", color: C.amber, title: "Hugging Face Leaderboard", desc: "Tracks model download volumes across major AI companies (OpenAI, Google, Meta, Microsoft, etc.) from the Hugging Face API. Measures supply-side AI capability growth. No API key required \u2014 public API." },
-        { icon: "barChart", color: C.orange, title: "Composite Scoring & Stages", desc: "Combines all signals into a weighted composite score (0\u2013100) per vertical. Classifies each into adoption stages: Watchlist \u2192 Validating \u2192 Rolling Out \u2192 Committed. Weights are adjustable in settings." },
+        { icon: "briefcase", color: C.cyan, title: "Job Postings (TheirStack)", desc: "AI job postings matching your keywords across US employers." },
+        { icon: "trendUp", color: C.blue, title: "Google Trends (SerpAPI)", desc: "Search interest (0\u2013100) for your keywords on Google." },
+        { icon: "code", color: C.green, title: "GitHub Repos", desc: "Active repositories matching your keywords." },
+        { icon: "bot", color: C.purple, title: "Claude Code Attribution", desc: "GitHub commits with Claude co-author signatures." },
+        { icon: "database", color: C.amber, title: "Hugging Face Leaderboard", desc: "Model download volumes by AI company. No key required." },
+        { icon: "barChart", color: C.orange, title: "Composite Scoring & Stages", desc: "Weighted composite score (0\u2013100) per tracking group." },
       ].map((item, i) => (
         <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
           <div style={{flexShrink:0,width:32,height:32,borderRadius:8,background:item.color+"14",display:"flex",alignItems:"center",justifyContent:"center",marginTop:2}}>
@@ -4325,15 +4443,15 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
     <div style={{...font.sans,fontSize:13,fontWeight:700,color:C.text,marginBottom:10}}>Additional capabilities</div>
     <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
       {[
-        { title: "Historical Backfill", desc: "Every signal source has a Backfill button. TheirStack queries monthly job counts from Jan 2021. Google Trends fetches 5 years of weekly data in one call. GitHub repos and Claude attribution both backfill 78 weeks (~18 months) of weekly data points. All historical data is stored permanently. Backfills are resilient — individual API errors are skipped rather than aborting the entire run." },
-        { title: "Growth Charts & Signal Divergence Overlay", desc: "Every metric records a data point on each refresh, building a persistent time-series graph. Click the chart icon to see growth trends. Select 2–4 signals across verticals and metric types to overlay them on a normalized 0–100 scale. The system automatically detects divergences (e.g., job postings rising while API wrapper traffic drops = CIO mandate without real adoption) — these are your actual investment signals." },
-        { title: "AI-Powered Divergence Analysis", desc: "When you overlay 2+ signals, the system uses z-score statistics (1.5σ threshold) and Pearson correlation to detect when historically co-moving signals diverge. Click 'AI Interpret' to have Claude generate a narrative explaining what the divergence means for investment timing (e.g., 'RFP spike → jobs lag → budget confirm' pattern detection)." },
-        { title: "Alert Threshold (adjustable)", desc: "Set a % change threshold (1–50%) in Settings → Scoring. Any signal (job postings, Google Trends, GitHub repos, Claude attribution) that changes by more than this threshold week-over-week triggers a divergence alert. Default is 10%. Lower values generate more alerts (sensitive), higher values surface only major moves." },
-        { title: "AI Weekly Brief (with live web search)", desc: "Uses Claude + web search to produce a Monday-morning intelligence brief. Claude searches live stock prices for MSFT, AAPL, NVDA, GOOGL, META, plus AI industry news from the past 7–14 days. The brief reads like an insider debrief — opinionated, specific, with real dates and company names. Includes sections: The Week in 60 Seconds, What the Street Is Missing, AI Stock Pulse, Signal Deep Dive, Divergence Play, What I'm Hearing, Conviction Trades, Risk Radar, Data Quality. Sources are cited with links. Takes 30–60 seconds due to web research." },
-        { title: "LLM Earnings Call Analyzer", desc: "Paste or upload an earnings call transcript (.txt, .md, .pdf, or paste directly) for any company — Google, Amazon, Microsoft, Meta, NVIDIA, or custom. Claude analyzes the transcript on five dimensions: Tense Distribution (operational vs aspirational language), Specificity Gradient (do claims get more/less specific?), Sincerity Signal (volunteered bad news, error acknowledgment), Absorption Failure (do explanations scale with negative metrics?), and Register Consistency (does language shift between quarters?). Outputs an overall quality score (0–100), investment signal (LONG/SHORT/WATCH/NEUTRAL), radar chart, color-coded quote evidence, and comparative tracking across quarters. Uses web search to contextualize with live stock data and analyst reactions. Stores up to 40 analyses — track communication quality trajectory over time to detect inflection points." },
-        { title: "Cloud Persistence (Supabase)", desc: "All data syncs to a Supabase Postgres database so it survives redeploys and is shared across the team. Tracked data includes: signal groups, keywords, all signal history, backfill data, weekly briefs, earnings call analyses, mailing list, HuggingFace data, GitHub watchlists, cross-correlations, annotations, and pattern notes. Deletions also propagate to the database. Requires VITE_DASHBOARD_STORE_SECRET + SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY." },
-        { title: "Auto-Refresh Scheduler", desc: "Signals auto-refresh on their configured cadence (weekly by default). The scheduler also backfills recent TheirStack history automatically if stale. Pause/resume from the nav bar." },
-        { title: "Email Reports", desc: "Generated weekly reports can be emailed to your entire team via EmailJS (free, no domain verification needed). Set up your EmailJS account and configure it in the Mailing List tab. 200 emails/month on the free plan." },
+        { title: "Historical Backfill", desc: "Each signal source has a Backfill button to pull historical data." },
+        { title: "Growth Charts & Divergence Overlay", desc: "Overlay 2–4 signals on a normalized scale to spot divergences." },
+        { title: "AI Divergence Analysis", desc: "Claude interprets divergences between co-moving signals." },
+        { title: "Alert Threshold", desc: "Set a week-over-week % change threshold for divergence alerts." },
+        { title: "AI Weekly Brief", desc: "Claude-generated intelligence brief with live web search." },
+        { title: "Earnings Call Analyzer", desc: "Upload a transcript for AI-powered communication quality analysis." },
+        { title: "Cloud Persistence", desc: "Data syncs to Supabase for team-wide access across deploys." },
+        { title: "Auto-Refresh", desc: "Signals refresh automatically on their configured cadence." },
+        { title: "Email Reports", desc: "Send weekly briefs to your team via EmailJS." },
       ].map((item, i) => (
         <div key={i} style={{padding:"10px 14px",background:C.nested,borderRadius:10}}>
           <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:3}}>{item.title}</div>
@@ -4361,7 +4479,7 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
       DATABASE_URL=postgresql://... &nbsp;&nbsp;<span style={{color:C.textMuted}}># fallback — only needed if not using Supabase REST</span>
     </div>
     <div style={{...font.sans,fontSize:11,color:C.textMuted,lineHeight:1.6}}>
-      <strong>Minimum to get started:</strong> Just <code style={{fontSize:10}}>VITE_ANTHROPIC_API_KEY</code> — this powers the weekly brief (with live web search for stock prices and AI news) and the earnings call analyzer. Job data simulates without TheirStack. HuggingFace is free. Add <code style={{fontSize:10}}>VITE_GITHUB_PAT</code> for GitHub repos and Claude Code attribution. Add Supabase variables for permanent team-wide data persistence across deploys.
+      See <code style={{fontSize:10}}>.env.example</code> for setup details.
     </div>
   </div>);
 
@@ -4819,7 +4937,7 @@ export default function App() {
     if (sourceId === "github_repos" || sourceId === "claude_attrib") {
       const token = ENV_KEYS.github || "";
       if (!token) {
-        setErrors(prev => ({ ...prev, [signalKey]: "GitHub PAT required for backfill. Add VITE_GITHUB_PAT in settings." }));
+        setErrors(prev => ({ ...prev, [signalKey]: "GitHub PAT required for backfill." }));
         return;
       }
       const baseQ = buildGitHubQuery(vert, sourceId);
@@ -5664,16 +5782,6 @@ INSTRUCTIONS:
 
       <div style={{padding:"20px 28px 40px",maxWidth:1400,margin:"0 auto"}}>
 
-        <div style={{...font.sans,fontSize:12,color:C.textSec,lineHeight:1.55,marginBottom:16,padding:"12px 16px",background:C.white,border:`1px solid ${C.borderLight}`,borderRadius:12}}>
-          <strong style={{color:C.text}}>Where your data lives:</strong> groups, history, and settings are cached in <strong>this browser</strong> for speed. Your canonical backup should be cloud: either the server store (recommended) or a private GitHub Gist.
-          {!resolveGitPat() && !signalStoreSecret() && !databaseStoreSecret() && (
-            <span> Add <code style={{fontSize:11}}>VITE_DASHBOARD_STORE_SECRET</code> + <code style={{fontSize:11}}>DATABASE_URL</code> (Supabase) for canonical Postgres storage, or <code style={{fontSize:11}}>VITE_SIGNAL_STORE_SECRET</code> for Gist via server, or <code style={{fontSize:11}}>VITE_GITHUB_PAT</code> for browser→Gist. See <code style={{fontSize:11}}>.env.example</code>.</span>
-          )}
-          {(resolveGitPat() || signalStoreSecret() || databaseStoreSecret()) && (
-            <span> Cloud sync is configured — data restores on new browsers and deploys. Postgres (Supabase) is preferred when <code style={{fontSize:11}}>VITE_DASHBOARD_STORE_SECRET</code> is set.</span>
-          )}
-        </div>
-
         {/* ─── Settings (always visible, collapsed by default) ─── */}
         <div style={{marginBottom:20}}>
           <InlineSettings config={config} setConfig={setConfig} githubWatchlists={githubWatchlists} setGithubWatchlists={setGithubWatchlists} mailingList={mailingList} onUpdateMailingList={updateMailingList} onCloudSync={()=>{const pat=resolveGitPat();if(pat||signalStoreSecret()||databaseStoreSecret())debouncedSyncToGist(pat);}}/>
@@ -5685,7 +5793,7 @@ INSTRUCTIONS:
             <IcoC name="trendUp" size={24} color={C.cyan}/>
             <div style={{...font.sans,fontSize:16,fontWeight:700,color:C.text,margin:"12px 0 6px"}}>Create your first tracking group to get started</div>
             <p style={{...font.sans,fontSize:12,color:C.textSec,margin:"0 0 16px",lineHeight:1.6,maxWidth:520,marginLeft:"auto",marginRight:"auto"}}>
-              A tracking group is a vertical, theme, or sector you want to monitor — e.g. "Healthcare AI", "Autonomous Vehicles", "AI Coding Tools". Click the <strong>Instructions</strong> tab above for full details on what this tool tracks.
+              A tracking group is a vertical, theme, or sector you want to monitor.
             </p>
             <div style={{display:"flex",gap:8,alignItems:"center",justifyContent:"center",maxWidth:420,margin:"0 auto"}}>
               <input ref={addRef} value={newGroupName} onChange={e=>setNewGroupName(e.target.value)} placeholder="e.g. Healthcare AI, FinTech..."
@@ -5724,7 +5832,7 @@ INSTRUCTIONS:
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
             <div>
               <div style={{...font.sans,fontSize:13,fontWeight:700,color:C.text}}>Brief flagging thresholds</div>
-              <div style={{...font.sans,fontSize:11,color:C.textMuted,marginTop:2,lineHeight:1.4}}>A signal must change by at least this % (week-over-week) to be highlighted in the weekly brief. Quiet signals are mentioned but not dramatized.</div>
+              <div style={{...font.sans,fontSize:11,color:C.textMuted,marginTop:2,lineHeight:1.4}}>Minimum week-over-week % change to flag a signal in the brief.</div>
             </div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:10}}>
@@ -5738,21 +5846,24 @@ INSTRUCTIONS:
             ].map(({ key, label, color }) => {
               const bt = config.briefThresholds || {};
               const val = bt[key] ?? 10;
+              const displayVal = Number.isInteger(val) ? `${val}` : val.toFixed(1);
               return (
                 <div key={key} style={{padding:"8px 10px",background:C.nested,borderRadius:6,border:`1px solid ${C.borderLight}`}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
                     <span style={{...font.sans,fontSize:11,fontWeight:600,color:C.text}}>{label}</span>
-                    <span style={{...font.mono,fontSize:13,fontWeight:800,color}}>{val}%</span>
+                    <span style={{...font.mono,fontSize:13,fontWeight:800,color}}>{displayVal}%</span>
                   </div>
-                  <input type="range" min="1" max="50" step="1" value={val}
+                  <input type="range" min="0.1" max="50" step="0.1" value={val}
                     onChange={e => setConfig(prev => {
-                      const next = { ...prev, briefThresholds: { ...(prev.briefThresholds || {}), [key]: parseInt(e.target.value, 10) || 10 } };
+                      const raw = parseFloat(e.target.value);
+                      const clamped = Math.min(50, Math.max(0.1, Math.round(raw * 10) / 10));
+                      const next = { ...prev, briefThresholds: { ...(prev.briefThresholds || {}), [key]: clamped } };
                       sv("config", next);
                       return next;
                     })}
                     style={{width:"100%",accentColor:color}} />
                   <div style={{display:"flex",justifyContent:"space-between",marginTop:1}}>
-                    <span style={{...font.sans,fontSize:8.5,color:C.textMuted}}>1%</span>
+                    <span style={{...font.sans,fontSize:8.5,color:C.textMuted}}>0.1%</span>
                     <span style={{...font.sans,fontSize:8.5,color:C.textMuted}}>50%</span>
                   </div>
                 </div>
