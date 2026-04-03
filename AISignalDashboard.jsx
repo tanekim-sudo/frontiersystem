@@ -441,6 +441,9 @@ function appendLaborMacroSnapshot(row) {
 }
 
 const TIME_RANGES = [
+  { id: "1m", label: "1M", filterFn: (d, dateKey) => { const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 1); return new Date(d[dateKey]) >= cutoff; } },
+  { id: "3m", label: "3M", filterFn: (d, dateKey) => { const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 3); return new Date(d[dateKey]) >= cutoff; } },
+  { id: "6m", label: "6M", filterFn: (d, dateKey) => { const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 6); return new Date(d[dateKey]) >= cutoff; } },
   { id: "1y", label: "1Y", filterFn: (d, dateKey) => { const cutoff = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 1); return new Date(d[dateKey]) >= cutoff; } },
   { id: "2y", label: "2Y", filterFn: (d, dateKey) => { const cutoff = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 2); return new Date(d[dateKey]) >= cutoff; } },
   { id: "5y", label: "5Y", filterFn: (d, dateKey) => { const cutoff = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 5); return new Date(d[dateKey]) >= cutoff; } },
@@ -3127,9 +3130,7 @@ function HuggingFaceLeaderboard({onDataChanged}) {
   const [isL,setIsL]=useState(false);
   const [err,setErr]=useState(null);
   const [expanded,setExpanded]=useState(null);
-  const [showHist,setShowHist]=useState(false);
-  const [hfRange,setHfRange]=useState("1y");
-  const [compareMode,setCompareMode]=useState(false);
+  const [hfRange,setHfRange]=useState("3m");
   const [compareA,setCompareA]=useState(null);
   const [compareB,setCompareB]=useState(null);
 
@@ -3162,7 +3163,6 @@ function HuggingFaceLeaderboard({onDataChanged}) {
           badge={<Badge color={C.green} bg={C.greenBg} size="sm">Public API</Badge>}
           right={<>
             {data?.timestamp&&<span style={{...font.sans,fontSize:11,color:C.textMuted}}>{timeAgo(data.timestamp)}</span>}
-            <Btn variant={showHist?"primary":"ghost"} size="sm" onClick={()=>setShowHist(!showHist)}><IcoC name="barChart" size={13} color={showHist?"#fff":C.textSec}/> Trend</Btn>
             <Btn variant="primary" size="sm" onClick={doFetch} disabled={isL}>{isL?<><Spinner size={12} color="#fff"/> Fetching</>:"Refresh"}</Btn>
           </>}
         />
@@ -3220,93 +3220,96 @@ function HuggingFaceLeaderboard({onDataChanged}) {
         </Expandable>
       </div>
 
-      {showHist && hfHist.length >= 2 && (
-        <div className="fade-in" style={{padding:"14px 22px",borderBottom:`1px solid ${C.border}`}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,flexWrap:"wrap",gap:6}}>
-            <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text}}>Download Growth Over Time</div>
-              <button onClick={()=>{setCompareMode(!compareMode);if(!compareMode&&!compareA){const sorted=[...orgs];setCompareA(sorted[0]?.orgId||HF_ORGS[0].id);setCompareB(sorted[1]?.orgId||HF_ORGS[1].id);}}} style={{...font.sans,fontSize:10,fontWeight:600,padding:"3px 10px",borderRadius:6,border:`1px solid ${compareMode?C.cyan:C.border}`,background:compareMode?C.cyan+"14":C.white,color:compareMode?C.cyan:C.textSec,cursor:"pointer",transition:"all .15s"}}>
-                {compareMode?"Exit Compare":"Compare 2"}
-              </button>
-            </div>
+      {hfHist.length >= 2 && (
+        <div style={{padding:"14px 22px",borderBottom:`1px solid ${C.border}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:6}}>
+            <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text}}>Download Growth Over Time</div>
             <TimeRangeSelector value={hfRange} onChange={setHfRange} />
           </div>
 
-          {compareMode && (
-            <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:8,flexWrap:"wrap"}}>
-              {[{label:"A",val:compareA,set:setCompareA},{label:"B",val:compareB,set:setCompareB}].map(({label:lbl,val,set})=>(
-                <div key={lbl} style={{display:"flex",alignItems:"center",gap:6}}>
-                  <span style={{...font.sans,fontSize:10,fontWeight:700,color:C.textMuted}}>{lbl}</span>
-                  <select value={val||""} onChange={e=>set(e.target.value)} style={{...font.sans,fontSize:11,padding:"4px 8px",borderRadius:6,border:`1px solid ${C.border}`,background:C.white,color:C.text,cursor:"pointer"}}>
-                    {HF_ORGS.map(o=>(<option key={o.id} value={o.id}>{o.name}</option>))}
-                  </select>
-                </div>
-              ))}
-              <div style={{...font.sans,fontSize:10,color:C.textMuted,marginLeft:4}}>Normalized to % change from first data point</div>
-            </div>
-          )}
+          {/* All-companies chart */}
+          <div style={{width:"100%",height:220,marginBottom:12}}>
+            {(()=>{const hdAll=sanitizeTimeSeries(hfHist.map(p=>({...p,_ts:p.ts||Date.now(),_iso:new Date(p.ts||Date.now()).toISOString()})).sort((a,b)=>a._ts-b._ts),"_ts");let hd=filterByTimeRange(hdAll,hfRange,"_iso");if(hd.length>=4){HF_ORGS.forEach(o=>{hd=smoothEMA(hd,o.id,0.2);});}const smK=hd.length>=4;const allVals=hd.flatMap(p=>HF_ORGS.map(o=>p[smK?`${o.id}_smooth`:o.id]).filter(v=>typeof v==="number"&&v>0));const yd=zoomedYDomain(allVals);return(
+            <ResponsiveContainer>
+              <LineChart data={hd} margin={{top:8,right:16,bottom:8,left:8}}>
+                <XAxis dataKey="_ts" type="number" scale="time" domain={["dataMin","dataMax"]}
+                  tickFormatter={ts=>formatChartDateShort(new Date(ts).toISOString())}
+                  tick={{fontSize:9,fill:C.textMuted}} interval="preserveStartEnd" tickCount={6} />
+                <YAxis tick={{fontSize:10,fill:C.textMuted,...font.mono}} width={55} tickFormatter={fmtDL} domain={yd} allowDataOverflow={true}/>
+                <Tooltip contentStyle={{...font.sans,fontSize:12,background:C.white,border:`1px solid ${C.border}`,borderRadius:10,boxShadow:"0 4px 12px rgba(0,0,0,.08)"}} formatter={v=>fmtDL(v)} labelFormatter={ts=>formatChartDate(new Date(ts).toISOString())} />
+                <Legend wrapperStyle={{fontSize:10,...font.sans}}/>
+                {HF_ORGS.map(org=>(<Line key={org.id} type="monotone" dataKey={smK?`${org.id}_smooth`:org.id} stroke={org.color} strokeWidth={2} dot={false} name={org.name} connectNulls/>))}
+              </LineChart>
+            </ResponsiveContainer>);})()}
+          </div>
 
-          <div style={{...font.sans,fontSize:10,color:C.textMuted,marginBottom:6}}>{hfHist.length} data points since {formatChartDateShort(new Date(hfHist[0]?.ts).toISOString())}</div>
-
-          {!compareMode ? (
-            <div style={{width:"100%",height:200}}>
-              {(()=>{const hdAll=sanitizeTimeSeries(hfHist.map(p=>({...p,_ts:p.ts||Date.now(),_iso:new Date(p.ts||Date.now()).toISOString()})).sort((a,b)=>a._ts-b._ts),"_ts");let hd=filterByTimeRange(hdAll,hfRange,"_iso");if(hd.length>=4){HF_ORGS.forEach(o=>{hd=smoothEMA(hd,o.id,0.2);});}const smK=hd.length>=4;const allVals=hd.flatMap(p=>HF_ORGS.map(o=>p[smK?`${o.id}_smooth`:o.id]).filter(v=>typeof v==="number"&&v>0));const yd=zoomedYDomain(allVals);return(
-              <ResponsiveContainer>
-                <LineChart data={hd} margin={{top:8,right:16,bottom:8,left:8}}>
-                  <XAxis dataKey="_ts" type="number" scale="time" domain={["dataMin","dataMax"]}
-                    tickFormatter={ts=>formatChartDateShort(new Date(ts).toISOString())}
-                    tick={{fontSize:9,fill:C.textMuted}} interval="preserveStartEnd" tickCount={6} />
-                  <YAxis tick={{fontSize:10,fill:C.textMuted,...font.mono}} width={55} tickFormatter={fmtDL} domain={yd} allowDataOverflow={true}/>
-                  <Tooltip contentStyle={{...font.sans,fontSize:12,background:C.white,border:`1px solid ${C.border}`,borderRadius:10,boxShadow:"0 4px 12px rgba(0,0,0,.08)"}} formatter={v=>fmtDL(v)} labelFormatter={ts=>formatChartDate(new Date(ts).toISOString())} />
-                  <Legend wrapperStyle={{fontSize:10,...font.sans}}/>
-                  {HF_ORGS.map(org=>(<Line key={org.id} type="monotone" dataKey={smK?`${org.id}_smooth`:org.id} stroke={org.color} strokeWidth={2} dot={false} name={org.name} connectNulls/>))}
-                </LineChart>
-              </ResponsiveContainer>);})()}
-            </div>
-          ) : (
-            <div style={{width:"100%",height:280}}>
-              {(()=>{
-                const orgA = HF_ORGS.find(o=>o.id===compareA);
-                const orgB = HF_ORGS.find(o=>o.id===compareB);
-                if(!orgA||!orgB||orgA.id===orgB.id) return <div style={{...font.sans,fontSize:12,color:C.textMuted,textAlign:"center",padding:30}}>Select two different companies to compare.</div>;
-                const hdAll=sanitizeTimeSeries(hfHist.map(p=>({...p,_ts:p.ts||Date.now(),_iso:new Date(p.ts||Date.now()).toISOString()})).sort((a,b)=>a._ts-b._ts),"_ts");
-                let hd=filterByTimeRange(hdAll,hfRange,"_iso");
-                if(hd.length<2) return <div style={{...font.sans,fontSize:12,color:C.textMuted,textAlign:"center",padding:30}}>Not enough data points for comparison.</div>;
-                if(hd.length>=4){[orgA,orgB].forEach(o=>{hd=smoothEMA(hd,o.id,0.2);});}
-                const smK=hd.length>=4;
-                const keyA=smK?`${orgA.id}_smooth`:orgA.id;
-                const keyB=smK?`${orgB.id}_smooth`:orgB.id;
-                const baseA=hd.find(p=>typeof p[keyA]==="number"&&p[keyA]>0)?.[keyA];
-                const baseB=hd.find(p=>typeof p[keyB]==="number"&&p[keyB]>0)?.[keyB];
-                if(!baseA||!baseB) return <div style={{...font.sans,fontSize:12,color:C.textMuted,textAlign:"center",padding:30}}>Insufficient data for one or both companies.</div>;
-                const normalized=hd.map(p=>{
-                  const vA=p[keyA]; const vB=p[keyB];
-                  return {...p,
-                    pctA: typeof vA==="number"?((vA-baseA)/baseA)*100:null,
-                    pctB: typeof vB==="number"?((vB-baseB)/baseB)*100:null,
-                    rawA: vA, rawB: vB,
-                  };
-                });
-                const allPcts=normalized.flatMap(p=>[p.pctA,p.pctB]).filter(v=>v!=null);
-                const minP=Math.min(...allPcts); const maxP=Math.max(...allPcts);
-                const pad=(maxP-minP)*0.1||5;
-                const lastA=normalized.filter(p=>p.pctA!=null).slice(-1)[0];
-                const lastB=normalized.filter(p=>p.pctB!=null).slice(-1)[0];
-                return(<>
-                  <div style={{display:"flex",gap:16,marginBottom:8}}>
-                    <div style={{display:"flex",alignItems:"center",gap:6}}>
-                      <div style={{width:12,height:3,borderRadius:2,background:orgA.color}}/>
-                      <span style={{...font.sans,fontSize:11,fontWeight:600,color:orgA.color}}>{orgA.name}</span>
-                      {lastA&&<span style={{...font.mono,fontSize:12,fontWeight:800,color:lastA.pctA>=0?C.green:C.red}}>{lastA.pctA>=0?"+":""}{lastA.pctA.toFixed(1)}%</span>}
-                      {lastA&&<span style={{...font.mono,fontSize:10,color:C.textMuted}}>({fmtDL(lastA.rawA)})</span>}
-                    </div>
-                    <div style={{display:"flex",alignItems:"center",gap:6}}>
-                      <div style={{width:12,height:3,borderRadius:2,background:orgB.color}}/>
-                      <span style={{...font.sans,fontSize:11,fontWeight:600,color:orgB.color}}>{orgB.name}</span>
-                      {lastB&&<span style={{...font.mono,fontSize:12,fontWeight:800,color:lastB.pctB>=0?C.green:C.red}}>{lastB.pctB>=0?"+":""}{lastB.pctB.toFixed(1)}%</span>}
-                      {lastB&&<span style={{...font.mono,fontSize:10,color:C.textMuted}}>({fmtDL(lastB.rawB)})</span>}
-                    </div>
+          {/* Head-to-head comparison */}
+          <div style={{background:C.nested,borderRadius:10,padding:"12px 14px",border:`1px solid ${C.borderLight}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:6}}>
+              <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text}}>Head-to-Head Comparison</div>
+              <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                {[{label:"Company A",val:compareA,set:setCompareA,color:compareA?HF_ORGS.find(o=>o.id===compareA)?.color:C.textMuted},{label:"Company B",val:compareB,set:setCompareB,color:compareB?HF_ORGS.find(o=>o.id===compareB)?.color:C.textMuted}].map(({label:lbl,val,set,color})=>(
+                  <div key={lbl} style={{display:"flex",alignItems:"center",gap:4}}>
+                    <div style={{width:8,height:8,borderRadius:"50%",background:color||C.textMuted}}/>
+                    <select value={val||""} onChange={e=>set(e.target.value)} style={{...font.sans,fontSize:11,padding:"3px 6px",borderRadius:6,border:`1px solid ${C.border}`,background:C.white,color:C.text,cursor:"pointer"}}>
+                      <option value="">{lbl}</option>
+                      {HF_ORGS.map(o=>(<option key={o.id} value={o.id}>{o.name}</option>))}
+                    </select>
                   </div>
+                ))}
+                {(compareA||compareB)&&<button onClick={()=>{setCompareA(null);setCompareB(null);}} style={{...font.sans,fontSize:9,color:C.textMuted,background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Clear</button>}
+              </div>
+            </div>
+
+            {compareA && compareB && compareA !== compareB ? (()=>{
+              const orgA = HF_ORGS.find(o=>o.id===compareA);
+              const orgB = HF_ORGS.find(o=>o.id===compareB);
+              if(!orgA||!orgB) return null;
+              const hdAll=sanitizeTimeSeries(hfHist.map(p=>({...p,_ts:p.ts||Date.now(),_iso:new Date(p.ts||Date.now()).toISOString()})).sort((a,b)=>a._ts-b._ts),"_ts");
+              let hd=filterByTimeRange(hdAll,hfRange,"_iso");
+              if(hd.length<2) return <div style={{...font.sans,fontSize:12,color:C.textMuted,textAlign:"center",padding:20}}>Not enough data for this time range.</div>;
+              if(hd.length>=4){[orgA,orgB].forEach(o=>{hd=smoothEMA(hd,o.id,0.2);});}
+              const smK=hd.length>=4;
+              const keyA=smK?`${orgA.id}_smooth`:orgA.id;
+              const keyB=smK?`${orgB.id}_smooth`:orgB.id;
+              const baseA=hd.find(p=>typeof p[keyA]==="number"&&p[keyA]>0)?.[keyA];
+              const baseB=hd.find(p=>typeof p[keyB]==="number"&&p[keyB]>0)?.[keyB];
+              if(!baseA||!baseB) return <div style={{...font.sans,fontSize:12,color:C.textMuted,textAlign:"center",padding:20}}>Insufficient data for comparison.</div>;
+              const normalized=hd.map(p=>{
+                const vA=p[keyA]; const vB=p[keyB];
+                return {...p,
+                  pctA: typeof vA==="number"?((vA-baseA)/baseA)*100:null,
+                  pctB: typeof vB==="number"?((vB-baseB)/baseB)*100:null,
+                  rawA: vA, rawB: vB,
+                };
+              });
+              const allPcts=normalized.flatMap(p=>[p.pctA,p.pctB]).filter(v=>v!=null);
+              const minP=Math.min(...allPcts); const maxP=Math.max(...allPcts);
+              const pad=Math.max((maxP-minP)*0.12,2);
+              const lastA=normalized.filter(p=>p.pctA!=null).slice(-1)[0];
+              const lastB=normalized.filter(p=>p.pctB!=null).slice(-1)[0];
+              const aGrew=lastA?.pctA??0; const bGrew=lastB?.pctB??0;
+              const winner=Math.abs(aGrew-bGrew)<0.5?null:aGrew>bGrew?orgA:orgB;
+              return(<>
+                <div style={{display:"flex",gap:20,marginBottom:10,flexWrap:"wrap"}}>
+                  {[{org:orgA,last:lastA,pctKey:"pctA",rawKey:"rawA"},{org:orgB,last:lastB,pctKey:"pctB",rawKey:"rawB"}].map(({org,last,pctKey,rawKey})=>{
+                    const pctVal=last?.[pctKey];
+                    return(
+                    <div key={org.id} style={{flex:1,minWidth:160,padding:"10px 14px",background:C.white,borderRadius:8,border:`2px solid ${org.color}20`}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                        <div style={{width:10,height:10,borderRadius:"50%",background:org.color}}/>
+                        <span style={{...font.sans,fontSize:12,fontWeight:700,color:org.color}}>{org.name}</span>
+                        {winner?.id===org.id&&<span style={{...font.mono,fontSize:9,fontWeight:800,color:C.green,background:C.greenBg,borderRadius:4,padding:"1px 6px"}}>FASTER</span>}
+                      </div>
+                      <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+                        {pctVal!=null&&<span style={{...font.mono,fontSize:20,fontWeight:800,color:pctVal>=0?C.green:C.red}}>{pctVal>=0?"+":""}{pctVal.toFixed(1)}%</span>}
+                        {last&&<span style={{...font.mono,fontSize:11,color:C.textMuted}}>{fmtDL(last[rawKey])}</span>}
+                      </div>
+                      <div style={{...font.sans,fontSize:10,color:C.textMuted,marginTop:2}}>since {formatChartDateShort(new Date(hd[0]._ts).toISOString())}</div>
+                    </div>);
+                  })}
+                </div>
+                <div style={{width:"100%",height:240}}>
                   <ResponsiveContainer>
                     <LineChart data={normalized} margin={{top:8,right:16,bottom:8,left:8}}>
                       <XAxis dataKey="_ts" type="number" scale="time" domain={["dataMin","dataMax"]}
@@ -3315,16 +3318,20 @@ function HuggingFaceLeaderboard({onDataChanged}) {
                       <YAxis tick={{fontSize:10,fill:C.textMuted,...font.mono}} width={48} tickFormatter={v=>`${v>=0?"+":""}${v.toFixed(0)}%`} domain={[Math.floor(minP-pad),Math.ceil(maxP+pad)]}/>
                       <ReferenceLine y={0} stroke={C.textMuted} strokeDasharray="4 4" strokeWidth={1}/>
                       <Tooltip contentStyle={{...font.sans,fontSize:12,background:C.white,border:`1px solid ${C.border}`,borderRadius:10,boxShadow:"0 4px 12px rgba(0,0,0,.08)"}}
-                        formatter={(v,name)=>[`${v>=0?"+":""}${v.toFixed(1)}%`,name]}
+                        formatter={(v,name)=>[`${v!=null?(v>=0?"+":"")+v.toFixed(1)+"%":"—"}`,name]}
                         labelFormatter={ts=>formatChartDate(new Date(ts).toISOString())} />
                       <Line type="monotone" dataKey="pctA" stroke={orgA.color} strokeWidth={2.5} dot={false} name={orgA.name} connectNulls/>
                       <Line type="monotone" dataKey="pctB" stroke={orgB.color} strokeWidth={2.5} dot={false} name={orgB.name} connectNulls/>
                     </LineChart>
                   </ResponsiveContainer>
-                </>);
-              })()}
-            </div>
-          )}
+                </div>
+              </>);
+            })() : (
+              <div style={{...font.sans,fontSize:11,color:C.textMuted,textAlign:"center",padding:"16px 0"}}>
+                Select two companies above or click any row in the table below to compare their relative growth.
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -3343,11 +3350,11 @@ function HuggingFaceLeaderboard({onDataChanged}) {
             const pct=maxDl>0?(org.totalDownloads/maxDl)*100:0;
             const isExp=expanded===org.orgId;
             const rv=rank>0&&orgs[0].totalDownloads>0?(orgs[0].totalDownloads/Math.max(org.totalDownloads,1)).toFixed(1):null;
-            const isSelA=compareMode&&compareA===org.orgId;
-            const isSelB=compareMode&&compareB===org.orgId;
+            const isSelA=compareA===org.orgId;
+            const isSelB=compareB===org.orgId;
             const compareHighlight=isSelA?`${meta.color}12`:isSelB?`${meta.color}08`:"transparent";
             return(<React.Fragment key={org.orgId}>
-              <tr style={{cursor:"pointer",transition:"background .15s",background:compareHighlight}} onClick={()=>{if(compareMode&&showHist){if(isSelA){/* already A, do nothing */}else if(isSelB){/* already B, do nothing */}else if(compareA&&!compareB){setCompareB(org.orgId);}else{setCompareA(org.orgId);}return;}setExpanded(isExp?null:org.orgId);}} onMouseEnter={e=>{if(!isSelA&&!isSelB)e.currentTarget.style.background=C.nested;}} onMouseLeave={e=>{e.currentTarget.style.background=compareHighlight;}}>
+              <tr style={{cursor:"pointer",transition:"background .15s",background:compareHighlight}} onClick={()=>{if(isSelA){setCompareA(null);return;}if(isSelB){setCompareB(null);return;}if(!compareA){setCompareA(org.orgId);}else if(!compareB){setCompareB(org.orgId);}else{setCompareA(compareB);setCompareB(org.orgId);}setExpanded(isExp?null:org.orgId);}} onMouseEnter={e=>{e.currentTarget.style.background=isSelA||isSelB?compareHighlight:C.nested;}} onMouseLeave={e=>{e.currentTarget.style.background=compareHighlight;}}>
                 <td style={{padding:"12px 14px",textAlign:"center",...font.mono,fontSize:14,fontWeight:800,color:rank<3?meta.color:C.textMuted,width:40}}>{rank+1}</td>
                 <td style={{padding:"12px 14px",fontSize:13,fontWeight:600,color:C.text,whiteSpace:"nowrap"}}>
                   <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:meta.color,marginRight:10,verticalAlign:"middle"}}/>{meta.name}
