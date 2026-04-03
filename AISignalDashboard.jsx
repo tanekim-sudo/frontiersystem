@@ -4469,18 +4469,17 @@ export default function App() {
     setBriefHistory(rows);
   }, []);
 
-  // One-time migration: wipe all github_repos history and backfill caches.
-  // Previous data mixed 30-day and 7-day query windows, making charts unusable.
-  // Live query now uses 7-day windows matching backfill — start fresh.
+  // Aggressive migration: wipe ALL github_repos data every time version changes.
+  // This ensures stale data from any prior query format is fully purged.
   useEffect(() => {
-    const migKey = `${HSPFX}hist_purge_v4`;
+    const migKey = `${HSPFX}hist_purge_v5`;
     if (localStorage.getItem(migKey)) return;
     const keysToRemove = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
       if (!k) continue;
-      if (k.includes("backfill_v2_") || k.includes("backfill_v3_")) keysToRemove.push(k);
-      if (k.includes("github_repos") && (k.includes("hist_") || k.includes("backfill_"))) keysToRemove.push(k);
+      if (k.includes("backfill_v2_") || k.includes("backfill_v3_") || k.includes("backfill_v4_")) keysToRemove.push(k);
+      if (k.includes("github_repos")) keysToRemove.push(k);
     }
     keysToRemove.forEach(k => localStorage.removeItem(k));
     localStorage.setItem(migKey, new Date().toISOString());
@@ -4771,9 +4770,9 @@ export default function App() {
     if (!vert) return;
     cancelHistoryRef.current = false;
     const signalKey = `${verticalId}_${sourceId}`;
-    const histCacheKey = `backfill_v4_${signalKey}`;
+    const histCacheKey = `backfill_v5_${signalKey}`;
     const cached = ld(histCacheKey, null);
-    if (cached?.version === 4 && cached?.points?.length >= 50) {
+    if (cached?.version === 5 && cached?.points?.length >= 50) {
       cached.points.forEach(p => {
         const h = ld(`hist_${signalKey}`, []);
         if (!h.some(x => x.isoDate === p.isoDate)) {
@@ -4802,7 +4801,7 @@ export default function App() {
             sv(`hist_${signalKey}`, h);
           }
         });
-        sv(histCacheKey, { version: 4, generatedAt: new Date().toISOString(), points: recorded });
+        sv(histCacheKey, { version: 5, generatedAt: new Date().toISOString(), points: recorded });
         setAllHistories(prev => ({ ...prev, [signalKey]: getSignalHistory(signalKey) }));
       } catch (e) {
         setErrors(prev => ({ ...prev, [signalKey]: e.message }));
@@ -4854,7 +4853,7 @@ export default function App() {
         await sleep(4500);
       }
       if (recorded.length > 0) {
-        sv(histCacheKey, { version: 4, generatedAt: new Date().toISOString(), points: recorded });
+        sv(histCacheKey, { version: 5, generatedAt: new Date().toISOString(), points: recorded });
         setAllHistories(prev => ({ ...prev, [signalKey]: getSignalHistory(signalKey) }));
       }
       setHistoryProgress({ active: false, verticalId: null, current: 0, total: 0, label: "" });
