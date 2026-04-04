@@ -123,7 +123,9 @@ function getAllData() {
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
     if (k?.startsWith(PFX) && k !== GIST_ID_KEY) {
-      try { data[k.slice(PFX.length)] = JSON.parse(localStorage.getItem(k)); } catch {}
+      const inner = k.slice(PFX.length);
+      if (inner.startsWith("hist_") && inner.includes("github_repos")) continue;
+      try { data[inner] = JSON.parse(localStorage.getItem(k)); } catch {}
     } else if (k?.startsWith(HSPFX) && !k?.startsWith(PFX)) {
       try { data[`__raw_${k}`] = JSON.parse(localStorage.getItem(k)); } catch {}
     }
@@ -133,6 +135,7 @@ function getAllData() {
 
 function loadAllData(data) {
   Object.entries(data).forEach(([k, v]) => {
+    if (k.includes("github_repos") && k.startsWith("hist_")) return;
     if (k.startsWith("__raw_")) {
       const rawKey = k.slice(6);
       const existing = localStorage.getItem(rawKey);
@@ -379,6 +382,14 @@ async function syncFromGist(pat) {
     if (content) { loadAllData(JSON.parse(content)); return true; }
   } catch {}
   return false;
+}
+
+function purgeGitHubReposHistory() {
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const k = localStorage.key(i);
+    if (!k) continue;
+    if ((k.includes("github_repos") && k.includes("hist")) || k.includes("backfill_v")) localStorage.removeItem(k);
+  }
 }
 
 // ── SHARED ANNOTATION LOG ────────────────────────────────────────────────────
@@ -4601,16 +4612,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const migKey = `${HSPFX}hist_purge_v6`;
-    if (localStorage.getItem(migKey)) return;
-    const keysToRemove = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (!k) continue;
-      if (k.includes("backfill_v") || k.includes("github_repos")) keysToRemove.push(k);
-    }
-    keysToRemove.forEach(k => localStorage.removeItem(k));
-    localStorage.setItem(migKey, new Date().toISOString());
+    purgeGitHubReposHistory();
   }, []);
 
   useEffect(()=>{
@@ -4678,7 +4680,7 @@ export default function App() {
     setCloudStatus(direction==="up"?"saving…":"loading…");
     try{
       if(direction==="up"){await syncToGist(pat);lastSyncRef.current=Date.now();}
-      else{const ok=await syncFromGist(pat);if(ok){setConfig(ld("config",buildDefaultConfig()));lastSyncRef.current=Date.now();}}
+      else{const ok=await syncFromGist(pat);if(ok){purgeGitHubReposHistory();setConfig(ld("config",buildDefaultConfig()));lastSyncRef.current=Date.now();}}
       setCloudStatus("synced");
     }catch{setCloudStatus("error");}
     setTimeout(()=>setCloudStatus("idle"),3000);
@@ -4689,7 +4691,7 @@ export default function App() {
     let cancelled=false;
     (async()=>{
       const pat=resolveGitPat();
-      if(pat||signalStoreSecret()||databaseStoreSecret()){setCloudStatus("loading…");try{await syncFromGist(pat);if(!cancelled){setConfig(ld("config",buildDefaultConfig()));setMailingList(ld("mailing_list",[]));}}catch{}if(!cancelled){setCloudStatus("idle");lastSyncRef.current=Date.now();}}
+      if(pat||signalStoreSecret()||databaseStoreSecret()){setCloudStatus("loading…");try{await syncFromGist(pat);purgeGitHubReposHistory();if(!cancelled){setConfig(ld("config",buildDefaultConfig()));setMailingList(ld("mailing_list",[]));}}catch{}if(!cancelled){setCloudStatus("idle");lastSyncRef.current=Date.now();}}
       await new Promise(r=>setTimeout(r,100));
       if(!cancelled){cloudSyncDoneRef.current=true;_cloudInitDone=true;}
       if (!cancelled) {

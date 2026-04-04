@@ -1,0 +1,10 @@
+Add 1M/3M/6M time ranges, always-visible HF charts, inline head-to-head comparison
+
+- Add 1M, 3M, 6M options to global TimeRangeSelector (all charts benefit)
+- HF download chart is now always visible (no Trend toggle required)
+- Head-to-head comparison panel is always visible below the main chart
+- Click any table row to select companies A/B for comparison
+- Comparison shows normalized % change from start of selected time range
+- Summary cards show total growth %, absolute values, and "FASTER" indicator
+- Table rows highlight when selected for comparison with A/B badges
+- Default time range set to 3M for more useful detail
