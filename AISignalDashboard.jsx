@@ -509,17 +509,19 @@ const FRED_SERIES_EXPLAIN = {
   UNRATE: "U-3 unemployment rate — the headline number you see in news. % of labor force actively looking for work but can't find it. Below 4% = very tight. Above 5% = trouble.",
   U6RATE: "U-6 unemployment — the REAL unemployment rate. Includes people who gave up looking and those stuck in part-time work who want full-time. Always higher than U-3. The gap between U-6 and U-3 shows hidden labor market pain.",
   EMRATIO: "Employment-to-population ratio — what % of working-age adults actually have a job. More honest than unemployment rate because it counts people who stopped looking. Higher = stronger economy.",
+  CIVPART: "Labor force participation rate — what % of working-age population is either employed or actively looking. When this falls, people are leaving the workforce entirely (retirement, discouragement, school).",
   PAYEMS: "Total nonfarm payrolls (in thousands) — the single most-watched jobs number. This is the \"economy added X jobs\" headline. Consistently above ~150K/month = healthy.",
   ICSA: "Initial jobless claims — how many people filed for unemployment for the first time THIS WEEK. The most real-time labor signal. Spikes = sudden layoffs. Below ~225K = stable. Above ~300K = trouble.",
   CCSA: "Continuing claims — how many people are STILL collecting unemployment. When this rises while initial claims are stable, people can't find new jobs. Bad for AI hiring demand.",
   JTSJOL: "JOLTS Job Openings — total unfilled positions across the US (in thousands). More openings = companies are growing. When this drops, enterprise procurement slows 1–2 quarters later.",
   JTSHIR: "JOLTS Hires — how many people were actually hired this month (thousands). Falling hires even when openings are high = companies are posting jobs but not filling them (cautious).",
   JTSQUR: "JOLTS Quits rate — % of workers voluntarily leaving their jobs. High quits = workers feel confident they can find something better = strong economy. Falling quits = people are scared to leave.",
+  JTSR: "Job openings rate — openings as a % of total employment plus openings. Higher = more demand for workers relative to supply.",
   GDPC1: "Real GDP (inflation-adjusted) — total economic output. The ultimate \"is the economy growing\" number. Negative = recession.",
   INDPRO: "Industrial Production Index — output from factories, mines, utilities. When this falls, physical economy is contracting.",
   RSXFS: "Retail sales excluding food services — how much consumers are actually spending. Consumer spending is 70% of GDP.",
   PCEC96: "Real personal consumption — what households spend (inflation-adjusted). The most direct demand signal.",
-  HOUST1: "New housing starts (single-family) — builders break ground only when they're confident. A leading indicator that predicts economic conditions 6–12 months out.",
+  HOUST: "New housing starts — builders break ground only when they're confident. A leading indicator that predicts economic conditions 6–12 months out.",
   UMCSENT: "University of Michigan Consumer Sentiment — survey of how optimistic Americans feel about the economy. Drops here predict spending pullbacks.",
   VIXCLS: "VIX — the \"fear index.\" Measures expected stock market volatility. Below 15 = calm. 20–30 = nervous. Above 30 = panic.",
   NFCI: "National Financial Conditions Index — combines 100+ financial indicators. Negative = easy money. Positive = tight conditions. When this rises, venture capital and AI funding dry up.",
@@ -2744,10 +2746,14 @@ function LaborMacroPanel({ onAfterLoad }) {
                 const data = filterByTimeRange(dataAll, timeRange, "date");
                 const explain = FRED_SERIES_EXPLAIN[s.id];
                 if (s.error) {
+                  const friendlyErr = s.error.includes("429") || s.error.includes("Rate Limit") ? "Rate limited — will retry on next refresh"
+                    : s.error.includes("does not exist") ? "Series discontinued by FRED"
+                    : s.error.includes("400") ? "Temporarily unavailable"
+                    : "Fetch failed — will retry";
                   return (
                     <div key={s.id} style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.borderLight}`, background: C.nested }}>
-                      <div style={{ fontSize: 11, fontWeight: 700 }}>{s.id}</div>
-                      <div style={{ fontSize: 10, color: C.red }}>{s.error}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700 }}>{s.meta?.name || s.id}</div>
+                      <div style={{ fontSize: 10, color: C.amber }}>{friendlyErr}</div>
                     </div>
                   );
                 }
