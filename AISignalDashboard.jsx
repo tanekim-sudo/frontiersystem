@@ -1033,7 +1033,7 @@ function trimPayloadSize(obj, maxChars = 20000) {
   (copy.verticals || []).forEach((v) => {
     const sigs = v.signals || {};
     Object.values(sigs).forEach(sig => {
-      if (sig?.time_series?.recent_values) sig.time_series.recent_values = sig.time_series.recent_values.slice(-8);
+      if (sig?.time_series?.recent_values) sig.time_series.recent_values = sig.time_series.recent_values.slice(-21);
     });
     if (v.theirstack_historical?.recent_monthly) v.theirstack_historical.recent_monthly = v.theirstack_historical.recent_monthly.slice(-6);
     if (v.theirstack_historical?.inflection_points) v.theirstack_historical.inflection_points = v.theirstack_historical.inflection_points.slice(-3);
@@ -1043,7 +1043,7 @@ function trimPayloadSize(obj, maxChars = 20000) {
   (copy.verticals || []).forEach((v) => {
     const sigs = v.signals || {};
     Object.values(sigs).forEach(sig => {
-      if (sig?.time_series?.recent_values) sig.time_series.recent_values = sig.time_series.recent_values.slice(-5);
+      if (sig?.time_series?.recent_values) sig.time_series.recent_values = sig.time_series.recent_values.slice(-14);
     });
     if (v.divergence_signals?.length > 3) v.divergence_signals = v.divergence_signals.slice(0, 3);
   });
@@ -1051,7 +1051,7 @@ function trimPayloadSize(obj, maxChars = 20000) {
   if (s.length <= maxChars) return copy;
   const ca = copy.cross_vertical_analysis;
   if (ca?.lag_leader_relationships) ca.lag_leader_relationships = ca.lag_leader_relationships.slice(0, 4);
-  if (copy.ai_supply_side?.hf_download_trend?.recent_values) copy.ai_supply_side.hf_download_trend.recent_values = copy.ai_supply_side.hf_download_trend.recent_values.slice(-5);
+  if (copy.ai_supply_side?.hf_download_trend?.recent_values) copy.ai_supply_side.hf_download_trend.recent_values = copy.ai_supply_side.hf_download_trend.recent_values.slice(-14);
   return copy;
 }
 function offlineBriefFromContext(ctx) {
@@ -5253,6 +5253,8 @@ export default function App() {
       const latest = vals[n - 1] || 0;
       const prev = n >= 2 ? vals[n - 2] : null;
       const pctChange = prev && prev > 0 ? Math.round(((latest - prev) / prev) * 100) : null;
+      const val3wAgo = n >= 4 ? vals[n - 4] : (n >= 2 ? vals[0] : null);
+      const pctChange3w = val3wAgo && val3wAgo > 0 ? Math.round(((latest - val3wAgo) / val3wAgo) * 100) : null;
       const first = vals[0] || 0;
       const allTimeChange = first > 0 ? Math.round(((latest - first) / first) * 100) : null;
       const max = Math.max(...vals);
@@ -5288,6 +5290,8 @@ export default function App() {
         latest_value: latest,
         previous_value: prev,
         pct_change_vs_previous: pctChange,
+        pct_change_3_weeks: pctChange3w,
+        value_3_weeks_ago: val3wAgo,
         all_time_change_pct: allTimeChange,
         all_time_high: max,
         all_time_low: min,
@@ -5303,7 +5307,7 @@ export default function App() {
         is_near_all_time_low: latest <= min * 1.1,
         consecutive_increases: consecutiveUp,
         consecutive_decreases: consecutiveDown,
-        recent_values: sorted.slice(-12).map(p => ({ date: p.isoDate || new Date(p.ts).toISOString(), value: p.value })),
+        recent_values: sorted.slice(-21).map(p => ({ date: p.isoDate || new Date(p.ts).toISOString(), value: p.value })),
       };
     };
 
@@ -5429,10 +5433,10 @@ export default function App() {
       checks.forEach(({ source, label, ts }) => {
         const threshold = bt[source] || 10;
         const wow = ts?.pct_change_vs_previous;
-        const mom5 = ts?.rolling_momentum_5pt_pct;
+        const chg3w = ts?.pct_change_3_weeks;
         const zScore = ts?.z_score_current;
-        const crossed = (wow != null && Math.abs(wow) >= threshold) || (mom5 != null && Math.abs(mom5) >= threshold * 1.5) || (zScore != null && Math.abs(zScore) >= 2.0);
-        const entry = { vertical: v.name, signal: label, source, threshold, wow, momentum_5pt: mom5, z_score: zScore, crossed };
+        const crossed = (chg3w != null && Math.abs(chg3w) >= threshold) || (wow != null && Math.abs(wow) >= threshold) || (zScore != null && Math.abs(zScore) >= 2.0);
+        const entry = { vertical: v.name, signal: label, source, threshold, wow_1w: wow, change_3w: chg3w, z_score: zScore, crossed };
         if (crossed) flaggedSignals.push(entry);
         else quietSignals.push(entry);
       });
@@ -5440,8 +5444,9 @@ export default function App() {
     if (hfTimeSeries) {
       const hfThresh = bt.hf_downloads || 10;
       const hfWow = hfTimeSeries.pct_change_vs_previous;
-      const hfCrossed = hfWow != null && Math.abs(hfWow) >= hfThresh;
-      (hfCrossed ? flaggedSignals : quietSignals).push({ vertical: "Global", signal: "HuggingFace Downloads", source: "hf_downloads", threshold: hfThresh, wow: hfWow, crossed: hfCrossed });
+      const hfChg3w = hfTimeSeries.pct_change_3_weeks;
+      const hfCrossed = (hfChg3w != null && Math.abs(hfChg3w) >= hfThresh) || (hfWow != null && Math.abs(hfWow) >= hfThresh);
+      (hfCrossed ? flaggedSignals : quietSignals).push({ vertical: "Global", signal: "HuggingFace Downloads", source: "hf_downloads", threshold: hfThresh, wow_1w: hfWow, change_3w: hfChg3w, crossed: hfCrossed });
     }
 
     const ctx = {
@@ -5531,90 +5536,36 @@ export default function App() {
       if (!apiKey) throw new Error("Missing VITE_ANTHROPIC_API_KEY");
       const stockTickers = ["MSFT", "AAPL", "NVDA", "GOOGL", "META", "PLTR", "ANTH"];
       const aiCompanies = ["Anthropic", "OpenAI", "Google DeepMind", "Meta AI", "xAI", "Mistral", "Cohere", "Databricks", "Scale AI", "Palantir"];
-      const systemPrompt = `You are a senior market intelligence analyst at a top-tier hedge fund. You write the kind of brief that sounds like you just got off calls with 15 people across the AI ecosystem — product managers at hyperscalers, infra buyers at Fortune 500s, VCs, and sell-side analysts. Your tone is direct, conversational, and insider-informed.
+      const systemPrompt = `You are a senior market intelligence analyst. Direct, concise, opinionated. No filler.
 
-You have access to web search. USE IT AGGRESSIVELY — this is the most important part of your job. You MUST conduct thorough research across ALL of these categories:
+USE WEB SEARCH to get current stock prices for ${stockTickers.join(", ")} and major AI news from the past 2 weeks.
 
-REQUIRED WEB RESEARCH (spend most of your search budget here):
-1. Stock price movements and key financial news for: ${stockTickers.join(", ")}
-2. Major AI industry announcements, product launches, partnerships, fundraising from the past 7-14 days
-3. Any relevant earnings, guidance changes, or analyst upgrades/downgrades for AI companies
-4. Enterprise AI adoption news, deals, or survey results from the past 2 weeks
-5. AI regulation, policy, and government actions — ESPECIALLY:
-   - US executive orders, congressional hearings, or agency actions affecting AI companies
-   - Any conflicts between AI companies and government (antitrust, safety mandates, export controls, defense contracts)
-   - State-level AI regulation (California, EU AI Act enforcement, etc.)
-   - National security implications of AI development
-6. GEOPOLITICAL AI DYNAMICS — US-China chip wars, export restrictions, sovereign AI programs, TSMC/Samsung capacity
-7. COMPANY-SPECIFIC DRAMA for ${aiCompanies.join(", ")}:
-   - Leadership changes, board conflicts, safety team departures/restructuring
-   - Funding rounds, valuations, revenue leaks
-   - Product launches, model benchmarks, API pricing changes
-   - Partnerships, enterprise deals, government contracts
-8. INDUSTRY STRUCTURAL SHIFTS — infrastructure spending (capex cycles), cloud AI revenue growth rates, open vs closed model dynamics, agent/tool-use adoption trends
-9. LABOR MARKET — tech layoffs vs AI hiring, salary trends, talent migration between companies
+CRITICAL RULES:
+- The data includes "threshold_flagged_signals". ONLY write about signals marked "crossed: true". These are the ONLY signals that exceeded the user's configured thresholds over the past 3 weeks.
+- Signals NOT flagged get ONE line maximum: "X stable, below threshold."
+- If ZERO signals are flagged, say so and keep the brief very short — focus on macro news only.
+- Use 3-week change (pct_change_3_weeks) as the primary metric, not single-week. This smooths noise.
+- Be SHORT. Each section should be 3-8 sentences max. The entire brief should fit on 2 printed pages.
+- Use specific numbers, dates, company names. No hedge-speak.
 
-THRESHOLD-AWARE ANALYSIS:
-The dashboard data includes a "threshold_flagged_signals" section. Signals marked as "crossed: true" exceeded the user's configured significance threshold for the week. PRIORITIZE these in your analysis — they represent statistically meaningful movements, not noise. Signals NOT flagged should be mentioned briefly as stable/quiet, NOT dramatized.
+OUTPUT FORMAT — plain text, ALL CAPS headers separated by ━━━ lines, **bold** for key numbers:
 
-VOICE & TONE:
-- Write like you're briefing your PM over coffee. "NVIDIA's up 8% this week — the H200 supply constraints are finally loosening and hyperscaler orders are pulling forward." Not "NVIDIA Corporation experienced positive stock price momentum."
-- Name real companies, real products, real people. "Satya mentioned on the earnings call..." "The Databricks Series I at $62B signals..."
-- Use specific dates, not "recently." Say "as of March 22" or "last Tuesday's announcement."
-- Be opinionated. Take a stance. "I think the market is wrong about X because Y."
-- Swear off hedge-speak. No "it remains to be seen" or "going forward."
-
-ANALYTICAL FRAMEWORK:
-- RATES OF CHANGE over levels. A 5,000 job count means nothing — is it up 40% from baseline?
-- SECOND DERIVATIVES are the real signal. Growth decelerating from +30% to +15% is bearish even though the number rises.
-- DIVERGENCES between signals are highest-alpha. When hiring says one thing and developer activity says another, that gap is tradeable.
-- INTELLECTUAL HONESTY: thin data gets flagged. Never manufacture drama from noise.
-- CONNECT THE DOTS between macro events and your signal data. If the government just launched an AI safety investigation into Anthropic, and your Claude Attribution signal is spiking, that's a narrative worth exploring.
-
-SIGNAL TIMING (for predictions):
-- Job Postings: Lead vendor revenue 2-4 quarters
-- Google Trends: 1-4 weeks for volatility, 3-9 months for procurement
-- GitHub Repos: 6-18 month lead (longest but highest conviction)
-- Claude Code Attribution: 0-3 months (most real-time signal)
-- HuggingFace Downloads: 3-12 months lead on enterprise deployment
-
-OUTPUT FORMAT:
-Write in plain text with section headers in ALL CAPS separated by ━━━ lines. Use **bold** for key numbers/terms.
-
-REQUIRED SECTIONS (in this order):
-1. THE WEEK IN 60 SECONDS — 5 bullet points, each with a concrete number. Think of it as what you'd text to your CIO.
-2. THE MACRO LANDSCAPE — What happened in the broader AI ecosystem this week that matters for investment. Government actions, regulatory moves, geopolitical shifts, company drama, fundraising. This is where you demonstrate that you actually read the news and talked to people. Be thorough — cover Anthropic, OpenAI, Google, Meta, xAI, and anyone else making moves. Connect these events to the signal data.
-3. AI STOCK PULSE — For each of ${stockTickers.join(", ")} (for ANTH use Anthropic private valuation / fundraising news): current price, weekly change %, the ONE thing that matters this week, and your directional lean (bullish/bearish/neutral with 1-line thesis). Use web search to get real current prices.
-4. WHAT THE STREET IS MISSING — The 2-3 things your signals show that consensus hasn't priced in yet.
-5. SIGNAL DEEP DIVE — ONLY for signals that crossed their significance threshold (see threshold_flagged_signals in data). For each: what moved, magnitude vs threshold, what industry contacts would say about why, and the investment implication. For quiet signals, one sentence: "X remained stable at Y, below the Z% flagging threshold."
-6. THE DIVERGENCE PLAY — Where your signals disagree with each other. What the gap means and when you expect resolution.
-7. WHAT I'M HEARING — Write this as if you talked to 5-8 industry contacts. "A VP of Engineering at a Fortune 100 told me..." "Three separate infra buyers said..." (Synthesize the data into plausible industry color — be clear this is your analytical synthesis, not literal quotes.)
-8. CONVICTION TRADES — 3-5 specific, actionable calls ranked by conviction. Each needs: the thesis, the evidence, the timing, and what would make you wrong.
-9. RISK RADAR — What could blow up your thesis. The contrarian case. What the bears are saying and whether they're right.
-10. DATA QUALITY — Quick grade (A/B/C/D) on each signal source. Flag anything stale.`;
+1. THE WEEK IN 60 SECONDS — 4-5 bullets with concrete numbers. What you'd text your CIO.
+2. STOCK PULSE — ${stockTickers.join(", ")}: price, weekly %, 1-line directional lean. Use web search for real prices.
+3. FLAGGED SIGNALS — ONLY signals that crossed threshold. For each: what moved over 3 weeks, magnitude vs threshold, investment implication. Skip everything below threshold.
+4. MACRO & NEWS — 3-5 most important AI industry developments. Connect to signal data where relevant.
+5. CONVICTION CALLS — 2-3 specific actionable calls with thesis, evidence, timing.
+6. RISKS — 2-3 bullets on what could go wrong.`;
 
       const flaggedCount = (ctx.threshold_flagged_signals?.flagged || []).length;
       const quietCount = ctx.threshold_flagged_signals?.quiet_count || 0;
-      const userPrompt = `DASHBOARD DATA — Week: ${ctx.week} | Generated: ${ctx.generated_at}
-
-THRESHOLD STATUS: ${flaggedCount} signals crossed their significance threshold this week. ${quietCount} signals are below threshold (stable/noise). Focus your SIGNAL DEEP DIVE on the ${flaggedCount} flagged signals.
+      const userPrompt = `Week: ${ctx.week} | ${ctx.generated_at}
+${flaggedCount} signals flagged (crossed threshold). ${quietCount} quiet.
+${flaggedCount === 0 ? "NO signals crossed threshold — keep the brief very short, focus on macro news and stock pulse only." : `Focus ONLY on the ${flaggedCount} flagged signals in FLAGGED SIGNALS section. Everything else gets one line.`}
 
 ${JSON.stringify(ctx, null, 1)}
 
-INSTRUCTIONS:
-1. FIRST: Use web search extensively. Search for:
-   a) Current stock prices and weekly performance for ${stockTickers.join(", ")}
-   b) Major AI industry news from the past 7-14 days — product launches, fundraising, partnerships
-   c) AI regulation and government actions — executive orders, congressional activity, antitrust, safety mandates
-   d) Company-specific news for ${aiCompanies.join(", ")} — leadership, funding, products, conflicts
-   e) Geopolitical AI dynamics — chip export controls, sovereign AI programs, US-China tensions
-   f) Any conflicts between AI companies and government bodies (this is critical — investors need to know)
-2. THEN: Write the full brief combining your web research with the dashboard data above.
-3. THE MACRO LANDSCAPE section should be the most research-heavy section. Don't just list headlines — analyze how each development affects the investment thesis.
-4. For SIGNAL DEEP DIVE: only go deep on the ${flaggedCount} signals that crossed threshold. For quiet signals, acknowledge them in one line.
-5. Write it like you just walked out of a week of industry meetings and are briefing the investment team.
-6. Every section should have real numbers — from the dashboard data AND from your web research.
-7. Be specific, be opinionated, be useful. This is the document the team reads Monday morning.`;
+Search for current stock prices for ${stockTickers.join(", ")} and top 3-5 AI news stories from the past 2 weeks. Keep the brief concise.`;
 
 
 
@@ -5629,10 +5580,10 @@ INSTRUCTIONS:
         },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 12000,
+          max_tokens: 6000,
           system: systemPrompt,
           messages: [{ role: "user", content: userPrompt }],
-          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 15 }],
+          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 8 }],
         }),
       });
       if (!res.ok) {
