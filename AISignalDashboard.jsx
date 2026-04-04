@@ -2237,7 +2237,7 @@ function SignalHistoryChart({ signalKey, color, label }) {
           <TimeRangeSelector value={sigRange} onChange={setSigRange} />
         </div>
       </div>
-      {pctNote && <div style={{...font.sans,fontSize:9,color:C.textMuted,textAlign:"right",marginBottom:4,lineHeight:1.3}}>* {pctNote}: used when the first points are on a different scale than recent data (run Backfill to align windows).</div>}
+      {pctNote && <div style={{...font.sans,fontSize:9,color:C.textMuted,textAlign:"right",marginBottom:4,lineHeight:1.3}}>* {pctNote}: early data may be on a different scale — chart will normalize as more refreshes accumulate.</div>}
       <ResponsiveContainer>
         <LineChart data={data} margin={{ top:8,right:16,bottom:8,left:8 }}>
           <XAxis dataKey="_ts" type="number" scale="time" domain={["dataMin","dataMax"]}
@@ -2976,8 +2976,8 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                       <IcoC name="layers" size={13} color={C.textSec}/> Backfill Jobs
                     </Btn>
                   )}
-                  {(source.id === "google_trends" || source.id === "github_repos" || source.id === "claude_attrib") && (
-                    <Btn variant="default" size="sm" onClick={()=>onBackfillSignal?.(v.id, source.id)} disabled={historyProgress?.active} title={source.id === "google_trends" ? "Backfill ~12 months of Google Trends (needs SerpAPI key)" : source.id === "github_repos" ? "Rebuild history: weekly repo push counts (matches Refresh)" : "Rebuild history: weekly Claude commit counts (matches Refresh)"}>
+                  {(source.id === "google_trends" || source.id === "claude_attrib") && (
+                    <Btn variant="default" size="sm" onClick={()=>onBackfillSignal?.(v.id, source.id)} disabled={historyProgress?.active} title={source.id === "google_trends" ? "Backfill ~12 months of Google Trends (needs SerpAPI key)" : "Rebuild history: weekly Claude commit counts"}>
                       <IcoC name="layers" size={13} color={C.textSec}/> Backfill
                     </Btn>
                   )}
@@ -4600,17 +4600,14 @@ export default function App() {
     setBriefHistory(rows);
   }, []);
 
-  // Aggressive migration: wipe ALL github_repos data every time version changes.
-  // This ensures stale data from any prior query format is fully purged.
   useEffect(() => {
-    const migKey = `${HSPFX}hist_purge_v5`;
+    const migKey = `${HSPFX}hist_purge_v6`;
     if (localStorage.getItem(migKey)) return;
     const keysToRemove = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
       if (!k) continue;
-      if (k.includes("backfill_v2_") || k.includes("backfill_v3_") || k.includes("backfill_v4_")) keysToRemove.push(k);
-      if (k.includes("github_repos")) keysToRemove.push(k);
+      if (k.includes("backfill_v") || k.includes("github_repos")) keysToRemove.push(k);
     }
     keysToRemove.forEach(k => localStorage.removeItem(k));
     localStorage.setItem(migKey, new Date().toISOString());
@@ -4941,7 +4938,11 @@ export default function App() {
       return;
     }
 
-    if (sourceId === "github_repos" || sourceId === "claude_attrib") {
+    if (sourceId === "github_repos") {
+      setErrors(prev => ({ ...prev, [signalKey]: "GitHub Repos backfill is disabled — the Search API returns inconsistent historical counts. Use Refresh to build history over time." }));
+      return;
+    }
+    if (sourceId === "claude_attrib") {
       const token = ENV_KEYS.github || "";
       if (!token) {
         setErrors(prev => ({ ...prev, [signalKey]: "GitHub PAT required for backfill." }));
@@ -4949,11 +4950,11 @@ export default function App() {
       }
       const baseQ = buildGitHubQuery(vert, sourceId);
       if (!baseQ) {
-        setErrors(prev => ({ ...prev, [signalKey]: `No keywords configured for ${sourceId === "github_repos" ? "GitHub Repos" : "Claude Attribution"}. Add keywords in your signal group settings.` }));
+        setErrors(prev => ({ ...prev, [signalKey]: `No keywords configured for Claude Attribution. Add keywords in your signal group settings.` }));
         return;
       }
       const weeks = weekIntervals(78, new Date());
-      setHistoryProgress({ active: true, verticalId, current: 0, total: weeks.length, label: `Backfilling ${vert.name} ${sourceId === "github_repos" ? "GitHub Repos" : "Claude"} (weekly windows)...` });
+      setHistoryProgress({ active: true, verticalId, current: 0, total: weeks.length, label: `Backfilling ${vert.name} Claude (weekly windows)...` });
       const recorded = [];
       let consecutiveErrors = 0;
       for (let i = 0; i < weeks.length; i++) {
@@ -4980,7 +4981,7 @@ export default function App() {
           await sleep(6000);
           continue;
         }
-        setHistoryProgress({ active: true, verticalId, current: i + 1, total: weeks.length, label: `Backfilling ${vert.name} ${sourceId === "github_repos" ? "repos" : "Claude"} (${i + 1}/${weeks.length})...` });
+        setHistoryProgress({ active: true, verticalId, current: i + 1, total: weeks.length, label: `Backfilling ${vert.name} Claude (${i + 1}/${weeks.length})...` });
         await sleep(4500);
       }
       if (recorded.length > 0) {
