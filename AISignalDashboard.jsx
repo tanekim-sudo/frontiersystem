@@ -5522,7 +5522,6 @@ export default function App() {
     );
     const wk = ctx.week || weekKeyFromDate(new Date());
     setBriefWeek(wk);
-    setBriefOpen(true);
     setBriefLoading(true);
     setBriefProgressSec(0);
     let tmr = null;
@@ -5676,6 +5675,7 @@ INSTRUCTIONS:
       setBriefContent(text);
       setBriefBaseForDiff(toStore.first_content_markdown || text);
       setBriefSnapshot(ctx);
+      setBriefOpen(true);
       pruneOldBriefs(12);
       const rows = [];
       for (let i = 0; i < localStorage.length; i++) {
@@ -5768,8 +5768,9 @@ INSTRUCTIONS:
           </div>
           <div style={{display:"flex",alignItems:"center",gap:5}}>
             <Btn variant={shouldPromoteBrief?"accent":"default"} size="sm" disabled={!canGenerateBrief||briefLoading} onClick={generateBrief}>
-              {lastBriefObj?.content_markdown ? "Regenerate Brief" : "Generate Brief"}
+              {briefLoading ? <><Spinner size={11} color={shouldPromoteBrief?"#fff":C.textSec}/> Generating ({briefProgressSec}s)</> : lastBriefObj?.content_markdown ? "Regenerate Brief" : "Generate Brief"}
             </Btn>
+            {briefContent && !briefLoading && <Btn variant="ghost" size="sm" onClick={()=>setBriefOpen(true)}>View Brief</Btn>}
             <Btn variant="ghost" size="sm" onClick={()=>setBriefHistoryOpen(true)}>Brief History</Btn>
             <Btn variant={schedulerActive?"ghost":"default"} size="sm" onClick={()=>setSchedulerActive(p=>!p)} className="nav-btn">
               <IcoC name={schedulerActive?"pause":"play"} size={11}/>{schedulerActive?"Pause":"Resume"}
