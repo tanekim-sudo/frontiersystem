@@ -421,16 +421,16 @@ function getSignalHistory(signalKey) {
 function appendSignalHistory(signalKey, value) {
   const h = ld(`hist_${signalKey}`, []);
   const now = new Date();
-  const todayKey = now.toISOString().slice(0, 10);
-  const existingIdx = h.findIndex(p => (p.isoDate || new Date(p.ts).toISOString()).slice(0, 10) === todayKey);
   const entry = {
     ts: now.getTime(),
     isoDate: now.toISOString(),
     value,
     date: now.toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }),
   };
-  if (existingIdx >= 0) {
-    h[existingIdx] = entry;
+  const last = h.length > 0 ? h[h.length - 1] : null;
+  const minGap = 4 * 3600 * 1000;
+  if (last && (now.getTime() - last.ts) < minGap) {
+    h[h.length - 1] = entry;
   } else {
     h.push(entry);
   }
@@ -2991,6 +2991,8 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                         <Line type="monotone" dataKey={dk} stroke={v.color||C.cyan} strokeWidth={2} dot={false}/>
                       </LineChart></ResponsiveContainer>);})()}
                     </div>
+                  ) : hist.length===1 ? (
+                    <div style={{height:36,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{fontSize:10,color:C.textMuted}}>1 point — chart after next refresh</span></div>
                   ) : <div style={{height:36,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{fontSize:10,color:C.textMuted}}>No history</span></div>}
                 </div>
 
