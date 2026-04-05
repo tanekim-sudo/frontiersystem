@@ -4326,7 +4326,7 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
     <div style={{marginTop:16,padding:"12px 14px",background:C.nested,border:`1px solid ${C.borderLight}`,borderRadius:10}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
         <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text}}>Alert threshold</div>
-        <span style={{...font.mono,fontSize:14,fontWeight:700,color:C.cyan}}>{config.alertThreshold || 10}%</span>
+        <span style={{...font.mono,fontSize:14,fontWeight:700,color:C.textSec}}>{config.alertThreshold || 10}%</span>
       </div>
       <input type="range" min="1" max="50" step="1" value={config.alertThreshold || 10}
         onChange={e => update(c => ({ ...c, alertThreshold: parseInt(e.target.value, 10) || 10 }))}
@@ -5823,13 +5823,13 @@ Search for current stock prices for ${stockTickers.join(", ")} and top 3-5 AI ne
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:10}}>
             {[
-              { key: "theirstack", label: "Job Postings", color: "#3b82f6" },
-              { key: "google_trends", label: "Google Trends", color: "#8b5cf6" },
-              { key: "github_repos", label: "GitHub Repos", color: "#06b6d4" },
-              { key: "claude_attrib", label: "Claude Attribution", color: "#10b981" },
-              { key: "hf_downloads", label: "HuggingFace", color: "#f59e0b" },
-              { key: "composite", label: "Composite", color: "#ef4444" },
-            ].map(({ key, label, color }) => {
+              { key: "theirstack", label: "Job Postings" },
+              { key: "google_trends", label: "Google Trends" },
+              { key: "github_repos", label: "GitHub Repos" },
+              { key: "claude_attrib", label: "Claude Attribution" },
+              { key: "hf_downloads", label: "HuggingFace" },
+              { key: "composite", label: "Composite" },
+            ].map(({ key, label }) => {
               const bt = config.briefThresholds || {};
               const val = bt[key] ?? 10;
               const displayVal = Number.isInteger(val) ? `${val}` : val.toFixed(1);
@@ -5837,7 +5837,7 @@ Search for current stock prices for ${stockTickers.join(", ")} and top 3-5 AI ne
                 <div key={key} style={{padding:"8px 10px",background:C.nested,borderRadius:6,border:`1px solid ${C.borderLight}`}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
                     <span style={{...font.sans,fontSize:11,fontWeight:600,color:C.text}}>{label}</span>
-                    <span style={{...font.mono,fontSize:13,fontWeight:800,color}}>{displayVal}%</span>
+                    <span style={{...font.mono,fontSize:13,fontWeight:800,color:C.textSec}}>{displayVal}%</span>
                   </div>
                   <input type="range" min="0.1" max="50" step="0.1" value={val}
                     onChange={e => setConfig(prev => {
@@ -5847,7 +5847,7 @@ Search for current stock prices for ${stockTickers.join(", ")} and top 3-5 AI ne
                       sv("config", next);
                       return next;
                     })}
-                    style={{width:"100%",accentColor:color}} />
+                    style={{width:"100%"}} />
                   <div style={{display:"flex",justifyContent:"space-between",marginTop:1}}>
                     <span style={{...font.sans,fontSize:8.5,color:C.textMuted}}>0.1%</span>
                     <span style={{...font.sans,fontSize:8.5,color:C.textMuted}}>50%</span>
