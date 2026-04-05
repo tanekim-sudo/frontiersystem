@@ -3275,11 +3275,12 @@ function HuggingFaceLeaderboard({onDataChanged}) {
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:6}}>
               <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text}}>Head-to-Head Comparison</div>
               <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                {[{label:"Company A",val:compareA,set:setCompareA,color:compareA?HF_ORGS.find(o=>o.id===compareA)?.color:C.textMuted},{label:"Company B",val:compareB,set:setCompareB,color:compareB?HF_ORGS.find(o=>o.id===compareB)?.color:C.textMuted}].map(({label:lbl,val,set,color})=>(
+                {[{label:"Company",val:compareA,set:setCompareA,color:compareA?HF_ORGS.find(o=>o.id===compareA)?.color:C.textMuted},{label:"Compare to",val:compareB,set:setCompareB,color:compareB==="__avg__"?C.textSec:compareB?HF_ORGS.find(o=>o.id===compareB)?.color:C.textMuted}].map(({label:lbl,val,set,color},di)=>(
                   <div key={lbl} style={{display:"flex",alignItems:"center",gap:4}}>
                     <div style={{width:8,height:8,borderRadius:"50%",background:color||C.textMuted}}/>
                     <select value={val||""} onChange={e=>set(e.target.value)} style={{...font.sans,fontSize:11,padding:"3px 6px",borderRadius:6,border:`1px solid ${C.border}`,background:C.white,color:C.text,cursor:"pointer"}}>
                       <option value="">{lbl}</option>
+                      {di===1&&<option value="__avg__">Industry Average</option>}
                       {HF_ORGS.map(o=>(<option key={o.id} value={o.id}>{o.name}</option>))}
                     </select>
                   </div>
@@ -3290,12 +3291,24 @@ function HuggingFaceLeaderboard({onDataChanged}) {
 
             {compareA && compareB && compareA !== compareB ? (()=>{
               const orgA = HF_ORGS.find(o=>o.id===compareA);
-              const orgB = HF_ORGS.find(o=>o.id===compareB);
+              const isAvg = compareB === "__avg__";
+              const orgB = isAvg ? {id:"__avg__",name:"Industry Average",color:C.textSec} : HF_ORGS.find(o=>o.id===compareB);
               if(!orgA||!orgB) return null;
               const hdAll=sanitizeTimeSeries(hfHist.map(p=>({...p,_ts:p.ts||Date.now(),_iso:new Date(p.ts||Date.now()).toISOString()})).sort((a,b)=>a._ts-b._ts),"_ts");
               let hd=filterByTimeRange(hdAll,hfRange,"_iso");
               if(hd.length<2) return <div style={{...font.sans,fontSize:12,color:C.textMuted,textAlign:"center",padding:20}}>Not enough data for this time range.</div>;
-              if(hd.length>=4){[orgA,orgB].forEach(o=>{hd=smoothEMA(hd,o.id,0.2);});}
+
+              if (isAvg) {
+                hd = hd.map(p => {
+                  const vals = HF_ORGS.map(o => p[o.id]).filter(v => typeof v === "number" && v > 0);
+                  return { ...p, __avg__: vals.length > 0 ? vals.reduce((s, v) => s + v, 0) / vals.length : null };
+                });
+              }
+
+              if(hd.length>=4){
+                hd=smoothEMA(hd,orgA.id,0.2);
+                hd=smoothEMA(hd,isAvg?"__avg__":orgB.id,0.2);
+              }
               const smK=hd.length>=4;
               const keyA=smK?`${orgA.id}_smooth`:orgA.id;
               const keyB=smK?`${orgB.id}_smooth`:orgB.id;
@@ -3316,21 +3329,24 @@ function HuggingFaceLeaderboard({onDataChanged}) {
               const lastA=normalized.filter(p=>p.pctA!=null).slice(-1)[0];
               const lastB=normalized.filter(p=>p.pctB!=null).slice(-1)[0];
               const aGrew=lastA?.pctA??0; const bGrew=lastB?.pctB??0;
-              const winner=Math.abs(aGrew-bGrew)<0.5?null:aGrew>bGrew?orgA:orgB;
+              const aboveAvg = isAvg && aGrew > bGrew;
+              const winner = isAvg ? null : (Math.abs(aGrew-bGrew)<0.5?null:aGrew>bGrew?orgA:orgB);
               return(<>
                 <div style={{display:"flex",gap:20,marginBottom:10,flexWrap:"wrap"}}>
-                  {[{org:orgA,last:lastA,pctKey:"pctA",rawKey:"rawA"},{org:orgB,last:lastB,pctKey:"pctB",rawKey:"rawB"}].map(({org,last,pctKey,rawKey})=>{
+                  {[{org:orgA,last:lastA,pctKey:"pctA",rawKey:"rawA",isCompany:true},{org:orgB,last:lastB,pctKey:"pctB",rawKey:"rawB",isCompany:!isAvg}].map(({org,last,pctKey,rawKey,isCompany})=>{
                     const pctVal=last?.[pctKey];
                     return(
-                    <div key={org.id} style={{flex:1,minWidth:160,padding:"10px 14px",background:C.white,borderRadius:8,border:`2px solid ${org.color}20`}}>
+                    <div key={org.id} style={{flex:1,minWidth:160,padding:"10px 14px",background:C.white,borderRadius:8,border:`1px solid ${C.borderLight}`}}>
                       <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
-                        <div style={{width:10,height:10,borderRadius:"50%",background:org.color}}/>
-                        <span style={{...font.sans,fontSize:12,fontWeight:700,color:org.color}}>{org.name}</span>
+                        <div style={{width:10,height:10,borderRadius:"50%",background:org.color,opacity:isCompany?1:0.5}}/>
+                        <span style={{...font.sans,fontSize:12,fontWeight:700,color:isCompany?org.color:C.textSec}}>{org.name}</span>
                         {winner?.id===org.id&&<span style={{...font.mono,fontSize:9,fontWeight:800,color:C.green,background:C.greenBg,borderRadius:4,padding:"1px 6px"}}>FASTER</span>}
+                        {isAvg&&org.id===orgA.id&&aboveAvg&&<span style={{...font.mono,fontSize:9,fontWeight:800,color:C.green,background:C.greenBg,borderRadius:4,padding:"1px 6px"}}>ABOVE AVG</span>}
+                        {isAvg&&org.id===orgA.id&&!aboveAvg&&Math.abs(aGrew-bGrew)>0.5&&<span style={{...font.mono,fontSize:9,fontWeight:800,color:C.red,background:C.redBg,borderRadius:4,padding:"1px 6px"}}>BELOW AVG</span>}
                       </div>
                       <div style={{display:"flex",alignItems:"baseline",gap:8}}>
                         {pctVal!=null&&<span style={{...font.mono,fontSize:20,fontWeight:800,color:pctVal>=0?C.green:C.red}}>{pctVal>=0?"+":""}{pctVal.toFixed(1)}%</span>}
-                        {last&&<span style={{...font.mono,fontSize:11,color:C.textMuted}}>{fmtDL(last[rawKey])}</span>}
+                        {isCompany&&last&&<span style={{...font.mono,fontSize:11,color:C.textMuted}}>{fmtDL(last[rawKey])}</span>}
                       </div>
                       <div style={{...font.sans,fontSize:10,color:C.textMuted,marginTop:2}}>since {formatChartDateShort(new Date(hd[0]._ts).toISOString())}</div>
                     </div>);
@@ -3348,14 +3364,14 @@ function HuggingFaceLeaderboard({onDataChanged}) {
                         formatter={(v,name)=>[`${v!=null?(v>=0?"+":"")+v.toFixed(1)+"%":"—"}`,name]}
                         labelFormatter={ts=>formatChartDate(new Date(ts).toISOString())} />
                       <Line type="monotone" dataKey="pctA" stroke={orgA.color} strokeWidth={2.5} dot={false} name={orgA.name} connectNulls/>
-                      <Line type="monotone" dataKey="pctB" stroke={orgB.color} strokeWidth={2.5} dot={false} name={orgB.name} connectNulls/>
+                      <Line type="monotone" dataKey="pctB" stroke={orgB.color} strokeWidth={isAvg?2:2.5} dot={false} name={orgB.name} connectNulls strokeDasharray={isAvg?"6 3":undefined}/>
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
               </>);
             })() : (
               <div style={{...font.sans,fontSize:11,color:C.textMuted,textAlign:"center",padding:"16px 0"}}>
-                Select two companies above or click any row in the table below to compare their relative growth.
+                Select a company and compare to another company or the Industry Average.
               </div>
             )}
           </div>
@@ -3381,7 +3397,7 @@ function HuggingFaceLeaderboard({onDataChanged}) {
             const isSelB=compareB===org.orgId;
             const compareHighlight=isSelA?`${meta.color}12`:isSelB?`${meta.color}08`:"transparent";
             return(<React.Fragment key={org.orgId}>
-              <tr style={{cursor:"pointer",transition:"background .15s",background:compareHighlight}} onClick={()=>{if(isSelA){setCompareA(null);return;}if(isSelB){setCompareB(null);return;}if(!compareA){setCompareA(org.orgId);}else if(!compareB){setCompareB(org.orgId);}else{setCompareA(compareB);setCompareB(org.orgId);}setExpanded(isExp?null:org.orgId);}} onMouseEnter={e=>{e.currentTarget.style.background=isSelA||isSelB?compareHighlight:C.nested;}} onMouseLeave={e=>{e.currentTarget.style.background=compareHighlight;}}>
+              <tr style={{cursor:"pointer",transition:"background .15s",background:compareHighlight}} onClick={()=>{if(isSelA){setCompareA(null);return;}if(isSelB){setCompareB(null);return;}if(compareB==="__avg__"){setCompareA(org.orgId);}else if(!compareA){setCompareA(org.orgId);}else if(!compareB){setCompareB(org.orgId);}else{setCompareA(compareB);setCompareB(org.orgId);}setExpanded(isExp?null:org.orgId);}} onMouseEnter={e=>{e.currentTarget.style.background=isSelA||isSelB?compareHighlight:C.nested;}} onMouseLeave={e=>{e.currentTarget.style.background=compareHighlight;}}>
                 <td style={{padding:"12px 14px",textAlign:"center",...font.mono,fontSize:14,fontWeight:800,color:rank<3?meta.color:C.textMuted,width:40}}>{rank+1}</td>
                 <td style={{padding:"12px 14px",fontSize:13,fontWeight:600,color:C.text,whiteSpace:"nowrap"}}>
                   <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:meta.color,marginRight:10,verticalAlign:"middle"}}/>{meta.name}
