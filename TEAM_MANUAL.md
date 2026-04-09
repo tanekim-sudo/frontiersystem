@@ -6,6 +6,18 @@ The AI Demand Signal Tracker is an intelligence dashboard that monitors real-tim
 
 The core thesis: by tracking multiple independent signals and watching for divergences or convergence between them, you can identify shifts in enterprise AI spending 1–3 quarters before they show up in revenue numbers.
 
+### Data Sources at a Glance
+
+| Source | What it measures | Key required |
+|--------|-----------------|--------------|
+| **TheirStack** | AI-related job postings across US employers | Optional (demo mode works without) |
+| **Google Trends** | Search interest for AI terms (relative 0–100 scale) | `VITE_SERPAPI_KEY` |
+| **GitHub Repos** | Active repositories matching your keywords | `VITE_GITHUB_PAT` |
+| **Claude Code Attribution** | Commits with Claude/Anthropic co-author signatures | `VITE_GITHUB_PAT` |
+| **HuggingFace** | Model download volumes across 12 major AI orgs | None (public API) |
+| **FRED** | 22 US macro/labor economic series | `FRED_API_KEY` (server-side) |
+| **Chicago Fed** | Unemployment nowcast, labor market indicators | None (public xlsx) |
+
 ---
 
 ## Quick Start
@@ -66,7 +78,12 @@ Collapsed by default. Four tabs:
 - Per-source weight sliders affect the composite demand score
 - Alert threshold (% week-over-week change) controls when divergence alerts fire
 
-**Mailing List** — configure EmailJS credentials and recipient list for sending briefs via email.
+**Mailing List** — configure EmailJS credentials and recipient list for sending briefs via email. Setup:
+1. Create a free account at [emailjs.com](https://www.emailjs.com)
+2. Add an email service (connect Gmail or another provider)
+3. Create a template with variables: `{{subject}}`, `{{html_body}}`, `{{to_email}}`
+4. Enter your Service ID, Template ID, and Public Key in this tab
+5. Add recipient email addresses to the list
 
 ### 3. Brief Flagging Thresholds
 
@@ -87,14 +104,35 @@ One card per enabled data source. Each card shows all your tracking groups as ro
 - **WoW % badge** — week-over-week change (green = up, red = down)
 - **Stage badge** — (TheirStack only) dominant adoption stage detected in job language
 - **Sparkline** — mini chart of recent history
-- **Chart button** — opens full growth trend chart with time range selector (1M through All) and EMA smoothing toggle
+- **Chart button** — opens full growth trend chart with time range selector (1M through All) and EMA smoothing toggle. Charts support annotations (see below).
 - **Refresh button** — refresh just that group for that source
 - **Backfill button** — (where available) pull historical data
+- **Overlay checkbox** — select this signal for the divergence overlay comparison
 
 **Expanding a row** shows:
 - Keyword configuration (add/remove keyword chips per source)
 - Latest results list (job titles, descriptions, etc.)
-- Source diagnostics (GitHub query preview, etc.)
+- Source diagnostics (GitHub query preview, Claude commit query, etc.)
+
+**Methodology expandable** (per source card): explains what the metric measures, how it's collected, lead/lag timing relative to enterprise AI spend, and investment implications.
+
+### Composite Demand Score
+
+Each tracking group gets a weighted composite score (0–100) that combines all signal sources. The weights are configurable in Settings → Weights & Alerts. The composite accounts for:
+- Raw signal counts (normalized)
+- Job posting classification stage (Early Research → Pilot Testing → Implementation → Budget Committed)
+- Historical momentum (trend direction)
+
+The composite score and its breakdown appear in the weekly brief context and help prioritize which tracking groups show the strongest demand signal.
+
+### Chart Annotations
+
+When viewing a growth trend chart, you can add annotations to mark significant events:
+- **Inflection point** — a meaningful change in trend direction
+- **Event** — an external event that affected the data (e.g. product launch, earnings report)
+- **Note** — a general observation
+
+Annotations persist locally and sync to cloud. They appear as markers on the chart timeline.
 
 ### 5. Signal Divergence Overlay
 
@@ -154,6 +192,8 @@ Hover over any series name or badge for a plain-English explanation of what that
 
 Tracks download volumes across 12 major AI organizations. Updated on refresh or auto-fetched when data is >6 hours old.
 
+**Tracked organizations:** Meta (Llama), Google, Microsoft, OpenAI, Amazon, Mistral AI, Qwen (Alibaba), DeepSeek, NVIDIA, Stability AI, EleutherAI, BigScience.
+
 **Features:**
 - **Podium** — top 3 by total downloads
 - **Full table** — click any row to expand and see top models
@@ -208,6 +248,15 @@ The brief is an AI-generated report covering the past week's signal movements, s
 - Generation runs in the background — you can continue using the dashboard
 - Briefs are saved per-week and accessible via Brief History
 - Briefs can be emailed to your mailing list via EmailJS
+
+**Brief viewer toolbar:**
+- **Diff** toggle — highlights what changed since the first version of this week's brief (useful when regenerating)
+- **Copy Text** — copies the brief as plain text to clipboard
+- **Copy HTML** — copies the raw HTML markup
+- **Preview** — opens a print-friendly formatted version in a new tab with embedded charts, sparklines, and data tables (this is the same format used in emailed briefs)
+- **Email (N)** — sends the brief to all N recipients on your mailing list
+
+**Visual brief format:** The Preview and email versions include an executive header with composite scores, a regime dashboard table, per-vertical sparklines and bar charts, and the full markdown content rendered as styled HTML. This is designed to be shared with stakeholders who don't use the dashboard directly.
 
 ---
 
@@ -274,7 +323,7 @@ create table if not exists public.dashboard_state (
 
 | Source | Default cadence | Notes |
 |--------|----------------|-------|
-| TheirStack Jobs | Weekly | Live API or demo mode |
+| TheirStack Jobs | Weekly | Live API or demo mode (realistic simulated data without a key) |
 | Google Trends | Weekly | Relative interest score (not absolute counts) |
 | GitHub Repos | Weekly | Current-week repo count. Backfill is disabled (API unreliable for historical queries). |
 | Claude Attribution | Weekly | Commit counts mentioning Claude/Anthropic |
@@ -282,6 +331,29 @@ create table if not exists public.dashboard_state (
 | FRED / Chicago Fed | On demand | Click Refresh in the macro section |
 
 The **auto-refresh scheduler** (toggleable via Pause/Resume) checks source staleness and refreshes automatically. Manual Refresh is always available.
+
+---
+
+## Glossary
+
+| Term | Meaning |
+|------|---------|
+| **Tracking group** (vertical) | A theme or market segment you're monitoring (e.g. "AI Infrastructure") |
+| **WoW** | Week-over-week — percentage change from last week |
+| **3-week change** | Percentage change over 3 weeks (used for brief flagging, more stable than WoW) |
+| **Composite score** | Weighted 0–100 score combining all signal sources for a tracking group |
+| **Divergence** | When two signals that normally correlate start moving in opposite directions |
+| **Convergence** | When independent signals confirm the same trend |
+| **EMA smoothing** | Exponential moving average — reduces noise in chart data |
+| **Backfill** | Pull historical data for a source to build chart history retroactively |
+| **Stage classification** | TheirStack job posts are classified by adoption maturity: Early Research → Pilot Testing → Implementation → Budget Committed |
+| **U-3** | Headline unemployment rate — people actively looking for work |
+| **U-6** | Real unemployment rate — includes underemployed and discouraged workers |
+| **JOLTS** | Job Openings and Labor Turnover Survey — measures labor demand |
+| **VIX** | Volatility index ("fear index") — measures expected stock market volatility |
+| **Yield curve inversion** | When 2-year Treasury yield exceeds 10-year — historically predicts recessions |
+| **NFCI** | National Financial Conditions Index — negative = easy money, positive = tight |
+| **Nowcast** | Chicago Fed's real-time estimate of current unemployment (before official data release) |
 
 ---
 
@@ -300,3 +372,51 @@ The **auto-refresh scheduler** (toggleable via Pause/Resume) checks source stale
 6. **Brief thresholds matter.** If your briefs are too long, raise the thresholds. If they're missing important movements, lower them. The 3-week change metric is more stable than single-week.
 
 7. **Cloud sync is essential for teams.** Set up Supabase so everyone shares the same data, history, and configuration. Without it, each team member has isolated local data.
+
+---
+
+## Troubleshooting
+
+| Issue | Cause | Fix |
+|-------|-------|-----|
+| "No data" on all sources | API keys not configured | Check `.env` or Vercel env vars. Look for "Live" badge in header — if missing, keys aren't detected. |
+| FRED shows "Rate limited" | Too many rapid refreshes | Wait a few minutes and refresh again. The tool batches FRED requests with delays, but repeated rapid refreshes can still hit limits. |
+| Brief is too long | Too many signals flagged | Raise your brief thresholds (the sliders above the metric cards). Only signals crossing the threshold get detailed analysis. |
+| Brief is too short | No signals flagged | Lower your thresholds. If all signals are stable and below threshold, the brief intentionally stays short. |
+| GitHub Repos chart is empty | Backfill disabled; only 1 data point | GitHub Repos builds history from live Refresh only (backfill produces unreliable data). Each Refresh 4+ hours apart adds a new point. The chart appears after 2 points. |
+| TheirStack shows simulated data | No `VITE_THEIRSTACK_KEY` | This is expected. Demo mode generates realistic data so charts and the brief still work. Add a TheirStack API key for real data. |
+| Google Trends returns nothing | Missing or invalid SerpAPI key | Verify `VITE_SERPAPI_KEY` is set. Google Trends requires SerpAPI as a proxy. |
+| "Sync error" in header | Cloud backend unreachable | Check Supabase status, or verify `DASHBOARD_STORE_SECRET` matches between client and server variables. |
+| Charts look flat | Y-axis scale too wide | Use the time range selector (1M, 3M) to zoom in. For HuggingFace, use Head-to-Head comparison which normalizes to % change. |
+| Data disappeared after deploy | Cloud sync not configured | Without Supabase or Gist sync, data lives only in the browser's localStorage. Set up cloud persistence. |
+
+---
+
+## Architecture (for reference)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Browser (AISignalDashboard.jsx)                            │
+│  ├── Signal collection (TheirStack, GitHub, Google Trends)  │
+│  ├── HuggingFace leaderboard (public API, no proxy)         │
+│  ├── Brief generation (Anthropic API, direct from browser)  │
+│  ├── Earnings analyzer (Anthropic API, direct from browser) │
+│  └── localStorage + cloud sync                              │
+├─────────────────────────────────────────────────────────────┤
+│  Vercel Serverless Functions (/api/*)                       │
+│  ├── /api/labor/overview → Chicago Fed + FRED               │
+│  ├── /api/google-trends → SerpAPI proxy                     │
+│  ├── /api/dashboard-state → Supabase read/write             │
+│  └── /api/signal-store → Gist proxy (legacy)                │
+├─────────────────────────────────────────────────────────────┤
+│  External APIs                                              │
+│  ├── TheirStack (job data)                                  │
+│  ├── GitHub Search API (repos, commits)                     │
+│  ├── SerpAPI (Google Trends)                                │
+│  ├── HuggingFace (model downloads)                          │
+│  ├── FRED (macro economic data)                             │
+│  ├── Chicago Fed (labor market xlsx)                        │
+│  ├── Anthropic Claude (briefs, analysis, interpretation)    │
+│  └── Supabase Postgres (persistence)                        │
+└─────────────────────────────────────────────────────────────┘
+```
