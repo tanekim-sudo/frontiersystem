@@ -5505,6 +5505,36 @@ export default function App() {
       (hfCrossed ? flaggedSignals : quietSignals).push({ vertical: "Global", signal: "HuggingFace Downloads", source: "hf_downloads", threshold: hfThresh, wow_1w: hfWow, change_3w: hfChg3w, crossed: hfCrossed });
     }
 
+    // Conviction ratings: how many independent sources confirm the same move per vertical
+    const convictionByVertical = {};
+    verticalsCtx.forEach(v => {
+      const flaggedForVert = flaggedSignals.filter(f => f.vertical === v.name);
+      const confirming = flaggedForVert.length;
+      const sameDirection = flaggedForVert.length >= 2 && flaggedForVert.every(f => (f.change_3w || f.wow_1w || 0) >= 0) || flaggedForVert.every(f => (f.change_3w || f.wow_1w || 0) <= 0);
+      const rating = confirming >= 3 ? "HIGH" : confirming === 2 && sameDirection ? "MEDIUM" : confirming >= 1 ? "SPECULATIVE" : null;
+      if (rating) convictionByVertical[v.name] = { rating, confirming_sources: flaggedForVert.map(f => f.signal), direction: flaggedForVert[0]?.change_3w >= 0 ? "accelerating" : "decelerating" };
+    });
+    flaggedSignals.forEach(f => {
+      f.conviction = convictionByVertical[f.vertical]?.rating || "SPECULATIVE";
+    });
+
+    // Prior week's brief for "What We Got Wrong" retrospective
+    let priorBriefSummary = null;
+    try {
+      const priorDate = new Date(); priorDate.setDate(priorDate.getDate() - 7);
+      const priorWeek = weekKeyFromDate(priorDate);
+      const priorObj = JSON.parse(localStorage.getItem(briefStorageKey(priorWeek)) || "null");
+      if (priorObj?.content_markdown) {
+        const lines = priorObj.content_markdown.split("\n");
+        const convictionStart = lines.findIndex(l => /CONVICTION/i.test(l));
+        const riskStart = lines.findIndex((l, i) => i > convictionStart && /RISK|━━━/i.test(l));
+        if (convictionStart >= 0) {
+          const end = riskStart > convictionStart ? riskStart : Math.min(convictionStart + 20, lines.length);
+          priorBriefSummary = { week: priorWeek, conviction_calls_text: lines.slice(convictionStart, end).join("\n").slice(0, 1500) };
+        }
+      }
+    } catch {}
+
     const ctx = {
       generated_at: new Date().toISOString(),
       week: wk,
@@ -5518,12 +5548,13 @@ export default function App() {
       composite_score_summary: { average: avgComposite, highest: maxComposite, lowest: minComposite, spread: maxComposite - minComposite },
       verticals: verticalsCtx,
       threshold_flagged_signals: {
-        instruction: "These signals crossed the user's configured significance thresholds this week. PRIORITIZE these in your SIGNAL DEEP DIVE section. Quiet signals should be mentioned briefly but not dramatized.",
         thresholds_used: bt,
         flagged: flaggedSignals,
         quiet_count: quietSignals.length,
         quiet_summary: quietSignals.length > 0 ? `${quietSignals.length} signals below their flagging threshold — stable or noise-level movement.` : "All signals flagged.",
       },
+      conviction_ratings: convictionByVertical,
+      prior_week_brief: priorBriefSummary,
       cross_vertical_analysis: {
         verticals_at_stage_3_plus: verticalsCtx.filter(v => v.pipeline_stage.index >= 3).map(v => v.name),
         verticals_at_stage_1: verticalsCtx.filter(v => v.pipeline_stage.index <= 1).map(v => v.name),
@@ -5543,7 +5574,7 @@ export default function App() {
       },
       signal_movement_interpretation: buildSignalMovementInterpretationForBrief(),
     };
-    return trimPayloadSize(ctx, 28000);
+    return trimPayloadSize(ctx, 32000);
   }, [composites, signalResults, githubHistoryByVertical, tsHistoryByVertical, crossCorr]);
 
   const generateBrief = useCallback(async () => {
@@ -5592,36 +5623,51 @@ export default function App() {
       if (!apiKey) throw new Error("Missing VITE_ANTHROPIC_API_KEY");
       const stockTickers = ["MSFT", "AAPL", "NVDA", "GOOGL", "META", "PLTR", "ANTH"];
       const aiCompanies = ["Anthropic", "OpenAI", "Google DeepMind", "Meta AI", "xAI", "Mistral", "Cohere", "Databricks", "Scale AI", "Palantir"];
-      const systemPrompt = `You are a senior market intelligence analyst. Direct, concise, opinionated. No filler.
+      const systemPrompt = `You are a senior market intelligence analyst writing for investment professionals. Direct, concise, opinionated. No filler, no hedge-speak.
 
 USE WEB SEARCH to get current stock prices for ${stockTickers.join(", ")} and major AI news from the past 2 weeks.
 
 CRITICAL RULES:
-- The data includes "threshold_flagged_signals". ONLY write about signals marked "crossed: true". These are the ONLY signals that exceeded the user's configured thresholds over the past 3 weeks.
-- Signals NOT flagged get ONE line maximum: "X stable, below threshold."
-- If ZERO signals are flagged, say so and keep the brief very short — focus on macro news only.
-- Use 3-week change (pct_change_3_weeks) as the primary metric, not single-week. This smooths noise.
-- Be SHORT. Each section should be 3-8 sentences max. The entire brief should fit on 2 printed pages.
-- Use specific numbers, dates, company names. No hedge-speak.
+- ONLY write about signals marked "crossed: true" in threshold_flagged_signals. Quiet signals get ONE line max.
+- If ZERO flagged, keep brief very short — macro/news only.
+- Use 3-week change as primary metric. Be SHORT — 2 printed pages max.
+- Each flagged signal has a "conviction" rating: HIGH (3+ independent sources confirming), MEDIUM (2 sources), or SPECULATIVE (1 source). Show this rating.
 
-OUTPUT FORMAT — plain text, ALL CAPS headers separated by ━━━ lines, **bold** for key numbers:
+OUTPUT FORMAT — ALL CAPS headers separated by ━━━ lines, **bold** for key numbers:
 
-1. THE WEEK IN 60 SECONDS — 4-5 bullets with concrete numbers. What you'd text your CIO.
-2. STOCK PULSE — ${stockTickers.join(", ")}: price, weekly %, 1-line directional lean. Use web search for real prices.
-3. FLAGGED SIGNALS — ONLY signals that crossed threshold. For each: what moved over 3 weeks, magnitude vs threshold, investment implication. Skip everything below threshold.
-4. MACRO & NEWS — 3-5 most important AI industry developments. Connect to signal data where relevant.
-5. CONVICTION CALLS — 2-3 specific actionable calls with thesis, evidence, timing.
-6. RISKS — 2-3 bullets on what could go wrong.`;
+1. REGIME — One line. Based on macro_labor_context (Chicago Fed nowcast, FRED unemployment, financial stress, yield curve): classify current macro as EXPANSION, SOFTENING, or CONTRACTION RISK. Every signal that follows must be interpreted through this regime lens. A job posting surge in Contraction Risk is a different signal than the same surge in Expansion.
+
+2. THE WEEK IN 60 SECONDS — 4-5 bullets. Concrete numbers. What you'd text your CIO.
+
+3. STOCK PULSE — ${stockTickers.join(", ")}: price, weekly %, 1-line lean. Use web search.
+
+4. FLAGGED SIGNALS — For EACH flagged signal:
+   - Conviction: [HIGH/MEDIUM/SPECULATIVE] — how many independent sources confirm this move
+   - What moved: 3-week %, magnitude vs threshold, direction
+   - Forward projection: Given this signal's historical lead time, what does it imply for the next 1-3 quarters? Use signal_interpretation_guide lead/lag data. GitHub repo acceleration leads enterprise adoption by 6-18 months. Job posting stage shifts lead revenue by 1-2 quarters. Google Trends spikes lead procurement cycles by 3-9 months. Translate the signal into a forward-looking implication automatically.
+   - Regime context: How does the current macro regime modify this signal's interpretation?
+
+5. MACRO & NEWS — 3-5 developments. Connect to signals.
+
+6. CONVICTION CALLS — ONLY escalate to a conviction call at HIGH conviction (3+ corroborating sources). For each call:
+   - Thesis + evidence + timing
+   - Vendor implications: Name the exposed equities. Not "healthcare AI is accelerating" but "primary beneficiaries: Nuance/Microsoft (MSFT), Oracle Health (ORCL) — weight by deployment stage." Name specific public tickers AND notable privates.
+
+7. WHAT WE GOT WRONG — If prior_week_brief data is provided, review last week's conviction calls. Did the flagged signals continue or reverse? Did vendor calls hold? Score each prior call as CONFIRMED, EVOLVING, or WRONG. One paragraph. If no prior brief exists, skip this section.
+
+8. RISKS — MUST be specific to this week's flagged signals. If healthcare job postings are flagged, risks should address regulatory overhang on SaMD, Epic contract cycles, CMS reimbursement. If developer tools are flagged, risks should address open-source commoditization, pricing pressure. NO generic "macro uncertainty" or "AI regulation might change." Every risk must trace to a specific flagged signal.`;
 
       const flaggedCount = (ctx.threshold_flagged_signals?.flagged || []).length;
       const quietCount = ctx.threshold_flagged_signals?.quiet_count || 0;
+      const priorBriefNote = ctx.prior_week_brief ? `\nPRIOR WEEK (${ctx.prior_week_brief.week}) CONVICTION CALLS for retrospective:\n${ctx.prior_week_brief.conviction_calls_text}\n` : "\nNo prior week brief available — skip WHAT WE GOT WRONG section.\n";
+      const convictionNote = Object.keys(ctx.conviction_ratings || {}).length > 0 ? `\nCONVICTION RATINGS:\n${Object.entries(ctx.conviction_ratings).map(([v, r]) => `${v}: ${r.rating} (${r.confirming_sources.join(", ")}) — ${r.direction}`).join("\n")}\n` : "";
       const userPrompt = `Week: ${ctx.week} | ${ctx.generated_at}
-${flaggedCount} signals flagged (crossed threshold). ${quietCount} quiet.
-${flaggedCount === 0 ? "NO signals crossed threshold — keep the brief very short, focus on macro news and stock pulse only." : `Focus ONLY on the ${flaggedCount} flagged signals in FLAGGED SIGNALS section. Everything else gets one line.`}
-
+${flaggedCount} signals flagged. ${quietCount} quiet.
+${flaggedCount === 0 ? "NO signals crossed threshold — keep brief very short, macro/news only." : `Focus on ${flaggedCount} flagged signals. Everything else one line.`}
+${convictionNote}${priorBriefNote}
 ${JSON.stringify(ctx, null, 1)}
 
-Search for current stock prices for ${stockTickers.join(", ")} and top 3-5 AI news stories from the past 2 weeks. Keep the brief concise.`;
+Search for current stock prices for ${stockTickers.join(", ")} and top 3-5 AI news stories. Name specific vendor tickers in conviction calls.`;
 
 
 
@@ -5636,7 +5682,7 @@ Search for current stock prices for ${stockTickers.join(", ")} and top 3-5 AI ne
         },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 6000,
+          max_tokens: 8000,
           system: systemPrompt,
           messages: [{ role: "user", content: userPrompt }],
           tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 8 }],
