@@ -4815,7 +4815,20 @@ export default function App() {
   },[fetchSource,doCloudSync]);
 
   const updateKeywords=useCallback((vertId,sourceId,field,nv)=>{
-    setConfig(prev=>{const vs=prev.verticals.map(v=>v.id!==vertId?v:{...v,keywords:{...v.keywords,[sourceId]:{...v.keywords[sourceId],[field]:nv}}});const next={...prev,verticals:vs};sv("config",next);return next;});
+    setConfig(prev=>{
+      const oldVert = prev.verticals.find(v => v.id === vertId);
+      const oldVal = oldVert?.keywords?.[sourceId]?.[field];
+      const oldStr = JSON.stringify(Array.isArray(oldVal) ? oldVal.filter(Boolean).sort() : oldVal);
+      const newStr = JSON.stringify(Array.isArray(nv) ? nv.filter(Boolean).sort() : nv);
+      const vs=prev.verticals.map(v=>v.id!==vertId?v:{...v,keywords:{...v.keywords,[sourceId]:{...v.keywords[sourceId],[field]:nv}}});
+      const next={...prev,verticals:vs};sv("config",next);
+      if (oldStr !== newStr) {
+        const histKey = `${vertId}_${sourceId}`;
+        sv(`hist_${histKey}`, []);
+        setAllHistories(p => ({ ...p, [histKey]: [] }));
+      }
+      return next;
+    });
   },[]);
 
   const addGroup=useCallback(name=>{
