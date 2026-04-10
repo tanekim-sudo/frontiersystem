@@ -490,12 +490,13 @@ function TimeRangeSelector({ value, onChange, style }) {
   );
 }
 
-const LABOR_FRED_CAT_ORDER = ["labor", "jolts", "wages", "growth", "housing", "sentiment", "financial_stress", "rates", "tech_production"];
+const LABOR_FRED_CAT_ORDER = ["labor", "jolts", "wages", "growth", "inflation", "housing", "sentiment", "financial_stress", "rates", "tech_production"];
 const LABOR_FRED_CAT_LABEL = {
   labor: "Labor",
   jolts: "JOLTS",
   wages: "Wages",
   growth: "Growth & demand",
+  inflation: "Inflation (CPI & PCE)",
   housing: "Housing",
   sentiment: "Sentiment",
   financial_stress: "Financial stress",
@@ -507,6 +508,7 @@ const LABOR_FRED_CAT_EXPLAIN = {
   jolts: "Job Openings & Labor Turnover Survey — measures how many positions are open, how many people are being hired, and how many are quitting. High openings + high quits = hot labor market. Falling openings = companies are pulling back.",
   wages: "How fast paychecks are growing. Rising wages = companies competing for talent = healthy demand. Stalling wages = budget pressure, potential hiring freezes.",
   growth: "Overall economic output (GDP) and consumer spending. Strong GDP = enterprise budgets grow, more AI procurement. Weak GDP = cost-cutting mode.",
+  inflation: "Consumer and PCE price indexes — the cost backdrop for wages, rates, and AI pricing power. High or sticky inflation keeps the Fed cautious and tightens real budgets.",
   housing: "Housing starts and permits signal 6–12 months of economic confidence. Housing slumps often precede broader slowdowns that hit tech budgets.",
   sentiment: "Consumer and business confidence surveys. When people feel pessimistic, spending and hiring slow down — even before hard data confirms it.",
   financial_stress: "Measures of banking system strain and credit conditions. High stress = banks tighten lending = less capital for AI investments and startups.",
@@ -529,6 +531,9 @@ const FRED_SERIES_EXPLAIN = {
   INDPRO: "Industrial Production Index — output from factories, mines, utilities. When this falls, physical economy is contracting.",
   RSXFS: "Retail sales excluding food services — how much consumers are actually spending. Consumer spending is 70% of GDP.",
   PCEC96: "Real personal consumption — what households spend (inflation-adjusted). The most direct demand signal.",
+  CPIAUCSL: "CPI-U all items (seasonally adjusted) — the headline consumer price index. Year-over-year change is the \"inflation\" number often quoted in the press; here you see the index level over time.",
+  PCEPI: "Personal Consumption Expenditures price index — broad consumption deflator. The Fed watches PCE (with core PCE) more than CPI for its inflation mandate.",
+  PCEPILFE: "Core PCE — PCE excluding food and energy. The Fed's preferred gauge for underlying inflation trends; less volatile than headline.",
   HOUST: "New housing starts — builders break ground only when they're confident. A leading indicator that predicts economic conditions 6–12 months out.",
   UMCSENT: "University of Michigan Consumer Sentiment — survey of how optimistic Americans feel about the economy. Drops here predict spending pullbacks.",
   VIXCLS: "VIX — the \"fear index.\" Measures expected stock market volatility. Below 15 = calm. 20–30 = nervous. Above 30 = panic.",
@@ -1075,9 +1080,50 @@ function trimPayloadSize(obj, maxChars = 20000) {
   if (copy.ai_supply_side?.hf_download_trend?.recent_values) copy.ai_supply_side.hf_download_trend.recent_values = copy.ai_supply_side.hf_download_trend.recent_values.slice(-14);
   return copy;
 }
+function sanitizeBriefOutput(text) {
+  if (!text) return "";
+  // Strip markdown links entirely — drop both label and URL since labels are often citation titles
+  text = text.replace(/\[([^\]]*)\]\(https?:\/\/[^)]+\)/g, (_, label) => {
+    // Keep the label only if it looks like real prose (not a citation title with " - " site name pattern)
+    if (/\s-\s.*(CNBC|Yahoo|Google|Finance|Forbes|Reuters|Bloomberg|Seeking Alpha|devFlokers|Forge|Relvai|marketingprofs|crescendo)/i.test(label)) return "";
+    return label;
+  });
+  // Strip raw URLs
+  text = text.replace(/https?:\/\/\S+/g, "");
+  // Strip %%LINK%%...%%ENDLINK%% artifacts
+  text = text.replace(/%%LINK%%(.+?)%%HREF%%[^%]*%%ENDLINK%%/g, "");
+  text = text.replace(/%%(?:LINK|HREF|ENDLINK)%%/g, "");
+  // Strip SOURCES/References sections at the end (multiple patterns)
+  text = text.replace(/\n+━*\s*\n*(?:SOURCES?|REFERENCES?)\s*\n[\s\S]*$/im, "");
+  text = text.replace(/\n+#{1,3}\s*(?:SOURCES?|REFERENCES?)\s*\n[\s\S]*$/im, "");
+  text = text.replace(/\n+\d+\s*(?:SOURCES?|REFERENCES?)\s*\n[\s\S]*$/im, "");
+  // Strip numbered source/reference lists
+  text = text.replace(/\n+\d+\.\s*\[?[^\n]*https?:\/\/[^\n]*/g, "");
+  // Strip "Source:" inline
+  text = text.replace(/\s*Sources?:?\s*(?:https?:\/\/\S+|\S+\.(?:com|org|net|io)\S*)/gi, "");
+  // Strip "according to [source]" parentheticals
+  text = text.replace(/\s*\((?:source|via|per|from):?\s*[^)]*\)/gi, "");
+  // Strip "(Composite Score: N)"
+  text = text.replace(/\s*\(Composite Score:?\s*\d+\)/gi, "");
+  // Strip "Composite Score: N" without parens
+  text = text.replace(/Composite Score:?\s*\d+/gi, "");
+  // Clean orphaned pipe separators (e.g. " | " left after link removal)
+  text = text.replace(/\s*\|\s*\|\s*/g, " ");
+  text = text.replace(/\s*\|\s*$/gm, "");
+  text = text.replace(/^\s*\|\s*/gm, "");
+  text = text.replace(/\s+\|\s+(?=\n|$)/g, "");
+  // Clean double/triple spaces left by removals
+  text = text.replace(/ {2,}/g, " ");
+  // Clean lines that are now just whitespace or punctuation
+  text = text.replace(/^\s*[|,;]\s*$/gm, "");
+  // Clean excess blank lines
+  text = text.replace(/\n{3,}/g, "\n\n");
+  return text.trim();
+}
+
 function offlineBriefFromContext(ctx) {
   const date = new Date(ctx.generated_at).toLocaleString();
-  const header = `AI DEMAND SIGNAL WEEKLY INTELLIGENCE REPORT\nWeek of ${ctx.week}\nGenerated: ${date} (AI-powered analysis unavailable — raw data summary)\nVerticals tracked: ${ctx.total_verticals_tracked || 0} | Composite range: ${ctx.composite_score_summary?.lowest || 0}–${ctx.composite_score_summary?.highest || 0}\n`;
+  const header = `AI DEMAND SIGNAL WEEKLY INTELLIGENCE REPORT\nWeek of ${ctx.week}\nGenerated: ${date} (AI-powered analysis unavailable — raw data summary)\nVerticals tracked: ${ctx.total_verticals_tracked || 0}\n`;
 
   const regime = `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nREGIME DASHBOARD\n` + (ctx.verticals || []).map((v) => {
     const j = v.signals?.job_postings;
@@ -1089,7 +1135,7 @@ function offlineBriefFromContext(ctx) {
     if (mom > 15) reg = "ACCELERATING";
     else if (mom < -15) reg = "DECELERATING";
     else if (mom !== null && Math.abs(mom) <= 5) reg = "PLATEAUING";
-    return `${v.name} | ${reg} | Composite: ${v.composite_score} | Jobs: ${j?.current_count || "n/a"} (${ts?.pct_change_vs_previous != null ? (ts.pct_change_vs_previous >= 0 ? "+" : "") + ts.pct_change_vs_previous + "%" : "n/a"} vs prev) | Trends: ${g?.current_index || "n/a"} | Repos: ${r?.active_repos_30d || "n/a"}`;
+    return `${v.name} | ${reg} | Jobs: ${j?.current_count || "n/a"} (${ts?.pct_change_vs_previous != null ? (ts.pct_change_vs_previous >= 0 ? "+" : "") + ts.pct_change_vs_previous + "%" : "n/a"} vs prev) | Trends: ${g?.current_index || "n/a"} | Repos: ${r?.active_repos_30d || "n/a"}`;
   }).join("\n");
 
   const divs = (ctx.verticals || []).filter(v => v.divergence_signals?.length > 0);
@@ -1136,16 +1182,16 @@ function buildBriefAsciiCharts(snapshot) {
 }
 function simpleMarkdownToHtml(md) {
   if (!md) return "";
+  const clean = sanitizeBriefOutput(md);
   const esc = (s) => escapeHtml(s);
   const F = "Inter,system-ui,-apple-system,sans-serif";
-  const lines = String(md).split("\n");
+  const lines = String(clean).split("\n");
   const out = [];
   let para = [];
   const flush = () => {
     if (!para.length) return;
     let raw = esc(para.join(" "));
     raw = raw.replace(/\*\*(.+?)\*\*/g, "<strong style=\"font-weight:600\">$1</strong>");
-    raw = raw.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer" style="color:#2563eb;text-decoration:underline;font-weight:500">$1</a>');
     out.push(`<p style="margin:0 0 14px;line-height:1.75;color:#1f2937;font:400 14px/1.75 ${F}">${raw}</p>`);
     para = [];
   };
@@ -1206,11 +1252,13 @@ function buildBriefChartsHtml(ctx) {
 }
 function briefEmailHtmlDocument(week, snapshot, markdownBody, diffMode, baseForDiff) {
   const F = "Inter,system-ui,-apple-system,sans-serif";
-  if (!diffMode && snapshot) return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Weekly Brief ${escapeHtml(week)}</title></head><body style="margin:0;padding:32px;background:#f3f4f6;font-family:${F}">${buildVisualBriefHtml(markdownBody, snapshot, week)}</body></html>`;
+  const cleanBody = sanitizeBriefOutput(markdownBody || "");
+  const cleanBase = sanitizeBriefOutput(baseForDiff || "");
+  if (!diffMode && snapshot) return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Weekly Brief ${escapeHtml(week)}</title></head><body style="margin:0;padding:32px;background:#f3f4f6;font-family:${F}">${buildVisualBriefHtml(cleanBody, snapshot, week)}</body></html>`;
   const charts = buildBriefChartsHtml(snapshot);
   const inner = diffMode
-    ? paragraphDiffHtml(baseForDiff, markdownBody)
-    : `${charts}<div style="font:14px/1.75 ${F};color:#1f2937">${simpleMarkdownToHtml(markdownBody)}</div>`;
+    ? paragraphDiffHtml(cleanBase, cleanBody)
+    : `${charts}<div style="font:14px/1.75 ${F};color:#1f2937">${simpleMarkdownToHtml(cleanBody)}</div>`;
   return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Weekly Brief ${escapeHtml(week)}</title></head><body style="margin:0;padding:32px;background:#f3f4f6;font-family:${F}"><div style="max-width:740px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:32px 36px">${inner}</div></body></html>`;
 }
 
@@ -1243,6 +1291,7 @@ function buildSvgBarChart(values, labels, w, h, color, labelColor = "#9ca3af") {
 }
 
 function buildVisualBriefHtml(text, ctx, week) {
+  text = sanitizeBriefOutput(text || "");
   if (!ctx) return `<div style="max-width:740px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:32px 36px"><div style="font:15px/1.75 Georgia,serif;color:#1a1d26">${simpleMarkdownToHtml(text)}</div></div>`;
   const esc = escapeHtml;
   const F = "Inter,system-ui,-apple-system,sans-serif";
@@ -1267,15 +1316,13 @@ function buildVisualBriefHtml(text, ctx, week) {
     `<div><div style="font:300 10px/1 ${F};text-transform:uppercase;letter-spacing:0.14em;color:#6b7280;margin-bottom:8px">Weekly Intelligence Brief</div>` +
     `<div style="font:700 24px/1.1 ${F};letter-spacing:-0.02em">AI Demand Signals</div>` +
     `<div style="font:400 12px/1 ${F};color:#9ca3af;margin-top:8px">Week of ${esc(week)} · ${esc(dateStr)}</div></div>` +
-    `<div style="text-align:right"><div style="font:700 36px/1 ${F};color:#60a5fa">${ctx.composite_score_summary?.average || 0}</div>` +
-    `<div style="font:500 9px/1 ${F};color:#6b7280;text-transform:uppercase;letter-spacing:0.08em;margin-top:4px">Composite</div></div>` +
     `</div></div>`);
 
   // ── REGIME TABLE ──
   if (ctx.verticals?.length) {
     let table = secLabel("Signal Regime Dashboard");
     table += `<div style="overflow-x:auto;border:1px solid #e5e7eb;border-radius:8px"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#f9fafb">`;
-    ["Vertical", "Regime", "Score", "Jobs", "Trends", "Repos", "Claude"].forEach((h) => {
+    ["Vertical", "Regime", "Jobs", "Trends", "Repos", "Claude"].forEach((h) => {
       table += `<th style="text-align:left;padding:10px 12px;font:600 9px/1 ${F};color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;border-bottom:1px solid #e5e7eb;white-space:nowrap">${h}</th>`;
     });
     table += `</tr></thead><tbody>`;
@@ -1292,9 +1339,10 @@ function buildVisualBriefHtml(text, ctx, week) {
       else if (mom != null && Math.abs(mom) <= 5) regime = "PLATEAUING";
       else if (stage?.label) regime = stage.label.toUpperCase().replace(/\s+/g, "_");
       const bdr = i < ctx.verticals.length - 1 ? "border-bottom:1px solid #f3f4f6;" : "";
-      table += `<tr><td style="padding:10px 12px;font:600 12px/1.3 ${F};${bdr}">${esc(v.name)}</td>`;
+      const tblKw = Object.values(v.keywords || {}).flatMap(obj => Object.values(obj || {}).flatMap(arr => Array.isArray(arr) ? arr.filter(Boolean) : [String(arr || "")].filter(Boolean)));
+      const tblUniqueKw = [...new Set(tblKw)].slice(0, 5);
+      table += `<tr><td style="padding:10px 12px;${bdr}"><div style="font:600 12px/1.3 ${F}">${esc(v.name)}</div>${tblUniqueKw.length ? `<div style="margin-top:3px;display:flex;flex-wrap:wrap;gap:2px">${tblUniqueKw.map(k => `<span style="font:400 8px/1 ${F};padding:1px 5px;border-radius:3px;background:#f3f4f6;color:#9ca3af">${esc(k)}</span>`).join("")}${tblKw.length > 5 ? `<span style="font:400 8px/1 ${F};color:#9ca3af">+${tblKw.length - 5}</span>` : ""}</div>` : ""}</td>`;
       table += `<td style="padding:10px 12px;${bdr}">${badge(regime.replace(/_/g, " "), regime)}</td>`;
-      table += `<td style="padding:10px 12px;font:700 13px/1 ${F};${bdr}">${v.composite_score || 0}</td>`;
       table += `<td style="padding:10px 12px;font:500 12px ${F};${bdr}">${fmtNum(jobs?.current_count)} <span style="color:#9ca3af;font-size:10px">${fmtPct(jobs?.time_series?.pct_change_vs_previous)}</span></td>`;
       table += `<td style="padding:10px 12px;font:500 12px ${F};${bdr}">${fmtNum(trends?.current_index)}</td>`;
       table += `<td style="padding:10px 12px;font:500 12px ${F};${bdr}">${fmtNum(repos?.active_repos_30d)}</td>`;
@@ -1318,10 +1366,14 @@ function buildVisualBriefHtml(text, ctx, week) {
       const chartLabel = (t) => `<div style="font:600 9px/1 ${F};color:#9ca3af;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">${t}</div>`;
       const chartDates = (labels) => labels.length >= 2 ? `<div style="display:flex;justify-content:space-between;font:400 8px ${F};color:#d1d5db;margin-top:3px"><span>${esc(labels[0])}</span><span>${esc(labels[labels.length - 1])}</span></div>` : "";
 
-      let html = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">` +
+      const allKw = Object.values(v.keywords || {}).flatMap(obj => Object.values(obj || {}).flatMap(arr => Array.isArray(arr) ? arr.filter(Boolean) : [String(arr || "")].filter(Boolean)));
+      const uniqueKw = [...new Set(allKw)];
+      let html = `<div style="margin-bottom:14px">` +
+        `<div style="display:flex;align-items:center;gap:10px;margin-bottom:${uniqueKw.length ? 6 : 0}px">` +
         `<div style="font:700 15px/1 ${F};color:#111827">${esc(v.name)}</div>` +
-        `<span style="font:600 12px/1 ${F};padding:3px 10px;border-radius:99px;background:#eff6ff;color:#2563eb">${v.composite_score || 0}</span>` +
         (v.pipeline_stage?.label ? ` ${badge(v.pipeline_stage.label, v.pipeline_stage.label.toUpperCase().replace(/\s+/g, "_"))}` : "") +
+        `</div>` +
+        (uniqueKw.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px">${uniqueKw.map(k => `<span style="font:500 10px/1 ${F};padding:3px 8px;border-radius:4px;background:#f3f4f6;color:#6b7280">${esc(k)}</span>`).join("")}</div>` : "") +
         `</div>`;
       html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">`;
       html += `<div>${chartLabel("Job Postings")}${jobVals.length >= 2 ? buildSvgBarChart(jobVals, jobLabels, 360, 90, "#2563eb", "#9ca3af") : noData}</div>`;
@@ -1431,13 +1483,18 @@ function buildAnalysisSectionsHtml(text) {
     "DATA QUALITY": { color: "#6b7280", icon: "10" }, "DATA CONFIDENCE": { color: "#6b7280", icon: "10" }, "SOURCES": { color: "#6b7280", icon: "10" },
     "EXECUTIVE SUMMARY": { color: "#2563eb", icon: "00" }, "VERTICAL DEEP": { color: "#2563eb", icon: "05" },
     "INTERPRETATION": { color: "#2563eb", icon: "05" }, "REGIME": { color: "#2563eb", icon: "02" },
+    "FLAGGED SIGNAL": { color: "#2563eb", icon: "04" }, "FLAGGED": { color: "#2563eb", icon: "04" },
+    "WHAT WE GOT WRONG": { color: "#f59e0b", icon: "07" }, "GOT WRONG": { color: "#f59e0b", icon: "07" },
+    "RISKS": { color: "#dc2626", icon: "09" },
   };
   const getMeta = (title) => {
     const upper = title.toUpperCase();
     for (const [k, m] of Object.entries(sectionMeta)) { if (upper.includes(k)) return m; }
     return { color: "#6b7280", icon: "—" };
   };
-  const sections = text.split(/━{3,}|═{3,}/).map((s) => s.trim()).filter(Boolean);
+  let normalized = text.replace(/━{3,}|═{3,}/g, "\n§§SPLIT§§\n");
+  normalized = normalized.replace(/^(#{1,3})\s+(.+)$/gm, (_, hashes, title) => `§§SPLIT§§\n${title.trim()}`);
+  const sections = normalized.split("§§SPLIT§§").map((s) => s.trim()).filter(Boolean);
   const parts = [];
   for (const section of sections) {
     const lines = section.split("\n");
@@ -1448,12 +1505,15 @@ function buildAnalysisSectionsHtml(text) {
       bodyLines = lines.slice(1);
     }
     if (title.includes("VISUAL TREND") || title.includes("REGIME DASHBOARD")) continue;
+    if (/^SOURCES?$|^REFERENCES?$/i.test(title.trim())) continue;
     const meta = getMeta(title);
     let body = bodyLines.join("\n").trim();
     if (!body) continue;
-    body = body.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '%%LINK%%$1%%HREF%%$2%%ENDLINK%%');
+    body = body.replace(/\[([^\]]*)\]\(https?:\/\/[^)]+\)/g, "$1");
+    body = body.replace(/https?:\/\/\S+/g, "");
+    body = body.replace(/%%LINK%%(.+?)%%HREF%%[^%]*%%ENDLINK%%/g, "$1");
+    body = body.replace(/%%(?:LINK|HREF|ENDLINK)%%/g, "");
     body = esc(body);
-    body = body.replace(/%%LINK%%(.+?)%%HREF%%(https?:\/\/[^%]+)%%ENDLINK%%/g, `<a href="$2" target="_blank" rel="noreferrer" style="color:${meta.color};text-decoration:underline;font-weight:500">$1</a>`);
     body = body.replace(/\*\*(.+?)\*\*/g, "<strong style=\"font-weight:600\">$1</strong>");
     body = body.replace(/\n\n/g, "</p><p style=\"margin:0 0 14px;line-height:1.7\">");
     body = body.replace(/\n/g, "<br/>");
@@ -1471,7 +1531,7 @@ function BriefSnapshotCharts({ ctx }) {
   return (
     <div style={{ marginTop: 18, paddingTop: 18, borderTop: `1px solid ${C.border}` }}>
       <div style={{ ...font.sans, fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>
-        Dashboard trend charts (snapshot sent to Claude)
+        Signal trend charts
       </div>
       {ctx.verticals.map((v) => {
         const mon = v.theirstack_historical?.recent_monthly || [];
@@ -1525,12 +1585,20 @@ function BriefSnapshotCharts({ ctx }) {
   );
 }
 function paragraphDiffHtml(oldText, newText) {
-  const oldP = (oldText || "").split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
-  const newP = (newText || "").split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+  const clean = (t) => sanitizeBriefOutput(t || "");
+  const oldP = clean(oldText).split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+  const newP = clean(newText).split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+  const fmt = (raw) => {
+    let s = escapeHtml(raw);
+    s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/^## (.+)$/gm, '<div style="font-weight:700;font-size:15px;text-transform:uppercase;letter-spacing:0.04em;margin:18px 0 6px;color:#111827">$1</div>');
+    s = s.replace(/\n/g, "<br/>");
+    return s;
+  };
   return newP.map((p, i) => {
     const changed = p !== (oldP[i] || "");
-    const bg = changed ? "background:#fff7ed;border-left:3px solid #f59e0b;padding-left:8px;" : "";
-    return `<p style="${bg}">${escapeHtml(p)}</p>`;
+    const bg = changed ? "background:#fff7ed;border-left:3px solid #f59e0b;padding-left:12px;padding-right:8px;" : "";
+    return `<div style="margin:0 0 14px;line-height:1.7;${bg}">${fmt(p)}</div>`;
   }).join("");
 }
 function escapeHtml(s) {
@@ -1616,7 +1684,6 @@ function buildDefaultConfig() {
       github_repos: 5,
       claude_attrib: 5,
       hf_downloads: 10,
-      composite: 8,
     },
     apiKeys: {}, scoreWeights: {},
     stageMultipliers: { s1:0.7, s2:1.0, s3:1.2, s4:1.5 },
@@ -2113,60 +2180,121 @@ function AnnotationMarker({ ann, x, chartHeight }) {
   );
 }
 
-function AnnotationForm({ signalKey, signalLabel, onAdd, onClose }) {
-  const [type, setType] = useState("inflection");
+function TeamNotesPanel({ annotations, onAdd, onDelete, verticals }) {
+  const [composing, setComposing] = useState(false);
+  const [type, setType] = useState("note");
   const [note, setNote] = useState("");
   const [author, setAuthor] = useState(() => ld("annotation_author", ""));
+  const [linkedGroup, setLinkedGroup] = useState("");
+  const [filterType, setFilterType] = useState("all");
+  const textRef = useRef(null);
+
+  useEffect(() => { if (composing && textRef.current) textRef.current.focus(); }, [composing]);
+
   const submit = () => {
     if (!note.trim()) return;
     sv("annotation_author", author);
-    onAdd({ signalKey, signalLabel, type, note: note.trim(), author: author.trim() || "Team" });
-    onClose();
+    onAdd({
+      type,
+      note: note.trim(),
+      author: author.trim() || "Team",
+      signalKey: linkedGroup || null,
+      signalLabel: linkedGroup ? (verticals.find(v => v.id === linkedGroup)?.name || linkedGroup) : null,
+    });
+    setNote("");
+    setType("note");
+    setLinkedGroup("");
+    setComposing(false);
   };
-  const inputSt = { ...font.sans, fontSize: 12, padding: "6px 10px", border: `1px solid ${C.border}`, borderRadius: 8, background: C.white, color: C.text, width: "100%" };
-  return (
-    <div className="fade-in" style={{ padding: "12px 14px", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, marginTop: 8 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <span style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text }}>Add annotation — {signalLabel}</span>
-        <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted, fontSize: 16 }}>✕</button>
-      </div>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-        {ANNOTATION_TYPES.map(t => (
-          <button key={t.id} onClick={() => setType(t.id)}
-            style={{ ...font.sans, fontSize: 11, padding: "4px 10px", borderRadius: 16, cursor: "pointer", border: type === t.id ? `2px solid ${t.color}` : `1px solid ${C.border}`, background: type === t.id ? t.color + "18" : C.white, color: type === t.id ? t.color : C.textSec, fontWeight: type === t.id ? 700 : 500 }}>
-            {t.icon} {t.label}
-          </button>
-        ))}
-      </div>
-      <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="What did you observe? Why does it matter?" rows={2} style={{ ...inputSt, resize: "vertical", marginBottom: 6 }} />
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <input value={author} onChange={e => setAuthor(e.target.value)} placeholder="Your name" style={{ ...inputSt, maxWidth: 160 }} />
-        <Btn size="sm" variant="accent" onClick={submit} disabled={!note.trim()}>Save</Btn>
-      </div>
-    </div>
-  );
-}
 
-function AnnotationLog({ annotations, signalKey, onDelete }) {
-  const filtered = signalKey ? annotations.filter(a => a.signalKey === signalKey) : annotations;
-  if (!filtered.length) return null;
-  const sorted = [...filtered].sort((a, b) => b.ts - a.ts);
+  const sorted = [...annotations].sort((a, b) => b.ts - a.ts);
+  const filtered = filterType === "all" ? sorted : sorted.filter(a => a.type === filterType);
+
   return (
-    <div style={{ marginTop: 8 }}>
-      {sorted.slice(0, 10).map(ann => {
-        const tp = ANNOTATION_TYPES.find(t => t.id === ann.type) || ANNOTATION_TYPES[4];
-        return (
-          <div key={ann.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "6px 0", borderBottom: `1px solid ${C.borderLight}` }}>
-            <span style={{ color: tp.color, fontSize: 12, flexShrink: 0, marginTop: 1 }}>{tp.icon}</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ ...font.sans, fontSize: 11, color: C.text }}>{ann.note}</div>
-              <div style={{ ...font.sans, fontSize: 10, color: C.textMuted }}>{tp.label} · {ann.author || "Team"} · {new Date(ann.isoDate).toLocaleDateString()}{ann.signalLabel ? ` · ${ann.signalLabel}` : ""}</div>
-            </div>
-            {onDelete && <button onClick={() => onDelete(ann.id)} style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted, fontSize: 12, flexShrink: 0 }}>✕</button>}
+    <Card style={{ marginBottom: 20, padding: 0, overflow: "hidden" }}>
+      <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.borderLight}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <div>
+          <div style={{ ...font.sans, fontSize: 14, fontWeight: 700, color: C.text }}>Team Notes</div>
+          <div style={{ ...font.sans, fontSize: 11, color: C.textMuted, marginTop: 2 }}>Log observations, thesis changes, risks, and catalysts. Notes sync across browsers via cloud backup.</div>
+        </div>
+        <Btn variant={composing ? "ghost" : "accent"} size="sm" onClick={() => setComposing(!composing)}>
+          {composing ? "Cancel" : "+ Add Note"}
+        </Btn>
+      </div>
+
+      {/* Compose form */}
+      {composing && (
+        <div className="fade-in" style={{ padding: "14px 18px", background: C.nested, borderBottom: `1px solid ${C.borderLight}` }}>
+          {/* Note type selector */}
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+            {ANNOTATION_TYPES.map(t => (
+              <button key={t.id} onClick={() => setType(t.id)} style={{ ...font.sans, fontSize: 11, fontWeight: type === t.id ? 700 : 500, padding: "5px 12px", borderRadius: 20, cursor: "pointer", border: type === t.id ? `2px solid ${t.color}` : `1px solid ${C.borderLight}`, background: type === t.id ? t.color + "14" : C.white, color: type === t.id ? t.color : C.textSec, transition: "all .12s" }}>
+                {t.icon} {t.label}
+              </button>
+            ))}
           </div>
-        );
-      })}
-    </div>
+
+          {/* Note text */}
+          <textarea ref={textRef} value={note} onChange={e => setNote(e.target.value)} placeholder="What did you observe? Why does it matter for the thesis?" rows={3} style={{ ...font.sans, fontSize: 13, padding: "10px 12px", border: `1px solid ${C.border}`, borderRadius: 10, background: C.white, color: C.text, width: "100%", resize: "vertical", lineHeight: 1.5, marginBottom: 8 }} onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && note.trim()) submit(); }} />
+
+          {/* Bottom row: group link + author + save */}
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <select value={linkedGroup} onChange={e => setLinkedGroup(e.target.value)} style={{ ...font.sans, fontSize: 12, padding: "6px 10px", border: `1px solid ${C.border}`, borderRadius: 8, background: C.white, color: C.text, minWidth: 140 }}>
+              <option value="">No group (general)</option>
+              {verticals.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+            </select>
+            <input value={author} onChange={e => setAuthor(e.target.value)} placeholder="Your name" style={{ ...font.sans, fontSize: 12, padding: "6px 10px", border: `1px solid ${C.border}`, borderRadius: 8, background: C.white, color: C.text, width: 140 }} />
+            <Btn size="sm" variant="accent" onClick={submit} disabled={!note.trim()}>Save note</Btn>
+            <span style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginLeft: "auto" }}>Ctrl+Enter to save</span>
+          </div>
+        </div>
+      )}
+
+      {/* Filter bar + notes list */}
+      <div style={{ padding: "10px 18px" }}>
+        {annotations.length > 0 && (
+          <div style={{ display: "flex", gap: 4, marginBottom: 10, flexWrap: "wrap" }}>
+            <button onClick={() => setFilterType("all")} style={{ ...font.sans, fontSize: 10, fontWeight: filterType === "all" ? 700 : 500, padding: "3px 10px", borderRadius: 12, border: `1px solid ${filterType === "all" ? C.cyan : C.borderLight}`, background: filterType === "all" ? C.cyanBg : "transparent", color: filterType === "all" ? C.cyan : C.textMuted, cursor: "pointer" }}>All ({annotations.length})</button>
+            {ANNOTATION_TYPES.map(t => {
+              const count = annotations.filter(a => a.type === t.id).length;
+              if (!count) return null;
+              return <button key={t.id} onClick={() => setFilterType(t.id)} style={{ ...font.sans, fontSize: 10, fontWeight: filterType === t.id ? 700 : 500, padding: "3px 10px", borderRadius: 12, border: `1px solid ${filterType === t.id ? t.color : C.borderLight}`, background: filterType === t.id ? t.color + "14" : "transparent", color: filterType === t.id ? t.color : C.textMuted, cursor: "pointer" }}>{t.icon} {t.label} ({count})</button>;
+            })}
+          </div>
+        )}
+
+        {filtered.length === 0 ? (
+          <div style={{ padding: "20px 0", textAlign: "center" }}>
+            <div style={{ ...font.sans, fontSize: 12, color: C.textMuted }}>No notes yet. Click <strong>+ Add Note</strong> to log an observation.</div>
+          </div>
+        ) : (
+          <div>
+            {filtered.slice(0, 20).map(ann => {
+              const tp = ANNOTATION_TYPES.find(t => t.id === ann.type) || ANNOTATION_TYPES[4];
+              const groupVert = ann.signalKey ? verticals.find(v => v.id === ann.signalKey) : null;
+              return (
+                <div key={ann.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 0", borderBottom: `1px solid ${C.borderLight}` }}>
+                  <div style={{ width: 28, height: 28, borderRadius: 8, background: tp.color + "14", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 2 }}>
+                    <span style={{ fontSize: 13, color: tp.color }}>{tp.icon}</span>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ ...font.sans, fontSize: 12, color: C.text, lineHeight: 1.5 }}>{ann.note}</div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4, flexWrap: "wrap" }}>
+                      <span style={{ ...font.sans, fontSize: 10, fontWeight: 600, color: tp.color }}>{tp.label}</span>
+                      {groupVert && <span style={{ ...font.sans, fontSize: 10, padding: "1px 6px", borderRadius: 4, background: (groupVert.color || C.cyan) + "14", color: groupVert.color || C.cyan, fontWeight: 600 }}>{groupVert.name}</span>}
+                      <span style={{ ...font.sans, fontSize: 10, color: C.textMuted }}>{ann.author || "Team"}</span>
+                      <span style={{ ...font.sans, fontSize: 10, color: C.textMuted }}>{new Date(ann.isoDate).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+                    </div>
+                  </div>
+                  <button onClick={() => onDelete(ann.id)} style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted, fontSize: 14, flexShrink: 0, padding: "4px", opacity: 0.5, transition: "opacity .15s" }} onMouseEnter={e => e.target.style.opacity = 1} onMouseLeave={e => e.target.style.opacity = 0.5} title="Delete note">✕</button>
+                </div>
+              );
+            })}
+            {filtered.length > 20 && <div style={{ ...font.sans, fontSize: 11, color: C.textMuted, textAlign: "center", padding: "8px 0" }}>Showing 20 of {filtered.length} notes</div>}
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }
 
@@ -2307,6 +2435,356 @@ function pearsonCorr(a, b) {
   for (let i = 0; i < n; i++) { num += (ax[i] - ma) * (bx[i] - mb); dA += (ax[i] - ma) ** 2; dB += (bx[i] - mb) ** 2; }
   const den = Math.sqrt(dA * dB);
   return den === 0 ? 0 : num / den;
+}
+
+// ── SIGNAL CONVERGENCE PANEL ─────────────────────────────────────────────────
+
+const SOURCE_COLORS = { theirstack: "#2563eb", google_trends: "#7c3aed", github_repos: "#059669", claude_attrib: "#d97706" };
+const SOURCE_LABELS = { theirstack: "Job Postings", google_trends: "Google Trends", github_repos: "GitHub Repos", claude_attrib: "Claude Attribution" };
+
+function vertHasKeywords(vert, srcId) {
+  if (srcId === "claude_attrib") return true;
+  const kw = vert?.keywords?.[srcId];
+  if (!kw) return false;
+  return Object.values(kw).some(v => Array.isArray(v) ? v.filter(Boolean).length > 0 : !!v);
+}
+
+function computeConvergence(vertId, sources, vert) {
+  const signals = [];
+  sources.forEach(srcId => {
+    if (!vertHasKeywords(vert, srcId)) return;
+    const hist = getSignalHistory(`${vertId}_${srcId}`);
+    if (hist.length < 2) return;
+    const sorted = [...hist].sort((a, b) => a.ts - b.ts);
+    const vals = sorted.map(p => p.value);
+    const n = vals.length;
+    const latest = vals[n - 1] || 0;
+    const prev = n >= 2 ? vals[n - 2] : null;
+    const wow = prev && prev > 0 ? ((latest - prev) / prev) * 100 : null;
+    const val3 = n >= 4 ? vals[n - 4] : (n >= 2 ? vals[0] : null);
+    const chg3w = val3 && val3 > 0 ? ((latest - val3) / val3) * 100 : null;
+    const avg = n > 0 ? vals.reduce((a, b) => a + b, 0) / n : 0;
+    const std = n > 1 ? Math.sqrt(vals.reduce((s, v) => s + (v - avg) ** 2, 0) / (n - 1)) : 0;
+    const z = std > 0 ? (latest - avg) / std : 0;
+    const direction = (chg3w || wow || 0) > 0 ? "up" : (chg3w || wow || 0) < 0 ? "down" : "flat";
+    signals.push({ srcId, latest, wow: wow != null ? Math.round(wow) : null, chg3w: chg3w != null ? Math.round(chg3w) : null, z: Number(z.toFixed(2)), direction, dataPoints: n });
+  });
+  const moving = signals.filter(s => s.direction !== "flat");
+  const upCount = moving.filter(s => s.direction === "up").length;
+  const downCount = moving.filter(s => s.direction === "down").length;
+  const dominant = upCount > downCount ? "up" : downCount > upCount ? "down" : "mixed";
+  const aligned = Math.max(upCount, downCount);
+  const total = signals.length;
+  const convergenceScore = total >= 2 ? Math.round((aligned / total) * 100) : 0;
+  let verdict = "INSUFFICIENT DATA";
+  if (total >= 3 && aligned >= 3) verdict = dominant === "up" ? "STRONG CONVERGENCE ↑" : "STRONG CONVERGENCE ↓";
+  else if (total >= 2 && aligned >= 2) verdict = dominant === "up" ? "MODERATE ALIGNMENT ↑" : "MODERATE ALIGNMENT ↓";
+  else if (total >= 2 && upCount > 0 && downCount > 0) verdict = "DIVERGING";
+  else if (total >= 2) verdict = "WEAK / MIXED";
+  return { signals, dominant, aligned, total, convergenceScore, verdict };
+}
+
+function ConvergenceBadge({ verdict }) {
+  const colors = {
+    "STRONG CONVERGENCE ↑": { bg: "#dcfce7", color: "#166534", border: "#86efac" },
+    "STRONG CONVERGENCE ↓": { bg: "#fef2f2", color: "#991b1b", border: "#fca5a5" },
+    "MODERATE ALIGNMENT ↑": { bg: "#ecfdf5", color: "#065f46", border: "#a7f3d0" },
+    "MODERATE ALIGNMENT ↓": { bg: "#fff7ed", color: "#9a3412", border: "#fdba74" },
+    "DIVERGING": { bg: "#fefce8", color: "#854d0e", border: "#fde68a" },
+    "WEAK / MIXED": { bg: "#f9fafb", color: "#6b7280", border: "#e5e7eb" },
+    "INSUFFICIENT DATA": { bg: "#f9fafb", color: "#9ca3af", border: "#e5e7eb" },
+  };
+  const c = colors[verdict] || colors["INSUFFICIENT DATA"];
+  return <span style={{ ...font.sans, fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 6, background: c.bg, color: c.color, border: `1px solid ${c.border}`, letterSpacing: "0.02em" }}>{verdict}</span>;
+}
+
+function SignalConvergencePanel({ verticals, sources, signalResults }) {
+  const [selectedGroup, setSelectedGroup] = useState(null);
+  const [compareGroups, setCompareGroups] = useState([]);
+  const [timeRange, setTimeRange] = useState("3m");
+  const sourceIds = sources.filter(s => s.enabled).map(s => s.id);
+
+  const convergenceData = useMemo(() => {
+    const data = {};
+    verticals.forEach(v => { data[v.id] = computeConvergence(v.id, sourceIds, v); });
+    return data;
+  }, [verticals, sourceIds, signalResults]);
+
+  const filterByRange = useCallback((hist) => {
+    if (!hist?.length) return [];
+    const now = Date.now();
+    const ms = { "1m": 30, "3m": 90, "6m": 180, "1y": 365 }[timeRange] * 86400000;
+    return hist.filter(p => (now - (p.ts || new Date(p.isoDate).getTime())) < ms);
+  }, [timeRange]);
+
+  const buildChartData = useCallback((vertId, srcId) => {
+    const raw = getSignalHistory(`${vertId}_${srcId}`);
+    const filtered = filterByRange(raw);
+    if (filtered.length < 2) return [];
+    const sorted = [...filtered].sort((a, b) => a.ts - b.ts);
+    const sanitized = sanitizeTimeSeries(sorted.map(p => ({ ...p, _ts: new Date(p.isoDate || p.ts).getTime() })).sort((a, b) => a._ts - b._ts), "value");
+    return sanitized.length >= 4 ? smoothEMA(sanitized, "value", 0.15) : sanitized;
+  }, [filterByRange]);
+
+  // Normalize to percentage change from start for comparison
+  const buildNormalizedData = useCallback((vertId, srcId) => {
+    const data = buildChartData(vertId, srcId);
+    if (data.length < 2) return [];
+    const base = data[0]?.value || data[0]?.value_smooth || 1;
+    return data.map(d => ({
+      ...d,
+      pctFromStart: Math.round(((( d.value_smooth ?? d.value) - base) / Math.max(base, 1)) * 100 * 10) / 10,
+    }));
+  }, [buildChartData]);
+
+  const activeGroup = selectedGroup || (verticals.length > 0 ? verticals[0].id : null);
+  const activeVert = verticals.find(v => v.id === activeGroup);
+
+  return (
+    <Card style={{ marginBottom: 20, padding: 0, overflow: "hidden" }}>
+      {/* Header */}
+      <div style={{ padding: "16px 20px 12px", borderBottom: `1px solid ${C.borderLight}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+          <div>
+            <div style={{ ...font.sans, fontSize: 14, fontWeight: 700, color: C.text }}>Signal Convergence</div>
+            <div style={{ ...font.sans, fontSize: 11, color: C.textMuted, marginTop: 2 }}>Multiple independent signals moving together is when you act. Single signals mean little.</div>
+          </div>
+          <div style={{ display: "flex", gap: 4 }}>
+            {["1m", "3m", "6m", "1y"].map(r => (
+              <button key={r} onClick={() => setTimeRange(r)} style={{ ...font.sans, fontSize: 10, fontWeight: timeRange === r ? 700 : 500, padding: "4px 10px", borderRadius: 6, border: `1px solid ${timeRange === r ? C.cyan : C.borderLight}`, background: timeRange === r ? C.cyanBg : "transparent", color: timeRange === r ? C.cyan : C.textSec, cursor: "pointer" }}>{r.toUpperCase()}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Convergence summary strip */}
+        <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+          {verticals.map(v => {
+            const conv = convergenceData[v.id];
+            const isActive = activeGroup === v.id;
+            return (
+              <button key={v.id} onClick={() => setSelectedGroup(v.id)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 8, border: isActive ? `2px solid ${v.color || C.cyan}` : `1px solid ${C.borderLight}`, background: isActive ? (v.color || C.cyan) + "0a" : C.white, cursor: "pointer", transition: "all .15s" }}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: v.color || C.cyan, flexShrink: 0 }} />
+                <span style={{ ...font.sans, fontSize: 12, fontWeight: 600, color: C.text }}>{v.name}</span>
+                <ConvergenceBadge verdict={conv?.verdict || "INSUFFICIENT DATA"} />
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Active group detail view */}
+      {activeVert && (() => {
+        const conv = convergenceData[activeVert.id];
+        const allKw = Object.values(activeVert.keywords || {}).flatMap(obj => Object.values(obj || {}).flatMap(arr => Array.isArray(arr) ? arr.filter(Boolean) : [String(arr || "")].filter(Boolean)));
+        const uniqueKw = [...new Set(allKw)];
+
+        return (
+          <div style={{ padding: "16px 20px" }}>
+            {/* Group header with keywords */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+              <span style={{ width: 12, height: 12, borderRadius: "50%", background: activeVert.color || C.cyan }} />
+              <span style={{ ...font.sans, fontSize: 16, fontWeight: 700, color: C.text }}>{activeVert.name}</span>
+              <ConvergenceBadge verdict={conv?.verdict || "INSUFFICIENT DATA"} />
+              {conv?.convergenceScore > 0 && <span style={{ ...font.mono, fontSize: 11, color: C.textMuted }}>{conv.convergenceScore}% aligned</span>}
+            </div>
+            {uniqueKw.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 16 }}>
+                {uniqueKw.map((k, i) => <span key={i} style={{ ...font.sans, fontSize: 10, padding: "2px 8px", borderRadius: 4, background: C.nested, color: C.textSec, border: `1px solid ${C.borderLight}` }}>{k}</span>)}
+              </div>
+            )}
+
+            {/* Side-by-side charts — only sources with keywords (claude_attrib always shows) */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12, marginBottom: 16 }}>
+              {sourceIds.filter(srcId => vertHasKeywords(activeVert, srcId)).map(srcId => {
+                const data = buildChartData(activeVert.id, srcId);
+                const sig = conv?.signals?.find(s => s.srcId === srcId);
+                const color = SOURCE_COLORS[srcId] || C.cyan;
+                const label = SOURCE_LABELS[srcId] || srcId;
+                return (
+                  <div key={srcId} style={{ background: C.nested, borderRadius: 10, padding: "12px 14px", border: `1px solid ${C.borderLight}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <span style={{ ...font.sans, fontSize: 11, fontWeight: 700, color: C.text }}>{label}</span>
+                      {sig && (
+                        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                          {sig.chg3w != null && <span style={{ ...font.mono, fontSize: 11, fontWeight: 700, color: sig.chg3w >= 0 ? "#059669" : "#dc2626" }}>{sig.chg3w >= 0 ? "+" : ""}{sig.chg3w}%<span style={{ ...font.sans, fontSize: 8, color: C.textMuted, marginLeft: 2 }}>3w</span></span>}
+                          {sig.wow != null && <span style={{ ...font.mono, fontSize: 10, color: C.textMuted }}>{sig.wow >= 0 ? "+" : ""}{sig.wow}% w/w</span>}
+                        </div>
+                      )}
+                    </div>
+                    {/* Direction indicator */}
+                    {sig && (
+                      <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+                        <span style={{ fontSize: 14 }}>{sig.direction === "up" ? "↑" : sig.direction === "down" ? "↓" : "→"}</span>
+                        <span style={{ ...font.sans, fontSize: 10, color: C.textMuted }}>Z-score: <strong style={{ color: Math.abs(sig.z) >= 2 ? "#dc2626" : C.text }}>{sig.z}</strong></span>
+                        <span style={{ ...font.sans, fontSize: 10, color: C.textMuted }}>{sig.dataPoints} pts</span>
+                      </div>
+                    )}
+                    {data.length >= 2 ? (
+                      <div style={{ height: 120 }}>
+                        <ResponsiveContainer>
+                          <LineChart data={data} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
+                            <XAxis dataKey="_ts" type="number" scale="time" domain={["dataMin", "dataMax"]} tickFormatter={ts => formatChartDateShort(new Date(ts).toISOString())} tick={{ fontSize: 8, fill: C.textMuted }} interval="preserveStartEnd" tickCount={4} />
+                            <YAxis tick={{ fontSize: 8, fill: C.textMuted }} width={36} domain={zoomedYDomain(data.map(d => d.value_smooth ?? d.value))} allowDataOverflow />
+                            <Tooltip contentStyle={{ fontSize: 10, borderRadius: 8, ...font.sans }} labelFormatter={ts => formatChartDate(new Date(ts).toISOString())} formatter={v => [Math.round(v), label]} />
+                            <Line type="monotone" dataKey={data[0]?.value_smooth != null ? "value_smooth" : "value"} stroke={color} strokeWidth={2} dot={false} />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    ) : (
+                      <div style={{ height: 120, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <span style={{ ...font.sans, fontSize: 11, color: C.textMuted }}>Need 2+ data points</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Normalized overlay — all signals on one chart */}
+            <div style={{ background: C.white, borderRadius: 10, padding: "14px 16px", border: `1px solid ${C.borderLight}`, marginBottom: 16 }}>
+              <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 4 }}>Normalized overlay — % change from period start</div>
+              <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginBottom: 10 }}>All signals on one scale. Convergence = lines moving together. Divergence = lines splitting apart.</div>
+              {(() => {
+                const activeSrcIds = sourceIds.filter(srcId => vertHasKeywords(activeVert, srcId));
+                const allNorm = {};
+                const allTs = new Set();
+                activeSrcIds.forEach(srcId => {
+                  const nd = buildNormalizedData(activeVert.id, srcId);
+                  nd.forEach(d => allTs.add(d._ts));
+                  allNorm[srcId] = nd;
+                });
+                const sortedTs = [...allTs].sort((a, b) => a - b);
+                if (sortedTs.length < 2) return <div style={{ height: 80, display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ ...font.sans, fontSize: 11, color: C.textMuted }}>Insufficient data for overlay</span></div>;
+                const merged = sortedTs.map(ts => {
+                  const row = { _ts: ts };
+                  activeSrcIds.forEach(srcId => {
+                    const closest = allNorm[srcId]?.reduce((best, d) => (!best || Math.abs(d._ts - ts) < Math.abs(best._ts - ts) ? d : best), null);
+                    if (closest && Math.abs(closest._ts - ts) < 7 * 86400000) row[srcId] = closest.pctFromStart;
+                  });
+                  return row;
+                });
+                return (
+                  <div style={{ height: 200 }}>
+                    <ResponsiveContainer>
+                      <LineChart data={merged} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
+                        <XAxis dataKey="_ts" type="number" scale="time" domain={["dataMin", "dataMax"]} tickFormatter={ts => formatChartDateShort(new Date(ts).toISOString())} tick={{ fontSize: 9, fill: C.textMuted }} interval="preserveStartEnd" tickCount={6} />
+                        <YAxis tick={{ fontSize: 9, fill: C.textMuted }} width={40} tickFormatter={v => `${v}%`} />
+                        <ReferenceLine y={0} stroke={C.border} strokeDasharray="3 3" />
+                        <Tooltip contentStyle={{ fontSize: 10, borderRadius: 8, ...font.sans }} labelFormatter={ts => formatChartDate(new Date(ts).toISOString())} formatter={(v, name) => [`${v}%`, SOURCE_LABELS[name] || name]} />
+                        <Legend wrapperStyle={{ fontSize: 10 }} formatter={v => SOURCE_LABELS[v] || v} />
+                        {activeSrcIds.map(srcId => (
+                          <Line key={srcId} type="monotone" dataKey={srcId} stroke={SOURCE_COLORS[srcId]} strokeWidth={2} dot={false} connectNulls name={srcId} />
+                        ))}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Actionable interpretation */}
+            {conv && conv.signals.length >= 2 && (
+              <div style={{ background: conv.verdict.includes("STRONG") ? (conv.dominant === "up" ? "#f0fdf4" : "#fef2f2") : "#fffbeb", borderRadius: 10, padding: "14px 16px", border: `1px solid ${conv.verdict.includes("STRONG") ? (conv.dominant === "up" ? "#bbf7d0" : "#fecaca") : "#fde68a"}` }}>
+                <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 6 }}>Signal reading</div>
+                <div style={{ ...font.sans, fontSize: 12, color: C.textSec, lineHeight: 1.6 }}>
+                  {conv.verdict.includes("STRONG CONVERGENCE") && conv.dominant === "up" && (
+                    <><strong>{conv.aligned} of {conv.total} signals rising together.</strong> This is the strongest pattern — independent data sources confirming the same acceleration. Job postings lead revenue by 1-2 quarters; GitHub activity leads enterprise adoption by 6-18 months. This vertical warrants attention for procurement timing.</>
+                  )}
+                  {conv.verdict.includes("STRONG CONVERGENCE") && conv.dominant === "down" && (
+                    <><strong>{conv.aligned} of {conv.total} signals declining together.</strong> Coordinated decline across independent sources. This suggests the vertical is past peak hype or facing structural headwinds. Watch for contract non-renewals and budget reallocation.</>
+                  )}
+                  {conv.verdict.includes("MODERATE") && (
+                    <><strong>{conv.aligned} of {conv.total} signals moving {conv.dominant === "up" ? "up" : "down"}.</strong> Partial alignment — not yet conclusive. One more confirming signal would upgrade this to high conviction. Monitor the lagging signals for confirmation or reversal.</>
+                  )}
+                  {conv.verdict === "DIVERGING" && (
+                    <><strong>Signals are splitting — some up, some down.</strong> This is the most informative pattern. It often indicates a phase transition: e.g., job postings rising (budget commitment) while search interest falls (hype fading) means the vertical is moving from exploration to deployment. Read the specific divergence to determine which signal is leading.</>
+                  )}
+                  {conv.verdict === "WEAK / MIXED" && (
+                    <>Signals are not showing a clear directional pattern. This vertical is either stable, noisy, or in transition. No actionable signal yet — check back next week.</>
+                  )}
+                  {conv.verdict === "INSUFFICIENT DATA" && (
+                    <>Not enough data points to assess convergence. Refresh data or wait for more history to accumulate.</>
+                  )}
+                </div>
+                {/* Per-signal breakdown */}
+                <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                  {conv.signals.map(s => (
+                    <div key={s.srcId} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 6, background: C.white, border: `1px solid ${C.borderLight}` }}>
+                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: SOURCE_COLORS[s.srcId] }} />
+                      <span style={{ ...font.sans, fontSize: 10, fontWeight: 600, color: C.text }}>{SOURCE_LABELS[s.srcId]}</span>
+                      <span style={{ fontSize: 12 }}>{s.direction === "up" ? "↑" : s.direction === "down" ? "↓" : "→"}</span>
+                      {s.chg3w != null && <span style={{ ...font.mono, fontSize: 10, fontWeight: 700, color: s.chg3w >= 0 ? "#059669" : "#dc2626" }}>{s.chg3w >= 0 ? "+" : ""}{s.chg3w}%</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Cross-group comparison toggle */}
+            {verticals.length >= 2 && (
+              <div style={{ marginTop: 16 }}>
+                <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 8 }}>Compare groups side-by-side</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+                  {verticals.filter(v => v.id !== activeVert.id).map(v => {
+                    const isComp = compareGroups.includes(v.id);
+                    return (
+                      <button key={v.id} onClick={() => setCompareGroups(prev => isComp ? prev.filter(x => x !== v.id) : [...prev, v.id].slice(-1))} style={{ ...font.sans, fontSize: 11, fontWeight: 600, padding: "5px 12px", borderRadius: 6, border: isComp ? `2px solid ${v.color || C.cyan}` : `1px solid ${C.borderLight}`, background: isComp ? (v.color || C.cyan) + "12" : "transparent", color: isComp ? (v.color || C.cyan) : C.textSec, cursor: "pointer" }}>
+                        {v.name}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Side-by-side comparison */}
+                {compareGroups.length > 0 && (() => {
+                  const compVert = verticals.find(v => v.id === compareGroups[0]);
+                  if (!compVert) return null;
+                  const compConv = convergenceData[compVert.id];
+                  return (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, padding: "14px 0" }}>
+                      {[activeVert, compVert].map(v => {
+                        const c = v.id === activeVert.id ? conv : compConv;
+                        return (
+                          <div key={v.id} style={{ background: C.nested, borderRadius: 10, padding: "12px 14px", border: `1px solid ${C.borderLight}`, borderTop: `3px solid ${v.color || C.cyan}` }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                              <span style={{ ...font.sans, fontSize: 13, fontWeight: 700, color: C.text }}>{v.name}</span>
+                              <ConvergenceBadge verdict={c?.verdict || "INSUFFICIENT DATA"} />
+                            </div>
+                            {sourceIds.filter(srcId => vertHasKeywords(v, srcId)).map(srcId => {
+                              const data = buildChartData(v.id, srcId);
+                              const sig = c?.signals?.find(s => s.srcId === srcId);
+                              return (
+                                <div key={srcId} style={{ marginBottom: 8 }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                    <span style={{ ...font.sans, fontSize: 10, fontWeight: 600, color: SOURCE_COLORS[srcId] }}>{SOURCE_LABELS[srcId]}</span>
+                                    {sig?.chg3w != null && <span style={{ ...font.mono, fontSize: 10, fontWeight: 700, color: sig.chg3w >= 0 ? "#059669" : "#dc2626" }}>{sig.chg3w >= 0 ? "+" : ""}{sig.chg3w}%</span>}
+                                  </div>
+                                  {data.length >= 2 ? (
+                                    <div style={{ height: 60 }}>
+                                      <ResponsiveContainer>
+                                        <LineChart data={data} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
+                                          <YAxis hide domain={zoomedYDomain(data.map(d => d.value_smooth ?? d.value))} allowDataOverflow />
+                                          <Line type="monotone" dataKey={data[0]?.value_smooth != null ? "value_smooth" : "value"} stroke={SOURCE_COLORS[srcId]} strokeWidth={1.5} dot={false} />
+                                        </LineChart>
+                                      </ResponsiveContainer>
+                                    </div>
+                                  ) : <div style={{ height: 60, display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ ...font.sans, fontSize: 9, color: C.textMuted }}>No data</span></div>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+    </Card>
+  );
 }
 
 function OverlayChart({ selectedKeys, allHistories, sources, verticals }) {
@@ -2846,7 +3324,7 @@ function LaborMacroPanel({ onAfterLoad }) {
 
 // ── SIGNAL PANEL (redesigned) ────────────────────────────────────────────────
 
-function SignalPanel({ source, verticals, signalResults, loading, errors, onFetch, onUpdateKeywords, overlaySelected, onToggleOverlay, tsHistoryByVertical, historyProgress, onBackfillHistory, onBackfillSignal, demoTheirStack }) {
+function SignalPanel({ source, verticals, signalResults, loading, errors, onFetch, onUpdateKeywords, overlaySelected, onToggleOverlay, tsHistoryByVertical, historyProgress, onBackfillHistory, onBackfillSignal, demoTheirStack, onEditGroup }) {
   const [expandedVert, setExpandedVert] = useState(null);
   const [showChart, setShowChart] = useState(null);
   const [showInfo, setShowInfo] = useState(false);
@@ -3057,17 +3535,19 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
               {/* Expanded: keywords + items */}
               {isExp && (
                 <div className="fade-in" style={{padding:"12px 22px 16px",background:C.nested,borderTop:`1px solid ${C.borderLight}`}}>
-                  {/* Keywords */}
+                  {/* Keywords (read-only — edit via group bar above) */}
                   <div style={{marginBottom:12}}>
-                    <div style={{...font.sans,fontSize:11,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>Active Keywords</div>
-                    <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                      {Object.entries(kw).map(([field,vals])=>{
-                        const arr=Array.isArray(vals)?vals:[vals];
-                        return(<div key={field} style={{display:"flex",alignItems:"flex-start",gap:12}}>
-                          <span style={{...font.sans,fontSize:11,fontWeight:700,color:C.textSec,minWidth:130,paddingTop:5}}>{kwLabel[field]||field}</span>
-                          <ChipEditor items={arr} onChange={nv=>onUpdateKeywords(v.id,source.id,field,nv)} color={C.cyan} placeholder="Add keyword…"/>
-                        </div>);
-                      })}
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                      <span style={{...font.sans,fontSize:11,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:"0.06em"}}>Active Keywords</span>
+                      <button onClick={()=>onEditGroup?.(v.id)} style={{...font.sans,fontSize:10,fontWeight:600,color:C.cyan,background:"none",border:"none",cursor:"pointer",textDecoration:"underline",padding:0}}>Edit in group bar</button>
+                    </div>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                      {Object.entries(kw).flatMap(([,vals])=>(Array.isArray(vals)?vals:[vals]).filter(Boolean)).map((kw2,i)=>(
+                        <span key={i} style={{...font.sans,fontSize:11,padding:"3px 10px",borderRadius:6,background:C.white,border:`1px solid ${C.borderLight}`,color:C.textSec}}>{kw2}</span>
+                      ))}
+                      {Object.entries(kw).flatMap(([,vals])=>(Array.isArray(vals)?vals:[vals]).filter(Boolean)).length===0&&(
+                        <span style={{...font.sans,fontSize:11,color:C.textMuted,fontStyle:"italic"}}>No keywords set</span>
+                      )}
                     </div>
                   </div>
 
@@ -4322,7 +4802,7 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
     <div style={{marginBottom:14}}>
       <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:8}}>Signal importance (weights)</div>
       <div style={{...font.sans,fontSize:11,color:C.textSec,marginBottom:10,lineHeight:1.45}}>
-        How much each data source contributes to the composite demand score.
+        Relative importance of each data source when evaluating signals.
       </div>
       {config.sources.map((src,si)=>{
         const pct=Math.round((src.weight||0)*100);
@@ -4365,7 +4845,7 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
 
   const githubContent=(<div>
     <div style={{...font.sans,fontSize:12,color:C.textSec,marginBottom:10}}>
-      Add repos per signal group for GitHub historical analysis (owner/repo). Tier controls weighting in the composite GitHub score.
+      Add repos per signal group for GitHub historical analysis (owner/repo). Tier controls relative importance.
     </div>
     {config.verticals.map((v)=> {
       const list = githubWatchlists[v.id] || [];
@@ -4477,7 +4957,7 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
         { icon: "code", color: C.green, title: "GitHub Repos", desc: "Active repositories matching your keywords." },
         { icon: "bot", color: C.purple, title: "Claude Code Attribution", desc: "GitHub commits with Claude co-author signatures." },
         { icon: "database", color: C.amber, title: "Hugging Face Leaderboard", desc: "Model download volumes by AI company. No key required." },
-        { icon: "barChart", color: C.orange, title: "Composite Scoring & Stages", desc: "Weighted composite score (0\u2013100) per tracking group." },
+        { icon: "barChart", color: C.orange, title: "Signal Stages", desc: "Pipeline stage classification per tracking group." },
       ].map((item, i) => (
         <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
           <div style={{flexShrink:0,width:32,height:32,borderRadius:8,background:item.color+"14",display:"flex",alignItems:"center",justifyContent:"center",marginTop:2}}>
@@ -4566,12 +5046,12 @@ export default function App() {
   const [allHistories,setAllHistories]=useState({});
   const [addingGroup,setAddingGroup]=useState(false);
   const [newGroupName,setNewGroupName]=useState("");
+  const [editingGroupId,setEditingGroupId]=useState(null);
   const [tsHistoryByVertical,setTsHistoryByVertical]=useState({});
   const [historyProgress,setHistoryProgress]=useState({active:false,verticalId:null,current:0,total:0,label:""});
   const [crossCorr,setCrossCorr]=useState(()=>ld(crossCorrKey(),[]));
   const [patternNotes,setPatternNotes]=useState({});
   const [annotations,setAnnotations]=useState(()=>getAnnotations());
-  const [showAnnotationForm,setShowAnnotationForm]=useState(null);
   const [historyOutdated,setHistoryOutdated]=useState({});
   const [githubWatchlists,setGithubWatchlists]=useState({});
   const [githubSelectedVert,setGithubSelectedVert]=useState(null);
@@ -4628,8 +5108,8 @@ export default function App() {
     try { cur = JSON.parse(localStorage.getItem(briefStorageKey(wk)) || "null"); } catch {}
     if (cur?.content_markdown) {
       setBriefWeek(wk);
-      setBriefContent(cur.content_markdown);
-      setBriefBaseForDiff(cur.first_content_markdown || cur.content_markdown);
+      setBriefContent(sanitizeBriefOutput(cur.content_markdown));
+      setBriefBaseForDiff(sanitizeBriefOutput(cur.first_content_markdown || cur.content_markdown));
       setBriefSnapshot(cur.data_snapshot || null);
     }
     const rows = [];
@@ -5407,9 +5887,7 @@ export default function App() {
       return {
         name: v.name,
         keywords: v.keywords,
-        composite_score: comp.score || 0,
         pipeline_stage: { index: stage.index + 1, label: stage.name, description: stage.description || "" },
-        score_breakdown: Object.entries(comp.breakdown || {}).map(([k,b]) => ({ source: b?.source?.name || k, raw_score: b?.score || 0, weight: b?.weight || 0 })),
         signals: {
           job_postings: {
             current_count: jobCount,
@@ -5469,14 +5947,10 @@ export default function App() {
     const hfHist = getSignalHistory("hf_total");
     const hfTimeSeries = buildTimeSeries(hfHist);
 
-    const avgComposite = verticalsCtx.length ? Math.round(verticalsCtx.reduce((s,v)=>s+v.composite_score,0)/verticalsCtx.length) : 0;
-    const maxComposite = verticalsCtx.length ? Math.max(...verticalsCtx.map(v=>v.composite_score)) : 0;
-    const minComposite = verticalsCtx.length ? Math.min(...verticalsCtx.map(v=>v.composite_score)) : 0;
-
     const fingerprint = JSON.stringify(Object.keys(signalResults).sort().map((k) => [k, signalResults[k]?.count ?? 0]));
 
     // Compute threshold-flagged signals: which metrics crossed the user's brief thresholds this week
-    const bt = cfg.briefThresholds || { theirstack: 8, google_trends: 10, github_repos: 5, claude_attrib: 5, hf_downloads: 10, composite: 8 };
+    const bt = cfg.briefThresholds || { theirstack: 8, google_trends: 10, github_repos: 5, claude_attrib: 5, hf_downloads: 10 };
     const flaggedSignals = [];
     const quietSignals = [];
     verticalsCtx.forEach(v => {
@@ -5545,7 +6019,6 @@ export default function App() {
         instruction: "Anchor macro and news commentary to the calendar window around generated_at. Separate verified facts from plausible mechanisms.",
       },
       total_verticals_tracked: verticalsCtx.length,
-      composite_score_summary: { average: avgComposite, highest: maxComposite, lowest: minComposite, spread: maxComposite - minComposite },
       verticals: verticalsCtx,
       threshold_flagged_signals: {
         thresholds_used: bt,
@@ -5623,51 +6096,73 @@ export default function App() {
       if (!apiKey) throw new Error("Missing VITE_ANTHROPIC_API_KEY");
       const stockTickers = ["MSFT", "AAPL", "NVDA", "GOOGL", "META", "PLTR", "ANTH"];
       const aiCompanies = ["Anthropic", "OpenAI", "Google DeepMind", "Meta AI", "xAI", "Mistral", "Cohere", "Databricks", "Scale AI", "Palantir"];
-      const systemPrompt = `You are a senior market intelligence analyst writing for investment professionals. Direct, concise, opinionated. No filler, no hedge-speak.
+      const systemPrompt = `You are a senior market intelligence analyst at a top-tier hedge fund writing an internal weekly signal brief. Your readers are portfolio managers who make allocation decisions based on this document. Every sentence must earn its place.
 
-USE WEB SEARCH to get current stock prices for ${stockTickers.join(", ")} and major AI news from the past 2 weeks.
+ABSOLUTE RULES — VIOLATING THESE INVALIDATES THE BRIEF:
+1. NEVER include URLs, links, citations, footnotes, source lists, or references of any kind. No [text](url), no "Source:", no "according to [article]". Write with authority — state facts directly.
+2. NEVER use phrases like "according to reports", "sources indicate", "based on web search". State the fact or don't include it.
+3. NEVER include a SOURCES section. The brief is self-contained.
+4. Write clean prose. No markdown links. No parenthetical citations. No reference numbers.
+5. Be SHORT. Target 1.5 printed pages. Every word must carry weight.
+6. Use 3-week change as the primary signal metric. Week-over-week is secondary confirmation.
+7. ONLY write about signals marked "crossed: true" in threshold_flagged_signals. Quiet signals get one line max in the 60-second summary.
+8. If ZERO signals are flagged, produce only REGIME + 60 SECONDS + STOCK PULSE. Skip everything else.
 
-CRITICAL RULES:
-- ONLY write about signals marked "crossed: true" in threshold_flagged_signals. Quiet signals get ONE line max.
-- If ZERO flagged, keep brief very short — macro/news only.
-- Use 3-week change as primary metric. Be SHORT — 2 printed pages max.
-- Each flagged signal has a "conviction" rating: HIGH (3+ independent sources confirming), MEDIUM (2 sources), or SPECULATIVE (1 source). Show this rating.
+USE WEB SEARCH to gather current stock prices for ${stockTickers.join(", ")} and the 3-5 most significant AI industry developments from the past 2 weeks. Synthesize findings into your own analysis — do not quote or cite the sources.
 
-OUTPUT FORMAT — ALL CAPS headers separated by ━━━ lines, **bold** for key numbers:
+OUTPUT FORMAT — use ## headers, ━━━ separators, **bold** for key numbers:
 
-1. REGIME — One line. Based on macro_labor_context (Chicago Fed nowcast, FRED unemployment, financial stress, yield curve): classify current macro as EXPANSION, SOFTENING, or CONTRACTION RISK. Every signal that follows must be interpreted through this regime lens. A job posting surge in Contraction Risk is a different signal than the same surge in Expansion.
+## REGIME
+One line. EXPANSION, SOFTENING, or CONTRACTION RISK. Based on macro data provided (Chicago Fed, unemployment, financial stress, yield curve). Then 2-3 sentences on what this means for interpreting every signal that follows.
 
-2. THE WEEK IN 60 SECONDS — 4-5 bullets. Concrete numbers. What you'd text your CIO.
+## THE WEEK IN 60 SECONDS
+4-5 bullets. Hard numbers. What you'd say in an elevator with your CIO. Format: "● Signal: **number** (direction), implication in one clause."
 
-3. STOCK PULSE — ${stockTickers.join(", ")}: price, weekly %, 1-line lean. Use web search.
+## STOCK PULSE
+For ${stockTickers.join(", ")}: ticker, price, weekly % change, one opinionated sentence on positioning. Format as a clean list, one line per ticker. Include Anthropic private market price if findable.
 
-4. FLAGGED SIGNALS — For EACH flagged signal:
-   - Conviction: [HIGH/MEDIUM/SPECULATIVE] — how many independent sources confirm this move
-   - What moved: 3-week %, magnitude vs threshold, direction
-   - Forward projection: Given this signal's historical lead time, what does it imply for the next 1-3 quarters? Use signal_interpretation_guide lead/lag data. GitHub repo acceleration leads enterprise adoption by 6-18 months. Job posting stage shifts lead revenue by 1-2 quarters. Google Trends spikes lead procurement cycles by 3-9 months. Translate the signal into a forward-looking implication automatically.
-   - Regime context: How does the current macro regime modify this signal's interpretation?
+## FLAGGED SIGNALS
+One block per flagged signal. Structure each as:
+**[Group Name] — [Signal Type]** | Conviction: HIGH/MEDIUM/SPECULATIVE
+- Movement: state the 3-week % change, the threshold it crossed, and whether this is acceleration or deceleration
+- Forward implication: translate this signal into what it means for the next 1-3 quarters. Job postings lead revenue by 1-2 quarters. GitHub activity leads enterprise adoption by 6-18 months. Trends lead procurement by 3-9 months.
+- Regime lens: one sentence on how the current macro regime modifies interpretation
 
-5. MACRO & NEWS — 3-5 developments. Connect to signals.
+## CONVICTION CALLS
+Only if HIGH conviction exists (3+ independent sources confirming same direction). Each call:
+- **Thesis** in one sentence
+- **Evidence**: which signals converge and what the numbers are
+- **Timing**: when this thesis should manifest in earnings/revenue
+- **Exposed equities**: specific tickers (MSFT, NVDA, etc.) and notable privates, weighted by signal strength
 
-6. CONVICTION CALLS — ONLY escalate to a conviction call at HIGH conviction (3+ corroborating sources). For each call:
-   - Thesis + evidence + timing
-   - Vendor implications: Name the exposed equities. Not "healthcare AI is accelerating" but "primary beneficiaries: Nuance/Microsoft (MSFT), Oracle Health (ORCL) — weight by deployment stage." Name specific public tickers AND notable privates.
+## WHAT WE GOT WRONG
+If prior week data is provided: review each prior conviction call. Score as CONFIRMED, EVOLVING, or WRONG with one sentence of evidence. If no prior brief exists, omit this section entirely.
 
-7. WHAT WE GOT WRONG — If prior_week_brief data is provided, review last week's conviction calls. Did the flagged signals continue or reverse? Did vendor calls hold? Score each prior call as CONFIRMED, EVOLVING, or WRONG. One paragraph. If no prior brief exists, skip this section.
+## RISKS
+Each risk must trace directly to a specific flagged signal from this week. No generic risks. If job postings in healthcare AI are flagged, the risk is regulatory overhang on SaMD or Epic renewal cycles — not "AI regulation may change." 2-3 risks max.
 
-8. RISKS — MUST be specific to this week's flagged signals. If healthcare job postings are flagged, risks should address regulatory overhang on SaMD, Epic contract cycles, CMS reimbursement. If developer tools are flagged, risks should address open-source commoditization, pricing pressure. NO generic "macro uncertainty" or "AI regulation might change." Every risk must trace to a specific flagged signal.`;
+EXAMPLE OF IDEAL TONE AND DENSITY:
+## REGIME
+SOFTENING — Unemployment ticking to **4.5%**, financial stress low at **-0.24**, yield curve positive. Labor cooling but not contracting. AI hiring acceleration in this backdrop signals defensive capability building before potential freezes.
+
+## THE WEEK IN 60 SECONDS
+● General AI jobs: **+15%** 3-week, driven by ML engineer and platform roles — budget commitment phase
+● Agentic AI search interest: **-33%** 3-week crash — hype cycle peaked, enterprise rejected pilot ROI
+● Meta: **$135B** 2026 capex guidance, Muse Spark launch driving **+4%** stock move
+● NVDA: **+1.7%** on sustained datacenter demand despite competition fears`;
 
       const flaggedCount = (ctx.threshold_flagged_signals?.flagged || []).length;
       const quietCount = ctx.threshold_flagged_signals?.quiet_count || 0;
       const priorBriefNote = ctx.prior_week_brief ? `\nPRIOR WEEK (${ctx.prior_week_brief.week}) CONVICTION CALLS for retrospective:\n${ctx.prior_week_brief.conviction_calls_text}\n` : "\nNo prior week brief available — skip WHAT WE GOT WRONG section.\n";
       const convictionNote = Object.keys(ctx.conviction_ratings || {}).length > 0 ? `\nCONVICTION RATINGS:\n${Object.entries(ctx.conviction_ratings).map(([v, r]) => `${v}: ${r.rating} (${r.confirming_sources.join(", ")}) — ${r.direction}`).join("\n")}\n` : "";
-      const userPrompt = `Week: ${ctx.week} | ${ctx.generated_at}
-${flaggedCount} signals flagged. ${quietCount} quiet.
-${flaggedCount === 0 ? "NO signals crossed threshold — keep brief very short, macro/news only." : `Focus on ${flaggedCount} flagged signals. Everything else one line.`}
+      const userPrompt = `Week: ${ctx.week} | Generated: ${ctx.generated_at}
+${flaggedCount} signals flagged across thresholds. ${quietCount} below threshold (quiet).
+${flaggedCount === 0 ? "ZERO flags — produce REGIME + 60 SECONDS + STOCK PULSE only. Skip all other sections." : `Deep-dive the ${flaggedCount} flagged signals. Quiet signals get one summary line max.`}
 ${convictionNote}${priorBriefNote}
+SIGNAL DATA (do NOT cite this as a source — synthesize into your analysis):
 ${JSON.stringify(ctx, null, 1)}
 
-Search for current stock prices for ${stockTickers.join(", ")} and top 3-5 AI news stories. Name specific vendor tickers in conviction calls.`;
+FINAL REMINDER: No URLs. No links. No citations. No source lists. No "[text](url)" patterns. No "Source:" lines. Write clean authoritative prose. Search the web for stock prices and AI news, then write about what you found without referencing where you found it.`;
 
 
 
@@ -5685,7 +6180,7 @@ Search for current stock prices for ${stockTickers.join(", ")} and top 3-5 AI ne
           max_tokens: 8000,
           system: systemPrompt,
           messages: [{ role: "user", content: userPrompt }],
-          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 8 }],
+          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }],
         }),
       });
       if (!res.ok) {
@@ -5693,26 +6188,8 @@ Search for current stock prices for ${stockTickers.join(", ")} and top 3-5 AI ne
         throw new Error(`Claude API ${res.status}: ${txt.slice(0, 180)}`);
       }
       const js = await res.json();
-      const webSources = [];
-      (js?.content || []).forEach(block => {
-        if (block.type === "web_search_tool_result") {
-          (block.content || []).forEach(r => {
-            if (r.type === "web_search_result" && r.url) webSources.push({ url: r.url, title: r.title || "" });
-          });
-        }
-      });
-      let text = (js?.content || []).filter(c => c.type === "text").map(c => {
-        let t = c.text || "";
-        if (c.citations?.length) {
-          const cites = c.citations.filter(ci => ci.url).map(ci => `[${ci.title || ci.url}](${ci.url})`);
-          if (cites.length) t += "\n" + cites.join(" | ");
-        }
-        return t;
-      }).join("\n").trim();
-      if (webSources.length > 0) {
-        const unique = [...new Map(webSources.map(s => [s.url, s])).values()].slice(0, 15);
-        text += "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nSOURCES\n" + unique.map((s, i) => `${i + 1}. [${s.title || s.url}](${s.url})`).join("\n");
-      }
+      let text = (js?.content || []).filter(c => c.type === "text").map(c => c.text || "").join("\n").trim();
+      text = sanitizeBriefOutput(text);
       if (!text) throw new Error("Claude returned empty content");
       text = text.replace(/^```(?:html)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
       const existing = ld(briefStorageKey(wk), null) || (()=>{try{return JSON.parse(localStorage.getItem(briefStorageKey(wk))||"null");}catch{return null;}})();
@@ -5866,23 +6343,69 @@ Search for current stock prices for ${stockTickers.join(", ")} and top 3-5 AI ne
         )}
 
         {/* ─── Group bar ─── */}
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            {config.verticals.map(v=>(<Badge key={v.id} color={v.color||C.cyan} bg={(v.color||C.cyan)+"14"} size="sm">{v.name}</Badge>))}
-            {addingGroup?(
-              <div style={{display:"flex",gap:4,alignItems:"center"}}>
-                <input ref={addRef} value={newGroupName} onChange={e=>setNewGroupName(e.target.value)} placeholder="Group name" style={{width:160,fontSize:12,padding:"4px 8px"}}
-                  onKeyDown={e=>{if(e.key==="Enter"&&newGroupName.trim()){addGroup(newGroupName.trim());setNewGroupName("");setAddingGroup(false);}if(e.key==="Escape"){setAddingGroup(false);setNewGroupName("");}}}/>
-                <Btn variant="primary" size="sm" onClick={()=>{if(newGroupName.trim()){addGroup(newGroupName.trim());setNewGroupName("");setAddingGroup(false);}}}>Add</Btn>
-              </div>
-            ):<Btn variant="ghost" size="sm" onClick={()=>setAddingGroup(true)}>+ Add group</Btn>}
-          </div>
-          {overlaySelected.length>0&&(
-            <div style={{display:"flex",alignItems:"center",gap:6}}>
-              <span style={{...font.sans,fontSize:11,color:C.textMuted}}>{overlaySelected.length} selected for overlay</span>
-              <Btn variant="ghost" size="sm" onClick={()=>setOverlaySelected([])}>Clear</Btn>
+        <div style={{marginBottom:14}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              {config.verticals.map(v=>{
+                const isEditing = editingGroupId === v.id;
+                return(<button key={v.id} onClick={()=>setEditingGroupId(isEditing?null:v.id)} style={{...font.sans,fontSize:12,fontWeight:600,padding:"5px 14px",borderRadius:8,cursor:"pointer",border:isEditing?`2px solid ${v.color||C.cyan}`:`1px solid ${(v.color||C.cyan)+"40"}`,background:isEditing?(v.color||C.cyan)+"18":"transparent",color:isEditing?(v.color||C.cyan):C.text,transition:"all .15s",outline:"none"}}>{v.name}</button>);
+              })}
+              {addingGroup?(
+                <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                  <input ref={addRef} value={newGroupName} onChange={e=>setNewGroupName(e.target.value)} placeholder="Group name" style={{width:160,fontSize:12,padding:"4px 8px"}}
+                    onKeyDown={e=>{if(e.key==="Enter"&&newGroupName.trim()){addGroup(newGroupName.trim());setNewGroupName("");setAddingGroup(false);}if(e.key==="Escape"){setAddingGroup(false);setNewGroupName("");}}}/>
+                  <Btn variant="primary" size="sm" onClick={()=>{if(newGroupName.trim()){addGroup(newGroupName.trim());setNewGroupName("");setAddingGroup(false);}}}>Add</Btn>
+                </div>
+              ):<Btn variant="ghost" size="sm" onClick={()=>setAddingGroup(true)}>+ Add group</Btn>}
             </div>
-          )}
+            {overlaySelected.length>0&&(
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{...font.sans,fontSize:11,color:C.textMuted}}>{overlaySelected.length} selected for overlay</span>
+                <Btn variant="ghost" size="sm" onClick={()=>setOverlaySelected([])}>Clear</Btn>
+              </div>
+            )}
+          </div>
+
+          {/* Expanded keyword editor for selected group */}
+          {editingGroupId && (()=>{
+            const v = config.verticals.find(vt=>vt.id===editingGroupId);
+            if (!v) return null;
+            const sourceKwConfig = [
+              { sourceId: "theirstack", label: "Job Postings (TheirStack)", fields: { titleKeywords: "Title keywords", descriptionKeywords: "Description keywords" } },
+              { sourceId: "google_trends", label: "Google Trends", fields: { keywords: "Search terms" } },
+              { sourceId: "github_repos", label: "GitHub Repos", fields: { keywords: "Search query" } },
+              { sourceId: "claude_attrib", label: "Claude Attribution", fields: { keywords: "Search query" } },
+            ];
+            return(
+              <Card className="fade-in" style={{marginTop:10,padding:"14px 18px",borderLeft:`3px solid ${v.color||C.cyan}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:v.color||C.cyan}}/>
+                    <span style={{...font.sans,fontSize:14,fontWeight:700,color:C.text}}>{v.name}</span>
+                    <span style={{...font.sans,fontSize:11,color:C.textMuted}}>— keywords across all sources</span>
+                  </div>
+                  <Btn variant="ghost" size="sm" onClick={()=>setEditingGroupId(null)}>Close</Btn>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
+                  {sourceKwConfig.map(({sourceId,label,fields})=>(
+                    <div key={sourceId} style={{padding:"10px 12px",background:C.nested,borderRadius:8,border:`1px solid ${C.borderLight}`}}>
+                      <div style={{...font.sans,fontSize:11,fontWeight:700,color:C.textSec,marginBottom:8}}>{label}</div>
+                      {Object.entries(fields).map(([field,fieldLabel])=>{
+                        const vals = v.keywords?.[sourceId]?.[field] || [];
+                        const arr = Array.isArray(vals) ? vals : [vals];
+                        return(
+                          <div key={field} style={{marginBottom:6}}>
+                            <div style={{...font.sans,fontSize:10,color:C.textMuted,marginBottom:3}}>{fieldLabel}</div>
+                            <ChipEditor items={arr} onChange={nv=>updateKeywords(v.id,sourceId,field,nv)} color={v.color||C.cyan} placeholder="Add…"/>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            );
+          })()}
         </div>
 
         {/* Overlay chart */}
@@ -5903,7 +6426,6 @@ Search for current stock prices for ${stockTickers.join(", ")} and top 3-5 AI ne
               { key: "github_repos", label: "GitHub Repos" },
               { key: "claude_attrib", label: "Claude Attribution" },
               { key: "hf_downloads", label: "HuggingFace" },
-              { key: "composite", label: "Composite" },
             ].map(({ key, label }) => {
               const bt = config.briefThresholds || {};
               const val = bt[key] ?? 10;
@@ -5933,6 +6455,23 @@ Search for current stock prices for ${stockTickers.join(", ")} and top 3-5 AI ne
           </div>
         </Card>
 
+        {/* ─── Signal Convergence Panel ─── */}
+        {config.verticals.length > 0 && (
+          <SignalConvergencePanel
+            verticals={config.verticals}
+            sources={config.sources}
+            signalResults={signalResults}
+          />
+        )}
+
+        {/* ─── Team Notes ─── */}
+        <TeamNotesPanel
+          annotations={annotations}
+          onAdd={(ann) => setAnnotations(addAnnotation(ann))}
+          onDelete={(id) => setAnnotations(deleteAnnotation(id))}
+          verticals={config.verticals}
+        />
+
         {/* ─── Per-group signal metrics (each row = one source × your groups & keywords) ─── */}
         <div style={{marginBottom:10}}>
           <div style={{...font.sans,fontSize:13,fontWeight:700,color:C.text}}>Tracking-group metrics</div>
@@ -5959,6 +6498,7 @@ Search for current stock prices for ${stockTickers.join(", ")} and top 3-5 AI ne
                 historyProgress={historyProgress}
                 onBackfillHistory={(vid)=>loadFullHistory(vid,true)}
                 onBackfillSignal={(vid,sid)=>backfillSignalSource(vid,sid)}
+                onEditGroup={(vid)=>{setEditingGroupId(vid);window.scrollTo({top:0,behavior:"smooth"});}}
               />
             ))}
           </div>
@@ -6019,7 +6559,7 @@ Search for current stock prices for ${stockTickers.join(", ")} and top 3-5 AI ne
             </div>
             {briefHistory.map((b)=>(
               <div key={b.key} style={{padding:"10px 10px",border:`1px solid ${C.borderLight}`,borderRadius:10,marginBottom:8,cursor:"pointer"}}
-                onClick={()=>{setBriefWeek(b.week);setBriefContent(b.content_markdown||"");setBriefBaseForDiff(b.first_content_markdown||b.content_markdown||"");setBriefSnapshot(b.data_snapshot||null);setBriefOpen(true);setBriefHistoryOpen(false);}}>
+                onClick={()=>{setBriefWeek(b.week);setBriefContent(sanitizeBriefOutput(b.content_markdown||""));setBriefBaseForDiff(sanitizeBriefOutput(b.first_content_markdown||b.content_markdown||""));setBriefSnapshot(b.data_snapshot||null);setBriefOpen(true);setBriefHistoryOpen(false);}}>
                 <div style={{fontSize:12,fontWeight:700,color:C.text}}>{b.week}</div>
                 <div style={{fontSize:11,color:C.textMuted}}>{new Date(b.generated_at).toLocaleString()}</div>
               </div>
