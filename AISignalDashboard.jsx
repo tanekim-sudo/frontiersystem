@@ -4,7 +4,17 @@
 // ══════════════════════════════════════════════════════════════════════════════
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, ComposedChart, Bar, Area, ReferenceLine, ReferenceDot, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from "recharts";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, ComposedChart, Bar, Area, ReferenceLine, ReferenceDot, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, CartesianGrid } from "recharts";
+import { computeEarningsTranscriptLayer2 } from "./lib/earnings/transcriptLayer2.js";
+import {
+  attachParsedQuarters,
+  sortEarningsChronologically,
+  ensureCrossQuarterFairness,
+  attachCompanyZScores,
+  getQoQPeer,
+  getYoYPeer,
+  compareFairMetrics,
+} from "./lib/earnings/earningsCompareMetrics.js";
 
 const PFX = "sid_v3_";
 const HSPFX = "aitracker_";
@@ -1118,6 +1128,9 @@ function sanitizeBriefOutput(text) {
   text = text.replace(/^\s*[|,;]\s*$/gm, "");
   // Clean excess blank lines
   text = text.replace(/\n{3,}/g, "\n\n");
+  // Collapse duplicated SEO-style titles (e.g. "| News |" loops) and exact phrase repeats
+  text = text.replace(/(?:\s*\|\s*[^|\n]{1,50}){4,}/g, " ");
+  text = text.replace(/(.{30,100})(?:\s+\1){2,}/gi, "$1");
   return text.trim();
 }
 
@@ -1202,7 +1215,7 @@ function simpleMarkdownToHtml(md) {
     if (t.startsWith("## ")) { flush(); out.push(`<h2 style="font:700 16px/1.3 ${F};margin:24px 0 10px;color:#111827">${esc(t.slice(3))}</h2>`); continue; }
     if (t.startsWith("# ")) { flush(); out.push(`<h1 style="font:700 20px/1.2 ${F};margin:0 0 12px;color:#111827;letter-spacing:-0.02em">${esc(t.slice(2))}</h1>`); continue; }
     if (/^━+$/.test(t) || t === "---") { flush(); out.push(`<hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0" />`); continue; }
-    if (t.startsWith("• ") || t.startsWith("- ")) { flush(); out.push(`<div style="display:flex;gap:8px;margin:0 0 8px;font:400 14px/1.65 ${F};color:#1f2937"><span style="color:#9ca3af;flex-shrink:0;font-size:8px;margin-top:7px">●</span><span>${esc(t.slice(2)).replace(/\*\*(.+?)\*\*/g, "<strong style=\"font-weight:600\">$1</strong>")}</span></div>`); continue; }
+    if (t.startsWith("• ") || t.startsWith("- ") || t.startsWith("* ")) { flush(); out.push(`<div style="display:flex;gap:8px;margin:0 0 8px;font:400 14px/1.65 ${F};color:#1f2937"><span style="color:#9ca3af;flex-shrink:0;font-size:8px;margin-top:7px">●</span><span>${esc(t.slice(2)).replace(/\*\*(.+?)\*\*/g, "<strong style=\"font-weight:600\">$1</strong>")}</span></div>`); continue; }
     para.push(t);
   }
   flush();
@@ -1528,30 +1541,42 @@ function buildAnalysisSectionsHtml(text) {
 }
 function BriefSnapshotCharts({ ctx }) {
   if (!ctx?.verticals?.length) return null;
+  const fmtJobY = (v) => {
+    if (v == null || !Number.isFinite(v)) return "";
+    if (Math.abs(v) >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
+    if (Math.abs(v) >= 1000) return `${(v / 1000).toFixed(0)}k`;
+    return String(Math.round(v));
+  };
   return (
-    <div style={{ marginTop: 18, paddingTop: 18, borderTop: `1px solid ${C.border}` }}>
-      <div style={{ ...font.sans, fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>
+    <div style={{ marginTop: 22, paddingTop: 20, borderTop: `1px solid ${C.border}` }}>
+      <div style={{ ...font.sans, fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
         Signal trend charts
+      </div>
+      <div style={{ ...font.sans, fontSize: 11, color: C.textSec, lineHeight: 1.45, marginBottom: 14 }}>
+        Snapshots from when this brief was generated. Each group uses its own vertical scale (jobs can be monthly totals or recent points) — compare <strong style={{ color: C.text }}>shape and direction</strong>, not the absolute level across groups.
       </div>
       {ctx.verticals.map((v) => {
         const mon = v.theirstack_historical?.recent_monthly || [];
-        const jobData = mon.length >= 2
+        const jobMonthly = mon.length >= 2;
+        const jobData = jobMonthly
           ? mon.map((m) => ({ x: m.month?.slice(2) || m.month, y: m.count || 0 }))
           : (v.signals?.job_postings?.time_series?.recent_values || []).map((p, i) => ({ x: String(i), y: p.value || 0 }));
         const trendData = (v.signals?.google_trends?.time_series?.recent_values || []).map((p, i) => ({ x: (p.date || "").slice(5, 10) || String(i), y: p.value || 0 }));
         return (
-          <div key={v.name} style={{ marginBottom: 14, padding: 12, background: C.nested, borderRadius: 10, border: `1px solid ${C.border}` }}>
-            <div style={{ ...font.sans, fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 6 }}>{v.name}</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <div key={v.name} style={{ marginBottom: 14, padding: 14, background: C.nested, borderRadius: 10, border: `1px solid ${C.border}` }}>
+            <div style={{ ...font.sans, fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 2 }}>{v.name}</div>
+            <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginBottom: 10 }}>Jobs: {jobMonthly ? "monthly counts" : "recent snapshots"} · Trends: index 0–100</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, minHeight: 100 }}>
               <div>
-                <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>Jobs</div>
+                <div style={{ fontSize: 10, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>Job postings</div>
                 {jobData.length >= 2 ? (
-                  <div style={{ width: "100%", height: 72 }}>
+                  <div style={{ width: "100%", height: 96 }}>
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={jobData} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
-                        <XAxis dataKey="x" tick={{ fontSize: 9 }} stroke={C.border} />
-                        <YAxis width={32} tick={{ fontSize: 9 }} stroke={C.border} />
-                        <Tooltip />
+                      <LineChart data={jobData} margin={{ top: 6, right: 6, bottom: 6, left: 2 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={C.borderLight} vertical={false} />
+                        <XAxis dataKey="x" tick={{ fontSize: 10, fill: C.textMuted }} stroke={C.border} />
+                        <YAxis width={40} tick={{ fontSize: 10, fill: C.textMuted }} stroke={C.border} tickFormatter={fmtJobY} />
+                        <Tooltip contentStyle={{ fontSize: 12 }} />
                         <Line type="monotone" dataKey="y" stroke={C.cyan} strokeWidth={2} dot={false} name="Jobs" />
                       </LineChart>
                     </ResponsiveContainer>
@@ -1561,14 +1586,15 @@ function BriefSnapshotCharts({ ctx }) {
                 )}
               </div>
               <div>
-                <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>Google Trends</div>
+                <div style={{ fontSize: 10, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>Google Trends</div>
                 {trendData.length >= 2 ? (
-                  <div style={{ width: "100%", height: 72 }}>
+                  <div style={{ width: "100%", height: 96 }}>
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={trendData} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
-                        <XAxis dataKey="x" tick={{ fontSize: 9 }} stroke={C.border} />
-                        <YAxis width={32} tick={{ fontSize: 9 }} stroke={C.border} />
-                        <Tooltip />
+                      <LineChart data={trendData} margin={{ top: 6, right: 6, bottom: 6, left: 2 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={C.borderLight} vertical={false} />
+                        <XAxis dataKey="x" tick={{ fontSize: 10, fill: C.textMuted }} stroke={C.border} />
+                        <YAxis width={36} tick={{ fontSize: 10, fill: C.textMuted }} stroke={C.border} domain={["auto", "auto"]} />
+                        <Tooltip contentStyle={{ fontSize: 12 }} />
                         <Line type="monotone" dataKey="y" stroke={C.blue} strokeWidth={2} dot={false} name="Trends" />
                       </LineChart>
                     </ResponsiveContainer>
@@ -1584,22 +1610,141 @@ function BriefSnapshotCharts({ ctx }) {
     </div>
   );
 }
+
+/** Join single newlines inside prose so diff blocks are not one broken clause per line. */
+function mergeSoftBreaksForBrief(text) {
+  if (!text) return "";
+  const lines = String(text).split(/\r?\n/);
+  const out = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const isHdr = /^#{1,3}\s/.test(trimmed);
+    const isBullet = /^[-•*]\s/.test(trimmed);
+    const isRule = /^━+$|^---+/.test(trimmed);
+    if (isHdr || isBullet || isRule) {
+      out.push(trimmed);
+      continue;
+    }
+    const last = out[out.length - 1];
+    if (
+      last != null &&
+      !/^#{1,3}\s/.test(last) &&
+      !/^[-•*]\s/.test(last) &&
+      !/^━+$|^---+$/.test(last)
+    ) {
+      const joinable =
+        !/[.!?:…]\s*$/.test(last) &&
+        /^[a-z(`"'“‘—–-]/.test(trimmed) &&
+        !/^[A-Z][a-z]+\s+[A-Z]/.test(trimmed);
+      if (joinable) {
+        out[out.length - 1] = `${last} ${trimmed}`;
+        continue;
+      }
+    }
+    out.push(trimmed);
+  }
+  return out.join("\n");
+}
+
+function splitBriefParagraphs(md) {
+  return mergeSoftBreaksForBrief(sanitizeBriefOutput(md || ""))
+    .split(/\n\s*\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** Word overlap score in [0, 1] — cheap stand-in for “same paragraph”. */
+function briefParagraphSimilarity(a, b) {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const wa = new Set(
+    a
+      .toLowerCase()
+      .replace(/[^\w\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 2)
+  );
+  const wb = new Set(
+    b
+      .toLowerCase()
+      .replace(/[^\w\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 2)
+  );
+  if (!wa.size && !wb.size) return a.trim() === b.trim() ? 1 : 0;
+  if (!wa.size || !wb.size) return 0;
+  let inter = 0;
+  for (const w of wa) if (wb.has(w)) inter++;
+  return (2 * inter) / (wa.size + wb.size);
+}
+
+/**
+ * Map each new paragraph to the best unused old paragraph (not index-aligned).
+ * Avoids false “everything changed” when a paragraph is inserted or removed.
+ */
+function alignBriefParagraphsForDiff(oldParas, newParas) {
+  const usedOld = new Set();
+  const rows = [];
+  for (const pNew of newParas) {
+    let bestJ = -1;
+    let bestScore = 0;
+    for (let j = 0; j < oldParas.length; j++) {
+      if (usedOld.has(j)) continue;
+      const s = briefParagraphSimilarity(pNew, oldParas[j]);
+      if (s > bestScore) {
+        bestScore = s;
+        bestJ = j;
+      }
+    }
+    const matched = bestJ >= 0 && bestScore >= 0.62;
+    if (matched) usedOld.add(bestJ);
+    const oldText = matched ? oldParas[bestJ] : "";
+    const changed = !matched || pNew !== oldText;
+    rows.push({ text: pNew, changed, status: !matched ? "new" : changed ? "revised" : "same" });
+  }
+  const removed = [];
+  for (let j = 0; j < oldParas.length; j++) {
+    if (!usedOld.has(j)) removed.push(oldParas[j]);
+  }
+  return { rows, removed };
+}
+
 function paragraphDiffHtml(oldText, newText) {
-  const clean = (t) => sanitizeBriefOutput(t || "");
-  const oldP = clean(oldText).split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
-  const newP = clean(newText).split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
-  const fmt = (raw) => {
-    let s = escapeHtml(raw);
-    s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-    s = s.replace(/^## (.+)$/gm, '<div style="font-weight:700;font-size:15px;text-transform:uppercase;letter-spacing:0.04em;margin:18px 0 6px;color:#111827">$1</div>');
-    s = s.replace(/\n/g, "<br/>");
-    return s;
-  };
-  return newP.map((p, i) => {
-    const changed = p !== (oldP[i] || "");
-    const bg = changed ? "background:#fff7ed;border-left:3px solid #f59e0b;padding-left:12px;padding-right:8px;" : "";
-    return `<div style="margin:0 0 14px;line-height:1.7;${bg}">${fmt(p)}</div>`;
-  }).join("");
+  const F = "Inter,system-ui,-apple-system,sans-serif";
+  const oldP = splitBriefParagraphs(oldText);
+  const newP = splitBriefParagraphs(newText);
+  const { rows, removed } = alignBriefParagraphsForDiff(oldP, newP);
+  const legend =
+    `<div style="font:500 12px/1.5 ${F};color:#4b5563;margin:0 0 20px;padding:12px 14px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px">` +
+    `<strong style="color:#111827">How to read this diff</strong> — Blocks are matched by <em>content</em>, not position, so edits do not falsely highlight everything below an insertion. ` +
+    `<span style="border-left:3px solid #f59e0b;padding-left:8px;margin-left:4px">Amber bar</span> = new or revised section; plain = unchanged since the first saved version of this week.</div>`;
+  const blocks = rows
+    .map(({ text, changed, status }) => {
+      const inner = simpleMarkdownToHtml(text);
+      if (!changed) {
+        return `<div style="margin:0 0 12px;padding:2px 0">${inner}</div>`;
+      }
+      const label =
+        status === "new"
+          ? `<div style="font:600 9px/1 ${F};text-transform:uppercase;letter-spacing:0.06em;color:#b45309;margin:0 0 8px">New in this version</div>`
+          : `<div style="font:600 9px/1 ${F};text-transform:uppercase;letter-spacing:0.06em;color:#b45309;margin:0 0 8px">Revised</div>`;
+      return (
+        `<div style="margin:0 0 16px;padding:14px 16px 14px 18px;background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0">` +
+        label +
+        `<div style="font:400 14px/1.7 ${F};color:#1f2937">${inner}</div></div>`
+      );
+    })
+    .join("");
+  let tail = "";
+  if (removed.length) {
+    const rInner = removed.map((t) => simpleMarkdownToHtml(t)).join("");
+    tail =
+      `<details style="margin-top:8px;font:${F}"><summary style="font:600 11px/1.4 ${F};color:#6b7280;cursor:pointer;user-select:none">` +
+      `${removed.length} section${removed.length > 1 ? "s" : ""} removed since first save</summary>` +
+      `<div style="margin-top:10px;padding:12px 14px;background:#f3f4f6;border-radius:8px;border:1px solid #e5e7eb;font:400 13px/1.65 ${F};color:#6b7280">${rInner}</div></details>`;
+  }
+  return `<div style="max-width:720px;margin:0 auto">${legend}${blocks}${tail}</div>`;
 }
 function escapeHtml(s) {
   return String(s || "")
@@ -2090,7 +2235,7 @@ const SOURCE_INFO = {
   },
   claude_attrib: {
     metric: "GitHub commits with AI co-author signatures (last 7 days)",
-    how: 'GET to GitHub Search API /search/commits — searches for "Co-Authored-By: Claude" in commit messages within the past 7 days.',
+    how: 'GET to GitHub Search API /search/commits — searches for "Co-Authored-By: Claude" in commit messages. The big number on each **tracking group** row is GitHub\'s `total_count` for **that group\'s query only** (we do **not** add counts across groups). Live **Refresh** uses a rolling **~7-day** committer-date window in the query template. **History / growth chart** stores **one point per ISO week** (weekly backfill or snapshot) — so the chart can look jumpy vs. the 7d headline: different windows, GitHub index lag, and early weeks with partial coverage. Volatility is normal: org-wide commit bursts, merge commits, keyword narrowing/broadening, API rate limits, and GitHub search freshness all move `total_count` without a single "error" in your setup.',
     investment: "AI-attributed commits are a direct measure of AI coding tool penetration into real development workflows. Growth here tracks the actual productization of AI assistants — not just interest, but daily usage. Accelerating attribution rates signal that AI coding tools are reaching 'default tool' status, which directly impacts: (1) developer productivity metrics in earnings calls, (2) seat expansion for AI coding platforms, (3) compute demand for inference at scale. This is the most concrete 'AI is being used' signal vs. 'AI is being talked about'.",
     leadLag: "0–3 months. This is the most real-time signal. Attribution rates directly reflect current tool usage. Revenue impact for AI coding platforms (Anthropic, GitHub/Microsoft) is nearly immediate — seat counts expand within the same quarter. Compute demand impact (cloud providers) follows within 1 quarter.",
     movements: {
@@ -2106,13 +2251,13 @@ const SOURCE_INFO = {
 /** Short, visible blurbs for all teammates — what the number is and how it ties to AI demand. */
 const SOURCE_METRIC_BLURB = {
   theirstack:
-    "US job postings matching your keywords.",
+    "Job posting counts from TheirStack for this group’s keywords — absolute hires signal, not normalized.",
   google_trends:
-    "Google search interest (0–100) for your keywords.",
+    "Google Trends **index 0–100** for this group’s keywords (relative to that keyword’s peak in the chart window — not search volume, not additive across groups).",
   github_repos:
-    "Active repos matching your keywords.",
+    "GitHub **repository** search hit count for this group’s keywords in the pushed-date range — not commits.",
   claude_attrib:
-    "Claude co-authored commits (last 7 days).",
+    "GitHub **commit** search: `total_count` of commits whose message matches `Co-Authored-By: Claude` (plus optional keyword filters) — **rolling ~7 days** on Refresh; weekly points in history.",
   historical:
     "Historical hiring momentum from backfill data.",
   githubHistorical:
@@ -2317,7 +2462,7 @@ function zoomedYDomain(values) {
   return [Math.max(0, Math.floor(min - pad)), Math.ceil(max + pad)];
 }
 
-function SignalHistoryChart({ signalKey, color, label }) {
+function SignalHistoryChart({ signalKey, color, label, sourceId }) {
   const [sigRange, setSigRange] = useState("1y");
   const [smooth, setSmooth] = useState(true);
   const raw = getSignalHistory(signalKey);
@@ -2404,6 +2549,12 @@ function SignalHistoryChart({ signalKey, color, label }) {
             activeDot={{r:5,fill:color}} name={label} />
         </LineChart>
       </ResponsiveContainer>
+      {sourceId === "claude_attrib" && (
+        <div style={{ ...font.sans, fontSize: 9, color: C.textMuted, marginTop: 6, lineHeight: 1.4 }}>
+          Each point is GitHub <span style={{ ...font.mono, fontSize: 9, color: C.textSec }}>total_count</span> for that snapshot’s commit search (often a different window than the ~7d headline after Refresh).
+          The faint line is raw API readings; real commit bursts, merge waves, index freshness, and query changes all move the count — that is expected volatility, not a broken chart.
+        </div>
+      )}
     </div>
   );
 }
@@ -2526,17 +2677,6 @@ function SignalConvergencePanel({ verticals, sources, signalResults }) {
     return sanitized.length >= 4 ? smoothEMA(sanitized, "value", 0.15) : sanitized;
   }, [filterByRange]);
 
-  // Normalize to percentage change from start for comparison
-  const buildNormalizedData = useCallback((vertId, srcId) => {
-    const data = buildChartData(vertId, srcId);
-    if (data.length < 2) return [];
-    const base = data[0]?.value || data[0]?.value_smooth || 1;
-    return data.map(d => ({
-      ...d,
-      pctFromStart: Math.round(((( d.value_smooth ?? d.value) - base) / Math.max(base, 1)) * 100 * 10) / 10,
-    }));
-  }, [buildChartData]);
-
   const activeGroup = selectedGroup || (verticals.length > 0 ? verticals[0].id : null);
   const activeVert = verticals.find(v => v.id === activeGroup);
 
@@ -2640,48 +2780,6 @@ function SignalConvergencePanel({ verticals, sources, signalResults }) {
               })}
             </div>
 
-            {/* Normalized overlay — all signals on one chart */}
-            <div style={{ background: C.white, borderRadius: 10, padding: "14px 16px", border: `1px solid ${C.borderLight}`, marginBottom: 16 }}>
-              <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 4 }}>Normalized overlay — % change from period start</div>
-              <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginBottom: 10 }}>All signals on one scale. Convergence = lines moving together. Divergence = lines splitting apart.</div>
-              {(() => {
-                const activeSrcIds = sourceIds.filter(srcId => vertHasKeywords(activeVert, srcId));
-                const allNorm = {};
-                const allTs = new Set();
-                activeSrcIds.forEach(srcId => {
-                  const nd = buildNormalizedData(activeVert.id, srcId);
-                  nd.forEach(d => allTs.add(d._ts));
-                  allNorm[srcId] = nd;
-                });
-                const sortedTs = [...allTs].sort((a, b) => a - b);
-                if (sortedTs.length < 2) return <div style={{ height: 80, display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ ...font.sans, fontSize: 11, color: C.textMuted }}>Insufficient data for overlay</span></div>;
-                const merged = sortedTs.map(ts => {
-                  const row = { _ts: ts };
-                  activeSrcIds.forEach(srcId => {
-                    const closest = allNorm[srcId]?.reduce((best, d) => (!best || Math.abs(d._ts - ts) < Math.abs(best._ts - ts) ? d : best), null);
-                    if (closest && Math.abs(closest._ts - ts) < 7 * 86400000) row[srcId] = closest.pctFromStart;
-                  });
-                  return row;
-                });
-                return (
-                  <div style={{ height: 200 }}>
-                    <ResponsiveContainer>
-                      <LineChart data={merged} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
-                        <XAxis dataKey="_ts" type="number" scale="time" domain={["dataMin", "dataMax"]} tickFormatter={ts => formatChartDateShort(new Date(ts).toISOString())} tick={{ fontSize: 9, fill: C.textMuted }} interval="preserveStartEnd" tickCount={6} />
-                        <YAxis tick={{ fontSize: 9, fill: C.textMuted }} width={40} tickFormatter={v => `${v}%`} />
-                        <ReferenceLine y={0} stroke={C.border} strokeDasharray="3 3" />
-                        <Tooltip contentStyle={{ fontSize: 10, borderRadius: 8, ...font.sans }} labelFormatter={ts => formatChartDate(new Date(ts).toISOString())} formatter={(v, name) => [`${v}%`, SOURCE_LABELS[name] || name]} />
-                        <Legend wrapperStyle={{ fontSize: 10 }} formatter={v => SOURCE_LABELS[v] || v} />
-                        {activeSrcIds.map(srcId => (
-                          <Line key={srcId} type="monotone" dataKey={srcId} stroke={SOURCE_COLORS[srcId]} strokeWidth={2} dot={false} connectNulls name={srcId} />
-                        ))}
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                );
-              })()}
-            </div>
-
             {/* Actionable interpretation */}
             {conv && conv.signals.length >= 2 && (
               <div style={{ background: conv.verdict.includes("STRONG") ? (conv.dominant === "up" ? "#f0fdf4" : "#fef2f2") : "#fffbeb", borderRadius: 10, padding: "14px 16px", border: `1px solid ${conv.verdict.includes("STRONG") ? (conv.dominant === "up" ? "#bbf7d0" : "#fecaca") : "#fde68a"}` }}>
@@ -2735,46 +2833,96 @@ function SignalConvergencePanel({ verticals, sources, signalResults }) {
                   })}
                 </div>
 
-                {/* Side-by-side comparison */}
+                {/* Side-by-side comparison — shared calendar window (matches time range selector above) */}
                 {compareGroups.length > 0 && (() => {
                   const compVert = verticals.find(v => v.id === compareGroups[0]);
                   if (!compVert) return null;
                   const compConv = convergenceData[compVert.id];
+                  const nowMs = Date.now();
+                  const windowDays = { "1m": 30, "3m": 90, "6m": 180, "1y": 365 }[timeRange] || 90;
+                  const windowMs = windowDays * 86400000;
+                  const domainStart = nowMs - windowMs;
+                  const domainEnd = nowMs;
+                  const windowLabel = timeRange === "1m" ? "Last 30 days" : timeRange === "3m" ? "Last 90 days" : timeRange === "6m" ? "Last 180 days" : "Last 365 days";
+                  const domainStartIso = new Date(domainStart).toISOString();
+                  const domainEndIso = new Date(domainEnd).toISOString();
                   return (
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, padding: "14px 0" }}>
-                      {[activeVert, compVert].map(v => {
-                        const c = v.id === activeVert.id ? conv : compConv;
-                        return (
-                          <div key={v.id} style={{ background: C.nested, borderRadius: 10, padding: "12px 14px", border: `1px solid ${C.borderLight}`, borderTop: `3px solid ${v.color || C.cyan}` }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                              <span style={{ ...font.sans, fontSize: 13, fontWeight: 700, color: C.text }}>{v.name}</span>
-                              <ConvergenceBadge verdict={c?.verdict || "INSUFFICIENT DATA"} />
-                            </div>
-                            {sourceIds.filter(srcId => vertHasKeywords(v, srcId)).map(srcId => {
-                              const data = buildChartData(v.id, srcId);
-                              const sig = c?.signals?.find(s => s.srcId === srcId);
-                              return (
-                                <div key={srcId} style={{ marginBottom: 8 }}>
-                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                    <span style={{ ...font.sans, fontSize: 10, fontWeight: 600, color: SOURCE_COLORS[srcId] }}>{SOURCE_LABELS[srcId]}</span>
-                                    {sig?.chg3w != null && <span style={{ ...font.mono, fontSize: 10, fontWeight: 700, color: sig.chg3w >= 0 ? "#059669" : "#dc2626" }}>{sig.chg3w >= 0 ? "+" : ""}{sig.chg3w}%</span>}
-                                  </div>
-                                  {data.length >= 2 ? (
-                                    <div style={{ height: 60 }}>
-                                      <ResponsiveContainer>
-                                        <LineChart data={data} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
-                                          <YAxis hide domain={zoomedYDomain(data.map(d => d.value_smooth ?? d.value))} allowDataOverflow />
-                                          <Line type="monotone" dataKey={data[0]?.value_smooth != null ? "value_smooth" : "value"} stroke={SOURCE_COLORS[srcId]} strokeWidth={1.5} dot={false} />
-                                        </LineChart>
-                                      </ResponsiveContainer>
+                    <div style={{ padding: "14px 0" }}>
+                      <div style={{ ...font.sans, fontSize: 11, color: C.text, marginBottom: 10, padding: "10px 12px", background: C.white, borderRadius: 8, border: `1px solid ${C.borderLight}`, lineHeight: 1.5 }}>
+                        <span style={{ fontWeight: 800, letterSpacing: "0.04em", color: C.textSec }}>SHARED TIMELINE</span>
+                        <span style={{ color: C.textMuted, margin: "0 6px" }}>·</span>
+                        <strong>{windowLabel}</strong>
+                        <span style={{ color: C.textMuted }}> (same as Signal Convergence range selector)</span>
+                        <div style={{ ...font.mono, fontSize: 10, color: C.textSec, marginTop: 6 }}>
+                          {formatChartDate(domainStartIso)} → {formatChartDate(domainEndIso)}
+                        </div>
+                        <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4 }}>
+                          Both columns use this identical X-axis window so sparklines align in calendar time. % values are 3-week change (not axis scale).
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="ec-compare-chart-grid">
+                        {[activeVert, compVert].map((v) => {
+                          const c = v.id === activeVert.id ? conv : compConv;
+                          return (
+                            <div key={v.id} style={{ background: C.nested, borderRadius: 10, padding: "12px 14px", border: `1px solid ${C.borderLight}`, borderTop: `3px solid ${v.color || C.cyan}`, minWidth: 0 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                                <span style={{ ...font.sans, fontSize: 13, fontWeight: 700, color: C.text }}>{v.name}</span>
+                                <ConvergenceBadge verdict={c?.verdict || "INSUFFICIENT DATA"} />
+                              </div>
+                              {sourceIds.filter((srcId) => vertHasKeywords(v, srcId)).map((srcId) => {
+                                const data = buildChartData(v.id, srcId);
+                                const sig = c?.signals?.find((s) => s.srcId === srcId);
+                                const dk = data[0]?.value_smooth != null ? "value_smooth" : "value";
+                                return (
+                                  <div key={srcId} style={{ marginBottom: 10 }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                                      <span style={{ ...font.sans, fontSize: 10, fontWeight: 600, color: SOURCE_COLORS[srcId] }}>{SOURCE_LABELS[srcId]}</span>
+                                      {sig?.chg3w != null && (
+                                        <span style={{ ...font.mono, fontSize: 10, fontWeight: 700, color: sig.chg3w >= 0 ? "#059669" : "#dc2626" }} title="Approx. change over last 3 weeks of data — independent of chart time window">
+                                          {sig.chg3w >= 0 ? "+" : ""}{sig.chg3w}% <span style={{ ...font.sans, fontWeight: 500, color: C.textMuted }}>3w</span>
+                                        </span>
+                                      )}
                                     </div>
-                                  ) : <div style={{ height: 60, display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ ...font.sans, fontSize: 9, color: C.textMuted }}>No data</span></div>}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        );
-                      })}
+                                    {data.length >= 2 ? (
+                                      <div style={{ height: 78, width: "100%" }}>
+                                        <ResponsiveContainer width="100%" height={78}>
+                                          <LineChart data={data} margin={{ top: 2, right: 4, bottom: 2, left: 0 }}>
+                                            <XAxis
+                                              dataKey="_ts"
+                                              type="number"
+                                              scale="time"
+                                              domain={[domainStart, domainEnd]}
+                                              tickFormatter={(ts) => formatChartDateShort(new Date(ts).toISOString())}
+                                              tick={{ fontSize: 7, fill: C.textMuted }}
+                                              stroke={C.borderLight}
+                                              tickLine={false}
+                                              axisLine={{ stroke: C.borderLight }}
+                                              interval="preserveStartEnd"
+                                              minTickGap={28}
+                                              height={22}
+                                            />
+                                            <YAxis hide domain={zoomedYDomain(data.map((d) => d[dk]))} allowDataOverflow />
+                                            <Tooltip
+                                              contentStyle={{ fontSize: 10, borderRadius: 8, ...font.sans, border: `1px solid ${C.border}` }}
+                                              labelFormatter={(ts) => formatChartDate(new Date(ts).toISOString())}
+                                              formatter={(val) => [Math.round(Number(val)), SOURCE_LABELS[srcId]]}
+                                            />
+                                            <Line type="monotone" dataKey={dk} stroke={SOURCE_COLORS[srcId]} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                                          </LineChart>
+                                        </ResponsiveContainer>
+                                      </div>
+                                    ) : (
+                                      <div style={{ height: 78, display: "flex", alignItems: "center", justifyContent: "center", border: `1px dashed ${C.borderLight}`, borderRadius: 6 }}>
+                                        <span style={{ ...font.sans, fontSize: 9, color: C.textMuted }}>No data in this window</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   );
                 })()}
@@ -3362,10 +3510,14 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
   const iconMap = {theirstack:"briefcase",google_trends:"trendUp",github_repos:"code",claude_attrib:"bot"};
   const iconName = iconMap[source.id] || "activity";
 
-  const totalCount = verticals.reduce((sum, v) => {
-    const res = signalResults[`${v.id}_${source.id}`];
-    return sum + (res?.count || 0);
-  }, 0);
+  /** Summing counts across tracking groups only where it is meaningful (not Claude / not Trends index). */
+  const headerSumExcluded = source.id === "claude_attrib" || source.id === "google_trends";
+  const aggregateCount = headerSumExcluded
+    ? null
+    : verticals.reduce((sum, v) => {
+        const res = signalResults[`${v.id}_${source.id}`];
+        return sum + (res?.count || 0);
+      }, 0);
 
   return (
     <Card style={{ padding:0, overflow:"hidden" }} className="signal-section fade-in-slow">
@@ -3381,10 +3533,31 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                 <Badge color={C.textMuted} size="sm">{source.cadence}</Badge>
                 {demoTheirStack && <Badge color={C.cyan} bg={C.cyanBg} size="sm" title="Demo mode — simulated data">Demo</Badge>}
               </div>
+              <div style={{ ...font.sans, fontSize: 11, color: C.textSec, marginTop: 8, maxWidth: 720, lineHeight: 1.5 }}>
+                <strong style={{ color: C.text }}>Metric:</strong> {SOURCE_METRIC_BLURB[source.id] || "See methodology."}
+                {source.id === "claude_attrib" && (
+                  <span> <strong style={{ color: C.text }}>Groups are independent</strong> — the header no longer sums them. Sharp moves usually reflect GitHub search windows, indexing, and activity spikes, not a broken dashboard.</span>
+                )}
+                {source.id === "google_trends" && (
+                  <span> <strong style={{ color: C.text }}>Header does not sum groups</strong> — each row is its own 0–100 series.</span>
+                )}
+              </div>
             </div>
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:6}}>
-            {totalCount>0&&<span style={{...font.mono,fontSize:22,fontWeight:800,color:C.cyan}}>{totalCount.toLocaleString()}</span>}
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flexShrink: 0, maxWidth: 280 }}>
+            {!headerSumExcluded && aggregateCount > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ ...font.sans, fontSize: 10, fontWeight: 600, color: C.textMuted, textAlign: "right" }}>Sum of groups</span>
+                <span style={{ ...font.mono, fontSize: 22, fontWeight: 800, color: C.cyan }}>{aggregateCount.toLocaleString()}</span>
+              </div>
+            )}
+            {headerSumExcluded && (
+              <div style={{ ...font.sans, fontSize: 10, fontWeight: 600, color: C.textMuted, textAlign: "right", lineHeight: 1.4 }}>
+                {source.id === "claude_attrib"
+                  ? "Counts are per tracking group only — not added here."
+                  : "Index is per group — not added here."}
+              </div>
+            )}
             <Btn variant="primary" size="sm" onClick={()=>onFetch(source.id)} disabled={!source.enabled||Object.values(loading).some(Boolean)}>
               {loading[source.id]?<><Spinner size={12} color="#fff"/> Fetching</>:"Refresh"}
             </Btn>
@@ -3445,7 +3618,9 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                    err ? <Badge color={C.red} bg={C.redBg} size="sm" title={err}>{err.length > 42 ? `${err.slice(0, 39)}…` : err}</Badge> :
                    res ? <div>
                      <div style={{...font.mono,fontSize:22,fontWeight:800,color:C.text,letterSpacing:"-0.03em"}}>{(res.count||0).toLocaleString()}</div>
-                     {trend!=null&&<Badge color={trend>=0?C.green:C.red} bg={trend>=0?C.greenBg:C.redBg} size="sm">{trend>=0?"+":""}{trend}%</Badge>}
+                     {source.id==="claude_attrib"&&<div style={{...font.sans,fontSize:9,color:C.textMuted,marginTop:2,lineHeight:1.25,maxWidth:118,marginLeft:"auto",marginRight:"auto"}} title="GitHub Code Search commits: total_count for this tracking group’s query only (~7d committer window on Refresh).">GitHub total_count · ~7d</div>}
+                     {source.id==="google_trends"&&<div style={{...font.sans,fontSize:9,color:C.textMuted,marginTop:2,lineHeight:1.25,maxWidth:118,marginLeft:"auto",marginRight:"auto"}} title="Normalized interest vs that keyword’s peak in the chart window — not search volume.">Trends index 0–100</div>}
+                     {trend!=null&&<Badge color={trend>=0?C.green:C.red} bg={trend>=0?C.greenBg:C.redBg} size="sm" title={source.id==="claude_attrib"?"Compared to the previous stored history point (often weekly). Can disagree with the ~7d headline right after Refresh.":undefined}>{trend>=0?"+":""}{trend}%</Badge>}
                      {source.id==="github_repos"&&res.count>100000&&<div style={{...font.sans,fontSize:9,color:C.amber,marginTop:2}} title="Very high count suggests keywords are too broad. Add more specific terms.">⚠ keywords may be too broad</div>}
                    </div> :
                    <span style={{color:C.textMuted,fontSize:13}}>No data</span>}
@@ -3498,7 +3673,7 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
               {isChart&&(
                 <div className="fade-in" style={{padding:"8px 22px 16px",background:C.nested,borderTop:`1px solid ${C.borderLight}`}}>
                   <div style={{...font.sans,fontSize:12,fontWeight:700,color:C.text,marginBottom:6}}>Growth Trend — {v.name}</div>
-                  <SignalHistoryChart key={`${key}_${histSeedVer}`} signalKey={key} color={v.color||C.cyan} label={source.name} />
+                  <SignalHistoryChart key={`${key}_${histSeedVer}`} signalKey={key} color={v.color||C.cyan} label={source.name} sourceId={source.id} />
                   {source.id === "theirstack" && !demoTheirStack && tsHist?.weekly?.length >= 4 && (
                     <div style={{marginTop:12}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
@@ -3584,10 +3759,10 @@ function SignalPanel({ source, verticals, signalResults, loading, errors, onFetc
                             )}
                             <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginTop: 6, lineHeight: 1.4 }}>
                               {source.id === "github_repos"
-                                ? "Repo count for your search terms."
+                                ? "Repository search hit count for your terms in the pushed-date range — this tracking group only."
                                 : kwArr.length > 0
-                                  ? "Claude commit count for your keywords."
-                                  : "Total Claude-attributed commits on GitHub."}
+                                  ? "Commit search: GitHub total_count matching the co-author signature and your keywords in the rolling committer-date window. This group only — counts are not added across groups."
+                                  : "Commit search: GitHub total_count matching the signature only (~7d on Refresh; weekly points in history). Large global-scale number; volatility is normal (indexing, bursts, window changes). This group only — not summed with other groups."}
                             </div>
                           </div>
                         );
@@ -3666,7 +3841,7 @@ function HuggingFaceLeaderboard({onDataChanged}) {
   return (
     <Card style={{padding:0,overflow:"hidden"}} className="fade-in-slow">
       <div style={{padding:"18px 22px 14px",background:C.white}}>
-        <SectionHeader icon={<IcoC name="database" size={18} color={C.blue}/>} title="Hugging Face Leaderboard" subtitle="Open-source model adoption and download volume by company."
+        <SectionHeader icon={<IcoC name="database" size={18} color={C.blue}/>} title="Hugging Face Leaderboard" subtitle={'Hub API download totals (top 10 models per org)—an open-source adoption proxy, not model benchmark accuracy. Hub aggregates file-access counts on its servers (see HF Hub docs: Models download stats); this dashboard re-fetches if your snapshot is older than 6 hours.'}
           badge={<Badge color={C.green} bg={C.greenBg} size="sm">Public API</Badge>}
           right={<>
             {data?.timestamp&&<span style={{...font.sans,fontSize:11,color:C.textMuted}}>{timeAgo(data.timestamp)}</span>}
@@ -3678,6 +3853,11 @@ function HuggingFaceLeaderboard({onDataChanged}) {
             <div style={{fontSize:12,lineHeight:1.6,padding:"10px 12px",background:C.cyanBg,borderRadius:8,border:`1px solid ${C.cyan}22`,color:C.text}}>
               <span style={{fontWeight:700,color:C.cyan,display:"block",marginBottom:2}}>Lead/Lag: 3–9 months</span>
               Hugging Face downloads track developer experimentation and early production deployment of open-source models. Enterprise deployment follows 1–3 quarters after download surges, as companies move from testing to production. Cloud providers embedding HF models (Azure AI Foundry: 1.7M+ models, Google Cloud CDN: 2M+ models) compress this lag.
+            </div>
+            <div style={{fontSize:11.5,lineHeight:1.6,padding:"10px 12px",background:C.nested,borderRadius:8,border:`1px solid ${C.border}`,color:C.textSec}}>
+              <span style={{fontWeight:700,color:C.text,display:"block",marginBottom:4}}>What this measures (not “model accuracy”)</span>
+              Numbers come from Hugging Face’s public <span style={{...font.mono,fontSize:10,color:C.text}}>/api/models</span> field <span style={{...font.mono,fontSize:10,color:C.text}}>downloads</span>, summed for each org’s ten most-downloaded models. Hub defines a download as certain server-side file requests (config weights, library-specific rules, GGUF, etc.—documented under Hub{' '}
+              <a href="https://huggingface.co/docs/hub/models-download-stats" target="_blank" rel="noopener noreferrer" style={{color:C.cyan,fontWeight:700}}>Models download stats</a>). That makes this a <strong style={{color:C.text}}>popularity / adoption proxy</strong>: it can miss traffic that bypasses counted files, double-count different access patterns, and it is <strong style={{color:C.text}}>not</strong> accuracy on benchmarks or real enterprise attach. Charts over time use <strong style={{color:C.text}}>snapshots stored in this app</strong> when you open the page or click Refresh—the Hub API does not expose public per-day download history for these totals. <strong style={{color:C.text}}>Update cadence:</strong> this UI auto-refetches if the last snapshot is &gt;6 hours old; Hugging Face refreshes its published counters on a backend schedule (rolling “recent period” style stats on model pages, not real-time tick-by-tick).
             </div>
             <div style={{...font.sans,fontSize:11,fontWeight:700,color:C.text,textTransform:"uppercase",letterSpacing:"0.05em",marginTop:4}}>What Movements Mean</div>
             <div style={{padding:"8px 12px",background:C.green+"06",border:`1px solid ${C.green}18`,borderRadius:8}}>
@@ -3972,6 +4152,185 @@ function EcQuoteCard({ quote, explanation, type, claimSig, specLevel }) {
   );
 }
 
+function EcLayer2Panel({ quant: quantIn, institutional }) {
+  const quant = useMemo(() => {
+    if (!quantIn) return null;
+    if (quantIn.cross_quarter_fairness) return quantIn;
+    try {
+      const c = JSON.parse(JSON.stringify(quantIn));
+      ensureCrossQuarterFairness(c);
+      return c;
+    } catch {
+      return quantIn;
+    }
+  }, [quantIn]);
+  if (!quant) return null;
+  const inst = institutional && typeof institutional === "object" ? institutional : null;
+  const conc = quant.theme_concentration || {};
+  const sent = quant.sentiment_lexicon || {};
+  const fq = quant.cross_quarter_fairness || {};
+  const seg = quant.segments || {};
+  return (
+    <div style={{ marginBottom: 20, borderRadius: 12, border: `1px solid ${C.purple}28`, overflow: "hidden", background: C.white }}>
+      <div style={{ padding: "12px 16px", background: `linear-gradient(135deg, ${C.purple}12 0%, ${C.blue}08 100%)`, borderBottom: `1px solid ${C.borderLight}` }}>
+        <div style={{ ...font.sans, fontSize: 12, fontWeight: 800, color: C.text, letterSpacing: "0.02em" }}>Layer 2 — Quant signals & institutional NLP</div>
+        <div style={{ ...font.sans, fontSize: 10.5, color: C.textSec, lineHeight: 1.5, marginTop: 4 }}>
+          Deterministic mention density, theme concentration, LM-style lexicon tone, forward-looking / uncertainty rates, and (below) an LLM read aligned with buy-side transcript workflows: topic-weighted tone, Q&A vs prepared, and AI capex vs revenue framing.
+        </div>
+      </div>
+      <div style={{ padding: "14px 16px" }}>
+        <Expandable title="Methodology & how funds use LLMs on calls" defaultOpen={false}>
+          <div style={{ ...font.sans, fontSize: 11, color: C.textSec, lineHeight: 1.65, padding: "8px 0" }}>
+            <strong style={{ color: C.text }}>Quant layer (always computed here):</strong> theme lexicons for AI/GTM/capex/risk/guidance; a compact finance sentiment word list inspired by Loughran–McDonald-style baselines; phrase lists for forward-looking and uncertain language; Herfindahl-style concentration across theme buckets; optional prepared vs Q&A split via common transcript markers.
+            <br /><br />
+            <strong style={{ color: C.text }}>Institutional context (research landscape):</strong> sell-side and quant teams have moved from pure lexicons toward LLM-based tone, materiality-weighted sentiment, and structured extraction—often with RAG over filings and multi-agent analyst-style pipelines (e.g. FinNLP / role-based agent papers, vendor research such as S&P Global Market Intelligence on lexicon-to-LLM evolution, and internal FinBERT-style encoders). This dashboard keeps your original five linguistic dimensions and adds this stack as a parallel layer—not a replacement.
+            <br /><br />
+            <strong style={{ color: C.text }}>Limits:</strong> lexicon hits ignore negation scoping; duplicate terms can co-fire; Hub-style download stats are unrelated—this block is transcript-only.
+          </div>
+        </Expandable>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginTop: 12, marginBottom: 14 }}>
+          <div style={{ padding: "10px 12px", background: C.nested, borderRadius: 10, border: `1px solid ${C.borderLight}` }}>
+            <div style={{ ...font.sans, fontSize: 9, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>Words</div>
+            <div style={{ ...font.mono, fontSize: 18, fontWeight: 800, color: C.text }}>{(quant.word_count || 0).toLocaleString()}</div>
+          </div>
+          <div style={{ padding: "10px 12px", background: C.nested, borderRadius: 10, border: `1px solid ${C.borderLight}` }}>
+            <div style={{ ...font.sans, fontSize: 9, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>AI mentions / 1k</div>
+            <div style={{ ...font.mono, fontSize: 18, fontWeight: 800, color: C.purple }}>{quant.ai_density_per_1000_words ?? "—"}</div>
+          </div>
+          <div style={{ padding: "10px 12px", background: C.nested, borderRadius: 10, border: `1px solid ${C.borderLight}` }}>
+            <div style={{ ...font.sans, fontSize: 9, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>Lexicon net / 1k (fair)</div>
+            <div style={{ ...font.mono, fontSize: 18, fontWeight: 800, color: (fq.lexicon_net_per_1000 ?? sent.net_per_1000_words ?? 0) >= 0 ? C.green : C.red }}>{fq.lexicon_net_per_1000 ?? sent.net_per_1000_words ?? "—"}</div>
+            <div style={{ ...font.sans, fontSize: 9, color: C.textMuted }}>raw net {sent.net ?? 0} (length-sensitive)</div>
+          </div>
+          <div style={{ padding: "10px 12px", background: C.nested, borderRadius: 10, border: `1px solid ${C.borderLight}` }}>
+            <div style={{ ...font.sans, fontSize: 9, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>AI % of theme hits</div>
+            <div style={{ ...font.mono, fontSize: 18, fontWeight: 800, color: C.purple }}>{fq.ai_share_of_theme_hits != null ? `${Math.round(fq.ai_share_of_theme_hits * 1000) / 10}%` : "—"}</div>
+          </div>
+          <div style={{ padding: "10px 12px", background: C.nested, borderRadius: 10, border: `1px solid ${C.borderLight}` }}>
+            <div style={{ ...font.sans, fontSize: 9, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>Fwd-looking / 1k</div>
+            <div style={{ ...font.mono, fontSize: 18, fontWeight: 800, color: C.cyan }}>{quant.forward_looking?.per_1000_words ?? "—"}</div>
+          </div>
+          <div style={{ padding: "10px 12px", background: C.nested, borderRadius: 10, border: `1px solid ${C.borderLight}` }}>
+            <div style={{ ...font.sans, fontSize: 9, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>Uncertainty / 1k</div>
+            <div style={{ ...font.mono, fontSize: 18, fontWeight: 800, color: C.amber }}>{quant.uncertainty_language?.per_1000_words ?? "—"}</div>
+          </div>
+          <div style={{ padding: "10px 12px", background: C.nested, borderRadius: 10, border: `1px solid ${C.borderLight}` }}>
+            <div style={{ ...font.sans, fontSize: 9, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>Theme concentration</div>
+            <div style={{ ...font.mono, fontSize: 14, fontWeight: 800, color: C.text, lineHeight: 1.3 }}>HHI {conc.herfindahl_hhi ?? "—"}</div>
+            <div style={{ ...font.sans, fontSize: 9, color: C.textMuted }}>norm {conc.normalized_0_1 ?? "—"} · top {conc.dominant_theme_label || "—"}</div>
+          </div>
+        </div>
+
+        <div style={{ ...font.sans, fontSize: 10, fontWeight: 700, color: C.textSec, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Theme frequency & concentration (hits · per 1k words)</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+          {(quant.themes || []).map((th) => (
+            <div key={th.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", background: C.nested, borderRadius: 8, border: `1px solid ${C.borderLight}` }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ ...font.sans, fontSize: 11, fontWeight: 700, color: C.text }}>{th.label}</div>
+                {th.top_matched_terms?.length > 0 && (
+                  <div style={{ ...font.sans, fontSize: 9, color: C.textMuted, marginTop: 2, lineHeight: 1.35 }}>
+                    Top terms: {th.top_matched_terms.map((t) => `${t.term} (${t.count})`).join(", ")}
+                  </div>
+                )}
+              </div>
+              <div style={{ ...font.mono, fontSize: 12, fontWeight: 800, color: C.blue, whiteSpace: "nowrap" }}>{th.hits} · {th.per_1000_words}/1k</div>
+            </div>
+          ))}
+        </div>
+
+        {(seg.prepared_sentiment || seg.qa_sentiment) && (
+          <div style={{ marginBottom: 14, padding: "10px 12px", background: C.cyanBg, borderRadius: 10, border: `1px solid ${C.cyan}22` }}>
+            <div style={{ ...font.sans, fontSize: 10, fontWeight: 700, color: C.cyan, marginBottom: 6 }}>Prepared vs Q&A — lexicon net (same LM-style lists)</div>
+            <div style={{ ...font.sans, fontSize: 11, color: C.textSec, lineHeight: 1.55 }}>
+              {seg.split_found ? (
+                <>
+                  <strong style={{ color: C.text }}>Prepared ({seg.prepared_word_count?.toLocaleString?.() || 0} words):</strong> net {seg.prepared_sentiment?.net ?? "—"} (pos {seg.prepared_sentiment?.positive_hits ?? 0} / neg {seg.prepared_sentiment?.negative_hits ?? 0})
+                  <br />
+                  <strong style={{ color: C.text }}>Q&A ({seg.qa_word_count?.toLocaleString?.() || 0} words):</strong> net {seg.qa_sentiment?.net ?? "—"} (pos {seg.qa_sentiment?.positive_hits ?? 0} / neg {seg.qa_sentiment?.negative_hits ?? 0})
+                  {seg.qa_vs_prepared_net_delta != null && (
+                    <><br /><strong style={{ color: C.text }}>Δ (Q&A − prepared):</strong> {seg.qa_vs_prepared_net_delta}</>
+                  )}
+                </>
+              ) : (
+                <>
+                  <strong style={{ color: C.text }}>Q&A boundary not detected</strong> — lexicon net on full call: {seg.prepared_sentiment?.net ?? "—"} (pos {seg.prepared_sentiment?.positive_hits ?? 0} / neg {seg.prepared_sentiment?.negative_hits ?? 0}). Try transcripts that include an &quot;Operator&quot; or &quot;Question-and-Answer&quot; section marker.
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {quant.ai_sentence_spotlights?.length > 0 && (
+          <div style={{ marginBottom: inst ? 14 : 0 }}>
+            <div style={{ ...font.sans, fontSize: 10, fontWeight: 700, color: C.textSec, marginBottom: 6, textTransform: "uppercase" }}>Highest AI-density sentences (lexicon proxy)</div>
+            {quant.ai_sentence_spotlights.map((row, i) => (
+              <div key={i} style={{ ...font.sans, fontSize: 11, fontStyle: "italic", color: C.text, padding: "8px 10px", marginBottom: 6, background: C.purple + "08", borderRadius: 8, borderLeft: `3px solid ${C.purple}` }}>
+                {row.sentence}
+                <span style={{ fontStyle: "normal", ...font.mono, fontSize: 9, color: C.textMuted, marginLeft: 6 }}>(hits {row.score})</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {inst && (
+          <div style={{ padding: "12px 14px", background: C.nested, borderRadius: 10, border: `1px solid ${C.purple}30` }}>
+            <div style={{ ...font.sans, fontSize: 11, fontWeight: 800, color: C.purple, marginBottom: 8 }}>LLM institutional read (materiality-aware)</div>
+            {inst.ai_investment_thesis_tone && (
+              <div style={{ marginBottom: 8 }}>
+                <span style={{ ...font.sans, fontSize: 10, fontWeight: 700, color: C.textMuted }}>AI thesis tone: </span>
+                <span style={{ ...font.sans, fontSize: 11, fontWeight: 800, color: C.text }}>{inst.ai_investment_thesis_tone}</span>
+              </div>
+            )}
+            {inst.ai_thesis_rationale && <div style={{ ...font.sans, fontSize: 11, color: C.text, lineHeight: 1.55, marginBottom: 8 }}>{inst.ai_thesis_rationale}</div>}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 8 }}>
+              {inst.prepared_remarks_ai_sentiment != null && (
+                <div style={{ ...font.sans, fontSize: 11 }}><strong>Prepared AI sentiment:</strong> <span style={{ fontWeight: 800, color: inst.prepared_remarks_ai_sentiment >= 0 ? C.green : C.red }}>{inst.prepared_remarks_ai_sentiment}</span> <span style={{ color: C.textMuted }}>(−100 bearish … +100 bullish)</span></div>
+              )}
+              {inst.qa_session_ai_sentiment != null && (
+                <div style={{ ...font.sans, fontSize: 11 }}><strong>Q&A AI sentiment:</strong> <span style={{ fontWeight: 800, color: inst.qa_session_ai_sentiment >= 0 ? C.green : C.red }}>{inst.qa_session_ai_sentiment}</span></div>
+              )}
+              {inst.forward_looking_strength_0_100 != null && (
+                <div style={{ ...font.sans, fontSize: 11 }}><strong>Forward concrete score:</strong> {inst.forward_looking_strength_0_100}/100</div>
+              )}
+            </div>
+            {inst.topic_weighted_financial_sentiment && (
+              <div style={{ ...font.sans, fontSize: 11, color: C.textSec, lineHeight: 1.5, marginBottom: 8 }}><strong style={{ color: C.text }}>Topic-weighted tone:</strong> {inst.topic_weighted_financial_sentiment}</div>
+            )}
+            {inst.ai_capex_vs_revenue_framing && (
+              <div style={{ ...font.sans, fontSize: 11, color: C.textSec, lineHeight: 1.5, marginBottom: 8 }}><strong style={{ color: C.text }}>Capex vs revenue framing:</strong> {inst.ai_capex_vs_revenue_framing}</div>
+            )}
+            {Array.isArray(inst.hedge_fund_style_flags) && inst.hedge_fund_style_flags.length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ ...font.sans, fontSize: 10, fontWeight: 700, color: C.amber, marginBottom: 4 }}>Flags (deflection / tone / dodge patterns)</div>
+                <ul style={{ margin: 0, paddingLeft: 18, ...font.sans, fontSize: 11, color: C.text, lineHeight: 1.5 }}>
+                  {inst.hedge_fund_style_flags.slice(0, 8).map((f, i) => <li key={i}>{f}</li>)}
+                </ul>
+              </div>
+            )}
+            {Array.isArray(inst.named_initiatives) && inst.named_initiatives.length > 0 && (
+              <div>
+                <div style={{ ...font.sans, fontSize: 10, fontWeight: 700, color: C.textSec, marginBottom: 4 }}>Named AI initiatives / products</div>
+                {inst.named_initiatives.slice(0, 10).map((n, i) => (
+                  <div key={i} style={{ padding: "6px 8px", marginBottom: 4, background: C.white, borderRadius: 6, border: `1px solid ${C.borderLight}` }}>
+                    <span style={{ fontWeight: 700 }}>{n.name}</span>
+                    <span style={{ ...font.sans, fontSize: 10, color: n.sentiment === "POSITIVE" ? C.green : n.sentiment === "NEGATIVE" ? C.red : C.textMuted, marginLeft: 8 }}>{n.sentiment}</span>
+                    {n.evidence_quote && <div style={{ ...font.sans, fontSize: 10, color: C.textSec, marginTop: 2, fontStyle: "italic" }}>&ldquo;{n.evidence_quote}&rdquo;</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {!inst && (
+          <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, fontStyle: "italic" }}>Re-run Analyze to populate the LLM institutional block (older saved runs may lack it).</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function EcRadarChart({ analysis, priorAnalysis }) {
   if (!analysis?.scores) return null;
   const data = EC_SCORE_DEFS.map(d => ({
@@ -4002,6 +4361,333 @@ function EcInvestmentSignalBadge({ signal }) {
   };
   const s = m[signal] || m.NEUTRAL;
   return <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 12px", borderRadius: 6, background: s.bg, color: s.fg, fontWeight: 700, fontSize: 12 }}>{s.icon} {s.label}</span>;
+}
+
+function fmtEcDelta(d) {
+  if (d == null || Number.isNaN(d)) return "—";
+  return (d > 0 ? "+" : "") + d;
+}
+
+function zBadge(z) {
+  if (z == null || Number.isNaN(z)) return null;
+  const a = Math.abs(z);
+  if (a < 1.5) return null;
+  const col = a >= 2 ? C.red : C.amber;
+  return <span style={{ ...font.mono, fontSize: 9, fontWeight: 700, color: col, marginLeft: 4 }} title="z vs other saved calls for this company">z{z > 0 ? "+" : ""}{z.toFixed(1)}</span>;
+}
+
+const EC_CHART_GRID = { stroke: C.borderLight, strokeDasharray: "3 3" };
+const EC_TT_BOX = {
+  padding: "12px 14px",
+  background: C.white,
+  border: `1px solid ${C.border}`,
+  borderRadius: 10,
+  boxShadow: "0 8px 24px rgba(28,31,38,.12)",
+  minWidth: 200,
+  ...font.sans,
+};
+
+function EcCompareTooltipL1({ active, label, payload, timeline }) {
+  if (!active || !payload?.length) return null;
+  const row = timeline?.find((r) => r.name === label);
+  const order = ["Overall", ...EC_SCORE_DEFS.map((d) => d.short)];
+  const sorted = [...payload].sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
+  return (
+    <div style={EC_TT_BOX}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: C.text, marginBottom: 2, letterSpacing: "0.02em" }}>{label}</div>
+      <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 10, ...font.mono }}>
+        {row?.words != null ? `${row.words.toLocaleString()} words` : "Layer 2 not stored · words N/A"}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {sorted.map((p) => (
+          <div key={String(p.dataKey)} style={{ display: "flex", justifyContent: "space-between", gap: 16, fontSize: 11 }}>
+            <span style={{ color: C.textSec }}>{p.name}</span>
+            <span style={{ ...font.mono, fontWeight: 700, color: p.name === "Overall" ? C.text : C.textMuted }}>
+              {p.value != null && p.value !== "" && !Number.isNaN(Number(p.value)) ? Number(p.value).toFixed(0) : "—"}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EcCompareTooltipL2({ active, label, payload, timeline }) {
+  if (!active || !payload?.length) return null;
+  const row = timeline?.find((r) => r.name === label);
+  const labelMap = {
+    aiPer1k: "AI lexicon hits / 1k words",
+    fwd1k: "Forward-looking phrases / 1k",
+    unc1k: "Uncertainty language / 1k",
+    lexNet1k: "LM-style lexicon net / 1k",
+  };
+  return (
+    <div style={EC_TT_BOX}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: C.text, marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 10, lineHeight: 1.45 }}>
+        Rates normalize for transcript length. Compare quarters on the same axes as the left panel.
+      </div>
+      {row?.words != null && (
+        <div style={{ fontSize: 10, ...font.mono, color: C.text, marginBottom: 8 }}>Transcript volume: {row.words.toLocaleString()} words</div>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {payload.map((p) => (
+          <div key={p.dataKey} style={{ display: "flex", justifyContent: "space-between", gap: 16, fontSize: 11 }}>
+            <span style={{ color: C.textSec }}>{labelMap[p.dataKey] || p.name}</span>
+            <span style={{ ...font.mono, fontWeight: 700, color: C.text }}>{p.value != null && p.value !== "" ? (typeof p.value === "number" ? (Math.abs(p.value) < 100 ? p.value.toFixed(1) : p.value.toFixed(0)) : p.value) : "—"}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** One company: chronological charts + fair-metric table with QoQ / YoY deltas. */
+function EcCompanyTemporalCompare({ company, rawEntries, color, setEcResult, setEcTab }) {
+  const withPq = attachParsedQuarters(rawEntries);
+  const unparsable = withPq.filter((e) => !e._pq);
+  const sorted = attachCompanyZScores(
+    sortEarningsChronologically(withPq).map((e) => {
+      if (!e.layer2_quant) return { ...e, layer2_quant: null };
+      try {
+        const c = JSON.parse(JSON.stringify(e.layer2_quant));
+        ensureCrossQuarterFairness(c);
+        return { ...e, layer2_quant: c };
+      } catch {
+        return { ...e, layer2_quant: e.layer2_quant };
+      }
+    }),
+  );
+  /** Same X categories for both panels (aligned fiscal periods). */
+  const unifiedTimeline = sorted.map((e) => {
+    const q = e.layer2_quant;
+    const fq = q?.cross_quarter_fairness;
+    return {
+      name: e.quarter,
+      words: q?.word_count ?? null,
+      score: e.overall_quality_score ?? 0,
+      ...Object.fromEntries(EC_SCORE_DEFS.map((d) => [d.short, e.scores?.[d.id]?.score ?? null])),
+      aiPer1k: q?.ai_density_per_1000_words ?? null,
+      lexNet1k: fq?.lexicon_net_per_1000 ?? null,
+      fwd1k: q?.forward_looking?.per_1000_words ?? null,
+      unc1k: q?.uncertainty_language?.per_1000_words ?? null,
+    };
+  });
+  const lexVals = unifiedTimeline.map((r) => r.lexNet1k).filter((v) => typeof v === "number" && !Number.isNaN(v));
+  const lexMax = lexVals.length ? Math.max(...lexVals.map((v) => Math.abs(v)), 4) : 4;
+  const rateVals = unifiedTimeline.flatMap((r) => [r.aiPer1k, r.fwd1k, r.unc1k].filter((v) => typeof v === "number"));
+  const rateMax = rateVals.length ? Math.max(...rateVals, 8) : 8;
+
+  const latest = sorted[sorted.length - 1];
+  const prev = sorted.length >= 2 ? sorted[sorted.length - 2] : null;
+  const deltaLegacy = prev ? (latest?.overall_quality_score || 0) - (prev?.overall_quality_score || 0) : null;
+  const showDualCharts = unifiedTimeline.length >= 2;
+
+  return (
+    <div style={{ marginBottom: 24, padding: 0, border: `1px solid ${C.border}`, borderRadius: 12, background: C.white, overflow: "hidden", boxShadow: "0 1px 3px rgba(28,31,38,.06)" }}>
+      <div style={{ padding: "16px 18px", borderBottom: `1px solid ${C.borderLight}`, background: `linear-gradient(180deg, ${C.nested} 0%, ${C.white} 100%)` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+          <div style={{ flex: "1 1 280px", minWidth: 0 }}>
+            <div style={{ ...font.sans, fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: "0.12em", marginBottom: 4 }}>EARNINGS TRANSCRIPT · TEMPORAL COMPARE</div>
+            <div style={{ ...font.sans, fontSize: 16, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>{company}</div>
+            <div style={{ ...font.sans, fontSize: 11, color: C.textSec, lineHeight: 1.55, marginTop: 8, maxWidth: 820 }}>
+              <strong style={{ color: C.text }}>Shared horizontal axis</strong> below = fiscal periods in chronological order (not alphabetical). <strong style={{ color: C.text }}>Left</strong> = LLM communication scores (0–100, length-agnostic). <strong style={{ color: C.text }}>Right</strong> = deterministic rates per 1,000 words (fair QoQ/YoY). Gap in a right-panel line = missing Layer 2 for that quarter (re-analyze transcript).
+            </div>
+            {unparsable.length > 0 && (
+              <div style={{ ...font.sans, fontSize: 10, color: C.amber, marginTop: 8, fontWeight: 600 }}>
+                {unparsable.length} row(s) need <strong>Q1 2025</strong>-style labels for correct ordering and YoY pairing.
+              </div>
+            )}
+          </div>
+          <div style={{ textAlign: "right", flex: "0 0 auto" }}>
+            <div style={{ ...font.sans, fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: "0.08em" }}>LATEST · OVERALL</div>
+            <div style={{ ...font.sans, fontSize: 28, fontWeight: 800, color: ecScoreColor(latest?.overall_quality_score || 0), lineHeight: 1.1 }}>{latest?.overall_quality_score || 0}</div>
+            {deltaLegacy != null && (
+              <div style={{ ...font.sans, fontSize: 11, fontWeight: 600, color: deltaLegacy > 0 ? C.green : deltaLegacy < 0 ? C.red : C.textMuted, marginTop: 4 }}>
+                {fmtEcDelta(deltaLegacy)} vs prior period
+              </div>
+            )}
+            {deltaLegacy != null && Math.abs(deltaLegacy) >= 15 && (
+              <div style={{ ...font.sans, fontSize: 10, fontWeight: 700, color: C.red, marginTop: 6 }}>Large move vs prior</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {showDualCharts && (
+        <div style={{ padding: "12px 14px 16px", background: C.white }}>
+          <div style={{ ...font.sans, fontSize: 10, fontWeight: 800, color: C.textSec, letterSpacing: "0.1em", marginBottom: 10, paddingLeft: 4 }}>
+            DUAL PANEL · SAME QUARTERS · LEFT = QUALITY SCORES · RIGHT = LEXICAL RATES
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              gap: 14,
+              alignItems: "stretch",
+            }}
+            className="ec-compare-chart-grid"
+          >
+            {/* Panel A */}
+            <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 10, overflow: "hidden", minWidth: 0, background: C.white, display: "flex", flexDirection: "column" }}>
+              <div style={{ padding: "10px 14px", background: C.nested, borderBottom: `1px solid ${C.borderLight}` }}>
+                <div style={{ ...font.sans, fontSize: 11, fontWeight: 800, color: C.text, letterSpacing: "0.06em" }}>PANEL A — LINGUISTIC QUALITY (LLM)</div>
+                <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginTop: 3, lineHeight: 1.4 }}>
+                  Vertical axis: 0–100. <span style={{ fontWeight: 700, color }}>Solid</span> = overall. <span style={{ color: C.textMuted }}>Dashed</span> = five sub-dimensions (same hue, de-emphasized).
+                </div>
+              </div>
+              <div style={{ height: 268, padding: "4px 8px 0", width: "100%" }}>
+                <ResponsiveContainer width="100%" height={260}>
+                  <LineChart data={unifiedTimeline} margin={{ top: 12, right: 8, left: 0, bottom: 8 }}>
+                    <CartesianGrid {...EC_CHART_GRID} vertical={false} />
+                    <XAxis dataKey="name" tick={{ fontSize: 9, fill: C.textSec }} stroke={C.border} tickLine={false} axisLine={{ stroke: C.border }} interval={0} angle={unifiedTimeline.length > 5 ? -32 : 0} textAnchor={unifiedTimeline.length > 5 ? "end" : "middle"} height={unifiedTimeline.length > 5 ? 52 : 28} />
+                    <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: C.textMuted }} stroke={C.border} width={36} tickLine={false} axisLine={false} ticks={[0, 25, 50, 75, 100]} />
+                    <Tooltip content={<EcCompareTooltipL1 timeline={unifiedTimeline} />} />
+                    <ReferenceLine y={50} stroke={C.borderLight} strokeDasharray="4 4" />
+                    <Legend wrapperStyle={{ fontSize: 9, paddingTop: 4 }} iconType="line" />
+                    <Line type="monotone" dataKey="score" stroke={color} strokeWidth={2.8} dot={{ fill: color, r: 4, strokeWidth: 2, stroke: "#fff" }} activeDot={{ r: 6 }} name="Overall" />
+                    {EC_SCORE_DEFS.map((d) => (
+                      <Line key={d.short} type="monotone" dataKey={d.short} stroke={color} strokeWidth={1.2} strokeDasharray="5 4" dot={false} strokeOpacity={0.22} connectNulls name={d.short} legendType="none" />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            {/* Panel B */}
+            <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 10, overflow: "hidden", minWidth: 0, background: C.white, display: "flex", flexDirection: "column" }}>
+              <div style={{ padding: "10px 14px", background: C.nested, borderBottom: `1px solid ${C.borderLight}` }}>
+                <div style={{ ...font.sans, fontSize: 11, fontWeight: 800, color: C.text, letterSpacing: "0.06em" }}>PANEL B — LEXICAL INTENSITY (RULE-BASED)</div>
+                <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginTop: 3, lineHeight: 1.45 }}>
+                  <span style={{ fontWeight: 700, color: C.text }}>Left Y:</span> hits or phrases per 1,000 words (AI, forward, uncertainty). <span style={{ fontWeight: 700, color: C.text }}>Right Y:</span> LM-style finance lexicon net per 1k (bearish ↓ / bullish ↑). Gray line = 0 net.
+                </div>
+              </div>
+              <div style={{ height: 268, padding: "4px 8px 0", width: "100%" }}>
+                <ResponsiveContainer width="100%" height={260}>
+                  <ComposedChart data={unifiedTimeline} margin={{ top: 12, right: 4, left: 0, bottom: 8 }}>
+                    <CartesianGrid {...EC_CHART_GRID} vertical={false} />
+                    <XAxis dataKey="name" tick={{ fontSize: 9, fill: C.textSec }} stroke={C.border} tickLine={false} axisLine={{ stroke: C.border }} interval={0} angle={unifiedTimeline.length > 5 ? -32 : 0} textAnchor={unifiedTimeline.length > 5 ? "end" : "middle"} height={unifiedTimeline.length > 5 ? 52 : 28} />
+                    <YAxis yAxisId="left" domain={[0, Math.ceil(rateMax * 1.15)]} tick={{ fontSize: 9, fill: C.textMuted }} stroke={C.border} width={34} tickLine={false} axisLine={false} label={{ value: "Per 1k words", angle: -90, position: "insideLeft", offset: 8, style: { fill: C.textMuted, fontSize: 9, fontWeight: 600 } }} />
+                    <YAxis yAxisId="right" orientation="right" domain={[-lexMax, lexMax]} tick={{ fontSize: 9, fill: C.textMuted }} stroke={C.border} width={34} tickLine={false} axisLine={false} label={{ value: "Lex net / 1k", angle: 90, position: "insideRight", offset: 8, style: { fill: C.textMuted, fontSize: 9, fontWeight: 600 } }} />
+                    <Tooltip content={<EcCompareTooltipL2 timeline={unifiedTimeline} />} />
+                    <ReferenceLine yAxisId="right" y={0} stroke={C.border} strokeWidth={1.5} />
+                    <Legend wrapperStyle={{ fontSize: 9, paddingTop: 4 }} iconType="line" />
+                    <Line yAxisId="left" type="monotone" dataKey="aiPer1k" name="AI / 1k" stroke={color} strokeWidth={2.6} dot={{ fill: color, r: 3.5, strokeWidth: 2, stroke: "#fff" }} connectNulls={false} activeDot={{ r: 5 }} />
+                    <Line yAxisId="left" type="monotone" dataKey="fwd1k" name="Forward / 1k" stroke={C.cyan} strokeWidth={1.8} dot={{ r: 2.5, fill: C.cyan }} connectNulls={false} />
+                    <Line yAxisId="left" type="monotone" dataKey="unc1k" name="Uncertainty / 1k" stroke={C.amber} strokeWidth={1.8} dot={{ r: 2.5, fill: C.amber }} connectNulls={false} />
+                    <Line yAxisId="right" type="monotone" dataKey="lexNet1k" name="Lex net / 1k" stroke={C.green} strokeWidth={2.4} dot={{ fill: C.green, r: 3.5, strokeWidth: 2, stroke: "#fff" }} connectNulls={false} activeDot={{ r: 5 }} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+          <div style={{ ...font.sans, fontSize: 9.5, color: C.textMuted, lineHeight: 1.5, marginTop: 12, padding: "10px 12px", background: C.nested, borderRadius: 8, border: `1px solid ${C.borderLight}` }}>
+            <strong style={{ color: C.text }}>Read across:</strong> the same quarter column applies to both panels. Use Panel A for narrative-quality regime; use Panel B for how much AI and macro language appears per unit of text (and coarse lexicon tone). Z-scores in the table below flag outliers vs this company&apos;s own saved history.
+          </div>
+        </div>
+      )}
+
+      {!showDualCharts && unifiedTimeline.length === 1 && (
+        <div style={{ padding: 20, textAlign: "center", ...font.sans, fontSize: 12, color: C.textMuted }}>
+          Add a second quarter for side-by-side trajectory charts.
+        </div>
+      )}
+
+      <div style={{ overflowX: "auto", marginTop: 0, padding: "0 14px 16px" }}>
+        <div style={{ ...font.sans, fontSize: 10, fontWeight: 700, color: C.textSec, marginBottom: 8, textTransform: "uppercase" }}>Quarter-by-quarter (fair metrics + QoQ / YoY)</div>
+        <table style={{ width: "100%", minWidth: 1100, borderCollapse: "collapse", ...font.sans, fontSize: 10 }}>
+          <thead>
+            <tr style={{ textAlign: "left", color: C.textMuted, borderBottom: `1px solid ${C.border}` }}>
+              <th style={{ padding: "6px 8px" }}>Quarter</th>
+              <th style={{ padding: "6px 8px" }}>Words</th>
+              <th style={{ padding: "6px 8px" }}>AI/1k</th>
+              <th style={{ padding: "6px 8px" }}>AI %themes</th>
+              <th style={{ padding: "6px 8px" }}>Lex+/1k</th>
+              <th style={{ padding: "6px 8px" }}>Lex−/1k</th>
+              <th style={{ padding: "6px 8px" }}>Net/1k</th>
+              <th style={{ padding: "6px 8px" }}>Fwd/1k</th>
+              <th style={{ padding: "6px 8px" }}>Unc/1k</th>
+              <th style={{ padding: "6px 8px" }}>HHI</th>
+              <th style={{ padding: "6px 8px" }}>Ov.</th>
+              <th style={{ padding: "6px 8px" }}>QoQ Δ</th>
+              <th style={{ padding: "6px 8px" }}>YoY Δ</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((e, i) => {
+              const q = e.layer2_quant;
+              const fq = q?.cross_quarter_fairness;
+              const qoqP = getQoQPeer(sorted, i);
+              const yoyP = getYoYPeer(sorted, i);
+              const dQ = qoqP ? compareFairMetrics(e, qoqP) : null;
+              const dY = yoyP ? compareFairMetrics(e, yoyP) : null;
+              return (
+                <tr key={`${e.quarter}-${i}`} style={{ borderBottom: `1px solid ${C.borderLight}`, cursor: "pointer" }} onClick={() => { setEcResult(rawEntries.find((r) => r.quarter === e.quarter && r.company === e.company) || e); setEcTab("dashboard"); }}>
+                  <td style={{ padding: "8px", fontWeight: 700, color: C.text, whiteSpace: "nowrap" }}>{e.quarter}{!e._pq ? " *" : ""}</td>
+                  <td style={{ padding: "8px", ...font.mono }}>
+                    {q?.word_count?.toLocaleString?.() ?? "—"}
+                    {zBadge(e._z?.word_count)}
+                  </td>
+                  <td style={{ padding: "8px", ...font.mono }}>
+                    {q?.ai_density_per_1000_words ?? "—"}
+                    {zBadge(e._z?.ai_density_per_1000)}
+                  </td>
+                  <td style={{ padding: "8px", ...font.mono }}>{fq?.ai_share_of_theme_hits != null ? `${Math.round(fq.ai_share_of_theme_hits * 1000) / 10}%` : "—"}</td>
+                  <td style={{ padding: "8px", ...font.mono }}>{fq?.lexicon_positive_per_1000 ?? "—"}</td>
+                  <td style={{ padding: "8px", ...font.mono }}>{fq?.lexicon_negative_per_1000 ?? "—"}</td>
+                  <td style={{ padding: "8px", ...font.mono }}>
+                    {fq?.lexicon_net_per_1000 ?? "—"}
+                    {zBadge(e._z?.lexicon_net_per_1000)}
+                  </td>
+                  <td style={{ padding: "8px", ...font.mono }}>{q?.forward_looking?.per_1000_words ?? "—"}</td>
+                  <td style={{ padding: "8px", ...font.mono }}>{q?.uncertainty_language?.per_1000_words ?? "—"}</td>
+                  <td style={{ padding: "8px", ...font.mono }}>{q?.theme_concentration?.herfindahl_hhi ?? "—"}</td>
+                  <td style={{ padding: "8px", ...font.mono, fontWeight: 800, color: ecScoreColor(e.overall_quality_score || 0) }}>{e.overall_quality_score ?? "—"}</td>
+                  <td style={{ padding: "8px", ...font.mono, fontSize: 9, lineHeight: 1.35, color: C.textSec, maxWidth: 120 }}>
+                    {!dQ ? "—" : (
+                      <>
+                        <span style={{ color: C.text }}>Ov {fmtEcDelta(dQ.overall_score)}</span>
+                        <br />
+                        AI {fmtEcDelta(dQ.ai_density_per_1000)}
+                        <br />
+                        N/1k {fmtEcDelta(dQ.lexicon_net_per_1000)}
+                      </>
+                    )}
+                  </td>
+                  <td style={{ padding: "8px", ...font.mono, fontSize: 9, lineHeight: 1.35, color: C.textSec, maxWidth: 120 }}>
+                    {!dY ? "—" : (
+                      <>
+                        <span style={{ color: C.text }}>Ov {fmtEcDelta(dY.overall_score)}</span>
+                        <br />
+                        AI {fmtEcDelta(dY.ai_density_per_1000)}
+                        <br />
+                        N/1k {fmtEcDelta(dY.lexicon_net_per_1000)}
+                      </>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))", gap: 6, marginTop: 12 }}>
+        {sorted.map((e) => (
+          <div key={e.quarter} onClick={() => { setEcResult(rawEntries.find((r) => r.quarter === e.quarter && r.company === e.company) || e); setEcTab("dashboard"); }}
+            style={{ textAlign: "center", padding: "6px 8px", borderRadius: 8, cursor: "pointer", border: `1px solid ${C.borderLight}`, background: C.nested }}>
+            <div style={{ ...font.sans, fontSize: 10, fontWeight: 600, color: C.textSec }}>{e.quarter}</div>
+            <div style={{ ...font.sans, fontSize: 16, fontWeight: 800, color: ecScoreColor(e.overall_quality_score || 0) }}>{e.overall_quality_score || 0}</div>
+            <EcInvestmentSignalBadge signal={e.key_diagnostics?.investment_signal} />
+            {e.layer2_quant && (
+              <div style={{ ...font.sans, fontSize: 9, color: C.textMuted, marginTop: 4, lineHeight: 1.35 }}>
+                AI {e.layer2_quant.ai_density_per_1000_words}/1k · net/1k {e.layer2_quant.cross_quarter_fairness?.lexicon_net_per_1000 ?? "—"}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function EarningsCallPanel() {
@@ -4046,7 +4732,9 @@ You MUST use web search to find:
 3. Any analyst commentary on this earnings call
 4. Industry context for the quarter being analyzed
 
-Analyze the transcript and score on five dimensions. Be rigorous — cite exact quotes. Return structured JSON only, no markdown, no preamble.`;
+Analyze the transcript and score on five dimensions. Be rigorous — cite exact quotes. Return structured JSON only, no markdown, no preamble.
+
+SECOND LAYER (institutional transcript NLP, in the same JSON object): Also fill "layer2_institutional" using buy-side-style judgment: (1) weight tone by financial materiality—guidance, margins, and demand matter more than generic platitudes; (2) score AI-related discussion separately in prepared remarks vs Q&A if both exist; (3) flag hedge-fund-style communication patterns (deflection, metric dodge, abrupt tone shift under analyst pressure); (4) extract named AI products/initiatives with POSITIVE/NEUTRAL/NEGATIVE tags and short evidence quotes. Align with current practice: lexicon baselines plus LLM nuance, topic importance, and your web-search context (RAG-like grounding).`;
 
       const priorCtx = ecPriorTranscript ? `\n\nPRIOR QUARTER TRANSCRIPT (for register consistency comparison):\n${ecPriorTranscript.slice(0, 8000)}` : "";
 
@@ -4111,7 +4799,18 @@ Return this exact JSON structure (no markdown fences, no text before/after — p
   },
   "highlighted_transcript": [
     {"text": "<sentence or phrase from transcript>", "classification": "<OPERATIONAL|NARRATIVE|NEUTRAL>", "signal_type": "<tense|specificity|sincerity|absorption>", "explanation": "<string>"}
-  ]
+  ],
+  "layer2_institutional": {
+    "ai_investment_thesis_tone": "<BULLISH|CONSTRUCTIVE|NEUTRAL|CAUTIOUS|BEARISH>",
+    "ai_thesis_rationale": "<2-4 sentences: AI revenue, capex, competition, regulation>",
+    "prepared_remarks_ai_sentiment": <integer -100 to 100, bullish positive for AI-related content only>,
+    "qa_session_ai_sentiment": <integer -100 to 100 or null if Q&A not found>,
+    "topic_weighted_financial_sentiment": "<1-2 sentences: which themes dominated—pricing, demand, capex, regulation, etc.>",
+    "forward_looking_strength_0_100": <integer 0-100, higher = more concrete forward statements>,
+    "hedge_fund_style_flags": ["<max 6 short strings: deflection, dodge, tone break, etc.>"],
+    "ai_capex_vs_revenue_framing": "<how management balances AI spend vs monetization>",
+    "named_initiatives": [{"name": "<string>", "sentiment": "<POSITIVE|NEUTRAL|NEGATIVE>", "evidence_quote": "<short exact quote>"}]
+  }
 }`;
 
       const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -4124,7 +4823,7 @@ Return this exact JSON structure (no markdown fences, no text before/after — p
         },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 12000,
+          max_tokens: 16000,
           system: systemPrompt,
           messages: [{ role: "user", content: userPrompt }],
           tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }],
@@ -4137,6 +4836,11 @@ Return this exact JSON structure (no markdown fences, no text before/after — p
       if (!jsonMatch) throw new Error("Claude did not return valid JSON. Response preview: " + textBlocks.slice(0, 200));
       const parsed = JSON.parse(jsonMatch[0]);
       parsed.analyzed_at = new Date().toISOString();
+      try {
+        parsed.layer2_quant = computeEarningsTranscriptLayer2(ecTranscript);
+      } catch {
+        parsed.layer2_quant = null;
+      }
       setEcResult(parsed);
       setEcTab("dashboard");
       setEcProgress(100);
@@ -4181,7 +4885,7 @@ Return this exact JSON structure (no markdown fences, no text before/after — p
           badge={ecHistory.length > 0 ? <Badge color={C.textSec} bg={C.nested} size="sm">{ecHistory.length} analyzed</Badge> : null}
         />
         <div style={{ ...font.sans, fontSize:11.5, color: C.textSec, lineHeight: 1.6, marginBottom: 10, maxWidth: 800 }}>
-          Upload or paste a full earnings call transcript. Claude analyzes the language on <strong style={{color:C.text}}>5 dimensions</strong> to score whether management is operationally grounded or narrative-managing:
+          Upload or paste a full earnings call transcript. Claude analyzes the language on <strong style={{color:C.text}}>5 dimensions</strong> (communication quality), plus <strong style={{color:C.text}}>Layer 2</strong>: deterministic theme concentration, LM-style lexicon tone, forward-looking/uncertainty density, and an institutional LLM read (AI thesis tone, Q&A vs prepared, hedge-fund-style flags).
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8, marginBottom: 12 }}>
           {[
@@ -4218,7 +4922,7 @@ Return this exact JSON structure (no markdown fences, no text before/after — p
           <IcoC name="layers" size={18} color={C.purple} />
           <div>
             <div style={{ ...font.sans, fontSize: 14, fontWeight: 700, color: C.text }}>LLM Earnings Call Analyzer</div>
-            <div style={{ ...font.sans, fontSize: 11, color: C.textMuted }}>Score management on 5 linguistic dimensions — tense, specificity, sincerity, absorption, register — with exact quote evidence</div>
+            <div style={{ ...font.sans, fontSize: 11, color: C.textMuted }}>Layer 1: five linguistic dimensions. Layer 2: quant mention/sentiment + institutional LLM transcript read.</div>
           </div>
         </div>
         <Btn size="sm" variant="ghost" onClick={() => setEcOpen(false)}>Collapse</Btn>
@@ -4374,6 +5078,8 @@ Return this exact JSON structure (no markdown fences, no text before/after — p
               </div>
             )}
 
+            <EcLayer2Panel quant={ecResult.layer2_quant} institutional={ecResult.layer2_institutional} />
+
             {/* Five score cards */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 16 }}>
               {EC_SCORE_DEFS.map(def => {
@@ -4489,58 +5195,27 @@ Return this exact JSON structure (no markdown fences, no text before/after — p
             {ecHistory.length < 2 ? (
               <div style={{ textAlign: "center", padding: "40px 20px", color: C.textMuted }}>
                 <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Analyze at least 2 transcripts to compare</div>
-                <div style={{ fontSize: 12 }}>Track the same company across quarters to detect communication quality trajectory</div>
+                <div style={{ fontSize: 12 }}>Use the same company name and <strong style={{ color: C.text }}>Q1 2025</strong>-style labels for YoY pairing and correct chronological order.</div>
               </div>
             ) : (
               <>
-                {/* Company trajectory chart */}
                 {(() => {
                   const byCompany = {};
-                  ecHistory.forEach(h => { if (!byCompany[h.company]) byCompany[h.company] = []; byCompany[h.company].push(h); });
-                  return Object.entries(byCompany).map(([company, entries]) => {
-                    const sorted = [...entries].sort((a, b) => (a.quarter || "").localeCompare(b.quarter || ""));
-                    const chartData = sorted.map(e => ({ name: e.quarter, score: e.overall_quality_score || 0, ...Object.fromEntries(EC_SCORE_DEFS.map(d => [d.short, e.scores?.[d.id]?.score || 0])) }));
-                    const color = EC_COMPANIES.find(c => c.name === company || c.id === company)?.color || C.cyan;
-                    const latest = sorted[sorted.length - 1];
-                    const prev = sorted.length >= 2 ? sorted[sorted.length - 2] : null;
-                    const delta = prev ? (latest?.overall_quality_score || 0) - (prev?.overall_quality_score || 0) : null;
-                    return (
-                      <div key={company} style={{ marginBottom: 20, padding: 16, border: `1px solid ${C.borderLight}`, borderRadius: 12, background: C.white }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                          <div>
-                            <div style={{ ...font.sans, fontSize: 14, fontWeight: 700, color: C.text }}>{company}</div>
-                            <div style={{ ...font.sans, fontSize: 11, color: C.textMuted }}>{sorted.length} transcript{sorted.length !== 1 ? "s" : ""} analyzed</div>
-                          </div>
-                          <div style={{ textAlign: "right" }}>
-                            <div style={{ ...font.sans, fontSize: 24, fontWeight: 800, color: ecScoreColor(latest?.overall_quality_score || 0) }}>{latest?.overall_quality_score || 0}</div>
-                            {delta != null && <div style={{ ...font.sans, fontSize: 11, fontWeight: 600, color: delta > 0 ? C.green : delta < 0 ? C.red : C.textMuted }}>{delta > 0 ? "+" : ""}{delta} vs prior</div>}
-                            {delta != null && Math.abs(delta) >= 15 && <div style={{ ...font.sans, fontSize: 10, fontWeight: 700, color: C.red, marginTop: 2 }}>⚠ Communication shift detected</div>}
-                          </div>
-                        </div>
-                        {chartData.length >= 2 && (
-                          <ResponsiveContainer width="100%" height={200}>
-                            <LineChart data={chartData} margin={{ top: 4, right: 10, bottom: 4, left: 4 }}>
-                              <XAxis dataKey="name" tick={{ fontSize: 11 }} stroke={C.border} />
-                              <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} stroke={C.border} width={30} />
-                              <Tooltip />
-                              <Line type="monotone" dataKey="score" stroke={color} strokeWidth={2.5} dot={{ fill: color, r: 4 }} name="Overall" />
-                              {EC_SCORE_DEFS.map(d => <Line key={d.short} type="monotone" dataKey={d.short} stroke={color} strokeWidth={1} strokeDasharray="3 3" dot={false} strokeOpacity={0.4} name={d.short} />)}
-                            </LineChart>
-                          </ResponsiveContainer>
-                        )}
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))", gap: 6, marginTop: 10 }}>
-                          {sorted.map(e => (
-                            <div key={e.quarter} onClick={() => { setEcResult(e); setEcTab("dashboard"); }}
-                              style={{ textAlign: "center", padding: "6px 8px", borderRadius: 8, cursor: "pointer", border: `1px solid ${C.borderLight}`, background: C.nested }}>
-                              <div style={{ ...font.sans, fontSize: 10, fontWeight: 600, color: C.textSec }}>{e.quarter}</div>
-                              <div style={{ ...font.sans, fontSize: 16, fontWeight: 800, color: ecScoreColor(e.overall_quality_score || 0) }}>{e.overall_quality_score || 0}</div>
-                              <EcInvestmentSignalBadge signal={e.key_diagnostics?.investment_signal} />
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
+                  ecHistory.forEach((h) => {
+                    const k = h.company || "Unknown";
+                    if (!byCompany[k]) byCompany[k] = [];
+                    byCompany[k].push(h);
                   });
+                  return Object.entries(byCompany).map(([company, entries]) => (
+                    <EcCompanyTemporalCompare
+                      key={company}
+                      company={company}
+                      rawEntries={entries}
+                      color={EC_COMPANIES.find((c) => c.name === company || c.id === company)?.color || C.cyan}
+                      setEcResult={setEcResult}
+                      setEcTab={setEcTab}
+                    />
+                  ));
                 })()}
               </>
             )}
@@ -4956,7 +5631,7 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
         { icon: "trendUp", color: C.blue, title: "Google Trends (SerpAPI)", desc: "Search interest (0\u2013100) for your keywords on Google." },
         { icon: "code", color: C.green, title: "GitHub Repos", desc: "Active repositories matching your keywords." },
         { icon: "bot", color: C.purple, title: "Claude Code Attribution", desc: "GitHub commits with Claude co-author signatures." },
-        { icon: "database", color: C.amber, title: "Hugging Face Leaderboard", desc: "Model download volumes by AI company. No key required." },
+        { icon: "database", color: C.amber, title: "Hugging Face Leaderboard", desc: "Hub API download counts (top models per org)—adoption proxy per HF’s download-stat rules, not benchmark accuracy. Re-fetches if snapshot >6h old. No key required." },
         { icon: "barChart", color: C.orange, title: "Signal Stages", desc: "Pipeline stage classification per tracking group." },
       ].map((item, i) => (
         <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
@@ -4978,7 +5653,7 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
         { title: "AI Divergence Analysis", desc: "Claude interprets divergences between co-moving signals." },
         { title: "Alert Threshold", desc: "Set a week-over-week % change threshold for divergence alerts." },
         { title: "AI Weekly Brief", desc: "Claude-generated intelligence brief with live web search." },
-        { title: "Earnings Call Analyzer", desc: "Upload a transcript for AI-powered communication quality analysis." },
+        { title: "Earnings Call Analyzer", desc: "Five-dimension linguistic score plus Layer 2: theme concentration, lexicon sentiment, forward/uncertainty rates, and buy-side-style LLM extraction." },
         { title: "Cloud Persistence", desc: "Data syncs to Supabase for team-wide access across deploys." },
         { title: "Auto-Refresh", desc: "Signals refresh automatically on their configured cadence." },
         { title: "Email Reports", desc: "Send weekly briefs to your team via EmailJS." },
@@ -6618,7 +7293,7 @@ FINAL REMINDER: No URLs. No links. No citations. No source lists. No "[text](url
                     <div style={{...font.sans,fontSize:10,letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600,color:C.textMuted,borderBottom:`1px solid #f3f4f6`,paddingBottom:10,marginBottom:16}}>
                       Diff View · {briefWeek}
                     </div>
-                    <div style={{fontFamily:"Georgia, serif",fontSize:15,lineHeight:1.75,color:C.text}} dangerouslySetInnerHTML={{ __html: paragraphDiffHtml(briefBaseForDiff, briefContent) }} />
+                    <div style={{ ...font.sans, fontSize: 14, lineHeight: 1.7, color: C.text }} dangerouslySetInnerHTML={{ __html: paragraphDiffHtml(briefBaseForDiff, briefContent) }} />
                     {briefSnapshot ? <BriefSnapshotCharts ctx={briefSnapshot} /> : null}
                   </div>
                 ) : (
