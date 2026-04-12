@@ -4,11 +4,38 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AI Demand Signal Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet" />
     <style>
       body { margin: 0; background: #f8f9fb; }
       @media (max-width: 960px) {
         .ec-compare-chart-grid {
           grid-template-columns: 1fr !important;
+        }
+      }
+      /* Weekly brief: print / reader shell */
+      @media print {
+        .brief-toolbar-print-hide {
+          display: none !important;
+        }
+        .brief-print-scope {
+          position: static !important;
+          inset: auto !important;
+          z-index: 1 !important;
+          height: auto !important;
+          min-height: 100% !important;
+          overflow: visible !important;
+          background: #fff !important;
+          display: block !important;
+        }
+        .brief-print-body {
+          padding: 0 !important;
+          background: #fff !important;
+          overflow: visible !important;
+        }
+        @page {
+          margin: 14mm;
         }
       }
     </style>

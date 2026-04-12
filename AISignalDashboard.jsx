@@ -1193,11 +1193,14 @@ function buildBriefAsciiCharts(snapshot) {
   });
   return `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nDASHBOARD TREND STRIPS (ASCII)\n${lines.join("\n")}`;
 }
-function simpleMarkdownToHtml(md) {
+function simpleMarkdownToHtml(md, opts = {}) {
   if (!md) return "";
+  const reader = !!opts.reader;
   const clean = sanitizeBriefOutput(md);
   const esc = (s) => escapeHtml(s);
   const F = "Inter,system-ui,-apple-system,sans-serif";
+  const serif = "'Source Serif 4',Georgia,serif";
+  const bodyFont = reader ? `400 16px/1.75 ${serif}` : `400 14px/1.75 ${F}`;
   const lines = String(clean).split("\n");
   const out = [];
   let para = [];
@@ -1205,17 +1208,17 @@ function simpleMarkdownToHtml(md) {
     if (!para.length) return;
     let raw = esc(para.join(" "));
     raw = raw.replace(/\*\*(.+?)\*\*/g, "<strong style=\"font-weight:600\">$1</strong>");
-    out.push(`<p style="margin:0 0 14px;line-height:1.75;color:#1f2937;font:400 14px/1.75 ${F}">${raw}</p>`);
+    out.push(`<p style="margin:0 0 ${reader ? "18px" : "14px"};line-height:1.75;color:#1f2937;font:${bodyFont}">${raw}</p>`);
     para = [];
   };
   for (const line of lines) {
     const t = line.trim();
     if (!t) { flush(); continue; }
-    if (t.startsWith("### ")) { flush(); out.push(`<h3 style="font:600 14px/1.3 ${F};margin:20px 0 8px;color:#111827">${esc(t.slice(4))}</h3>`); continue; }
-    if (t.startsWith("## ")) { flush(); out.push(`<h2 style="font:700 16px/1.3 ${F};margin:24px 0 10px;color:#111827">${esc(t.slice(3))}</h2>`); continue; }
-    if (t.startsWith("# ")) { flush(); out.push(`<h1 style="font:700 20px/1.2 ${F};margin:0 0 12px;color:#111827;letter-spacing:-0.02em">${esc(t.slice(2))}</h1>`); continue; }
+    if (t.startsWith("### ")) { flush(); out.push(`<h3 style="font:600 ${reader ? "15px" : "14px"}/1.3 ${F};margin:20px 0 8px;color:#111827">${esc(t.slice(4))}</h3>`); continue; }
+    if (t.startsWith("## ")) { flush(); out.push(`<h2 style="font:700 ${reader ? "18px" : "16px"}/1.3 ${F};margin:24px 0 10px;color:#111827">${esc(t.slice(3))}</h2>`); continue; }
+    if (t.startsWith("# ")) { flush(); out.push(`<h1 style="font:700 ${reader ? "22px" : "20px"}/1.2 ${F};margin:0 0 12px;color:#111827;letter-spacing:-0.02em">${esc(t.slice(2))}</h1>`); continue; }
     if (/^━+$/.test(t) || t === "---") { flush(); out.push(`<hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0" />`); continue; }
-    if (t.startsWith("• ") || t.startsWith("- ") || t.startsWith("* ")) { flush(); out.push(`<div style="display:flex;gap:8px;margin:0 0 8px;font:400 14px/1.65 ${F};color:#1f2937"><span style="color:#9ca3af;flex-shrink:0;font-size:8px;margin-top:7px">●</span><span>${esc(t.slice(2)).replace(/\*\*(.+?)\*\*/g, "<strong style=\"font-weight:600\">$1</strong>")}</span></div>`); continue; }
+    if (t.startsWith("• ") || t.startsWith("- ") || t.startsWith("* ")) { flush(); out.push(`<div style="display:flex;gap:8px;margin:0 0 8px;font:${reader ? `400 16px/1.65 ${serif}` : `400 14px/1.65 ${F}`};color:#1f2937"><span style="color:#9ca3af;flex-shrink:0;font-size:8px;margin-top:7px">●</span><span>${esc(t.slice(2)).replace(/\*\*(.+?)\*\*/g, "<strong style=\"font-weight:600\">$1</strong>")}</span></div>`); continue; }
     para.push(t);
   }
   flush();
@@ -1303,12 +1306,20 @@ function buildSvgBarChart(values, labels, w, h, color, labelColor = "#9ca3af") {
   return svg;
 }
 
-function buildVisualBriefHtml(text, ctx, week) {
+function buildVisualBriefHtml(text, ctx, week, opts = {}) {
+  const reader = !!opts.reader;
   text = sanitizeBriefOutput(text || "");
-  if (!ctx) return `<div style="max-width:740px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:32px 36px"><div style="font:15px/1.75 Georgia,serif;color:#1a1d26">${simpleMarkdownToHtml(text)}</div></div>`;
+  if (!ctx) {
+    const inner = simpleMarkdownToHtml(text, { reader });
+    const wrap = reader
+      ? `<div style="max-width:640px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:40px 44px 48px;box-shadow:0 25px 50px -12px rgba(0,0,0,.1)">${inner}</div>`
+      : `<div style="max-width:740px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:32px 36px"><div style="font:15px/1.75 Georgia,serif;color:#1a1d26">${inner}</div></div>`;
+    return wrap;
+  }
   const esc = escapeHtml;
   const F = "Inter,system-ui,-apple-system,sans-serif";
-  const card = (content, opts = {}) => `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:24px 28px;margin-bottom:14px;${opts.accent ? `border-top:3px solid ${opts.accent}` : ""}">${content}</div>`;
+  const cardPad = reader ? "26px 30px" : "24px 28px";
+  const card = (content, opts = {}) => `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:${reader ? "12px" : "10px"};padding:${cardPad};margin-bottom:${reader ? "16px" : "14px"};${opts.accent ? `border-top:3px solid ${opts.accent}` : ""}">${content}</div>`;
   const secLabel = (title) => `<div style="font:600 10px/1 ${F};text-transform:uppercase;letter-spacing:0.1em;color:#9ca3af;margin-bottom:14px">${esc(title)}</div>`;
   const badge = (label, level) => {
     const m = { HIGH: { bg: "#ecfdf5", fg: "#059669" }, MEDIUM: { bg: "#fefce8", fg: "#a16207" }, LOW: { bg: "#fef2f2", fg: "#dc2626" }, ACCELERATING: { bg: "#ecfdf5", fg: "#059669" }, STEADY_GROWTH: { bg: "#ecfdf5", fg: "#059669" }, INFLECTING_UP: { bg: "#eff6ff", fg: "#2563eb" }, PLATEAUING: { bg: "#fefce8", fg: "#a16207" }, DECELERATING: { bg: "#fef2f2", fg: "#dc2626" }, CONTRACTING: { bg: "#fef2f2", fg: "#dc2626" }, BOTTOMING: { bg: "#faf5ff", fg: "#7c3aed" } };
@@ -1320,11 +1331,14 @@ function buildVisualBriefHtml(text, ctx, week) {
   const kpiCell = (label, value, color) => `<div style="flex:1;min-width:100px;padding:12px 14px;background:#f9fafb;border-radius:8px;border:1px solid #f3f4f6"><div style="font:500 9px/1 ${F};color:#9ca3af;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">${esc(label)}</div><div style="font:700 18px/1 ${F};color:${color || "#111827"}">${value}</div></div>`;
 
   const parts = [];
-  parts.push(`<div style="max-width:860px;margin:0 auto;font-family:${F};color:#111827">`);
+  const rootMax = reader ? "min(680px,100%)" : "860px";
+  parts.push(`<div style="max-width:${rootMax};margin:0 auto;font-family:${F};color:#111827;${reader ? "letter-spacing:0.01em" : ""}">`);
 
   // ── MASTHEAD ──
   const dateStr = ctx.generated_at ? new Date(ctx.generated_at).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }) : "";
-  parts.push(`<div style="background:#111827;color:#fff;border-radius:10px;padding:28px 32px;margin-bottom:14px">` +
+  const mastPad = reader ? "32px 36px" : "28px 32px";
+  const mastRadius = reader ? "12px" : "10px";
+  parts.push(`<div style="background:#111827;color:#fff;border-radius:${mastRadius};padding:${mastPad};margin-bottom:${reader ? "18px" : "14px"}">` +
     `<div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px">` +
     `<div><div style="font:300 10px/1 ${F};text-transform:uppercase;letter-spacing:0.14em;color:#6b7280;margin-bottom:8px">Weekly Intelligence Brief</div>` +
     `<div style="font:700 24px/1.1 ${F};letter-spacing:-0.02em">AI Demand Signals</div>` +
@@ -1460,7 +1474,7 @@ function buildVisualBriefHtml(text, ctx, week) {
   }
 
   // ── ANALYSIS TEXT (from Claude) ──
-  const analysisHtml = buildAnalysisSectionsHtml(text);
+  const analysisHtml = buildAnalysisSectionsHtml(text, { reader });
   if (analysisHtml) parts.push(analysisHtml);
 
   // ── DATA QUALITY ──
@@ -1479,10 +1493,16 @@ function buildVisualBriefHtml(text, ctx, week) {
   return parts.join("");
 }
 
-function buildAnalysisSectionsHtml(text) {
+function buildAnalysisSectionsHtml(text, opts = {}) {
   if (!text) return "";
+  const reader = !!opts.reader;
   const esc = escapeHtml;
   const F = "Inter,system-ui,-apple-system,sans-serif";
+  const serif = "'Source Serif 4',Georgia,'Times New Roman',serif";
+  const bodyFont = reader ? `400 16px/1.75 ${serif}` : `400 13.5px/1.7 ${F}`;
+  const bodyPad = reader ? "22px 28px 28px" : "18px 24px";
+  const pGap = reader ? "20px" : "14px";
+  const lh = reader ? "1.75" : "1.7";
   const sectionMeta = {
     "WEEK IN 60": { color: "#2563eb", icon: "01" }, "60 SECONDS": { color: "#2563eb", icon: "01" }, "KEY TAKEAWAYS": { color: "#2563eb", icon: "01" },
     "MACRO LANDSCAPE": { color: "#f59e0b", icon: "02" }, "MACRO": { color: "#f59e0b", icon: "02" },
@@ -1528,13 +1548,18 @@ function buildAnalysisSectionsHtml(text) {
     body = body.replace(/%%(?:LINK|HREF|ENDLINK)%%/g, "");
     body = esc(body);
     body = body.replace(/\*\*(.+?)\*\*/g, "<strong style=\"font-weight:600\">$1</strong>");
-    body = body.replace(/\n\n/g, "</p><p style=\"margin:0 0 14px;line-height:1.7\">");
+    body = body.replace(/\n\n/g, `</p><p style="margin:0 0 ${pGap};line-height:${lh}">`);
     body = body.replace(/\n/g, "<br/>");
     body = body.replace(/• /g, `<span style="color:${meta.color};font-size:7px;vertical-align:middle;margin-right:6px">●</span>`);
-    body = `<p style="margin:0 0 14px;line-height:1.7">${body}</p>`;
-    const html = `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:0;margin-bottom:14px;overflow:hidden">` +
-      (title ? `<div style="display:flex;align-items:center;gap:10px;padding:14px 24px 12px;border-bottom:1px solid #f3f4f6;background:#f9fafb"><span style="font:700 11px/1 ${F};color:${meta.color};min-width:18px">${meta.icon}</span><div style="font:600 11px/1 ${F};text-transform:uppercase;letter-spacing:0.08em;color:#4b5163">${esc(title)}</div></div>` : "") +
-      `<div style="padding:18px 24px;font:400 13.5px/1.7 ${F};color:#1f2937">${body}</div></div>`;
+    body = `<p style="margin:0 0 ${pGap};line-height:${lh}">${body}</p>`;
+    const secHeadPad = reader ? "16px 26px 14px" : "14px 24px 12px";
+    const secRadius = reader ? "12px" : "10px";
+    const titleRow = title
+      ? `<div style="display:flex;align-items:center;gap:10px;padding:${secHeadPad};border-bottom:1px solid #f3f4f6;background:${reader ? "#fafaf9" : "#f9fafb"}"><span style="font:700 11px/1 ${F};color:${meta.color};min-width:18px">${meta.icon}</span><div style="font:600 ${reader ? "12px" : "11px"}/1 ${F};text-transform:uppercase;letter-spacing:0.08em;color:#4b5163">${esc(title)}</div></div>`
+      : "";
+    const html = `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:${secRadius};padding:0;margin-bottom:${reader ? "18px" : "14px"};overflow:hidden">` +
+      titleRow +
+      `<div style="padding:${bodyPad};font:${bodyFont};color:#1f2937">${body}</div></div>`;
     parts.push(html);
   }
   return parts.join("");
@@ -5742,6 +5767,7 @@ export default function App() {
   const [briefDiffMode,setBriefDiffMode]=useState(false);
   const [briefBaseForDiff,setBriefBaseForDiff]=useState("");
   const [briefSnapshot,setBriefSnapshot]=useState(null);
+  const [briefReaderMode,setBriefReaderMode]=useState(false);
   const [mailingList,setMailingList]=useState(()=>ld("mailing_list",[]));
   const [emailSending,setEmailSending]=useState(false);
   const [emailStatus,setEmailStatus]=useState(null);
@@ -6956,6 +6982,11 @@ FINAL REMINDER: No URLs. No links. No citations. No source lists. No "[text](url
     return olderThan5d || changed;
   }, [canGenerateBrief, lastBriefObj, signalFingerprint]);
 
+  const visualBriefHtmlMemo = useMemo(
+    () => buildVisualBriefHtml(briefContent || "", briefSnapshot, briefWeek, { reader: briefReaderMode }),
+    [briefContent, briefSnapshot, briefWeek, briefReaderMode]
+  );
+
   return(
     <div style={{background:"#f0f2f5",minHeight:"100vh",...font.sans}}>
       <style>{CSS}</style>
@@ -7245,18 +7276,27 @@ FINAL REMINDER: No URLs. No links. No citations. No source lists. No "[text](url
       )}
 
       {briefOpen && (
-        <div style={{position:"fixed",inset:0,zIndex:230,background:"#f3f4f6",display:"flex",flexDirection:"column"}}>
+        <div className="brief-print-scope" style={{position:"fixed",inset:0,zIndex:230,background:briefReaderMode&&!briefDiffMode?"#e9e6e1":"#f3f4f6",display:"flex",flexDirection:"column"}}>
           {/* Toolbar */}
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 24px",background:"#fff",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+          <div className="brief-toolbar-print-hide" style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 24px",background:"#fff",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <div style={{width:8,height:8,borderRadius:99,background:briefLoading?"#f59e0b":C.cyan,animation:briefLoading?"pulse 1.2s ease-in-out infinite":"none"}} />
               <span style={{...font.sans,fontSize:13,fontWeight:700,color:C.text,letterSpacing:"-0.01em"}}>Weekly Brief</span>
               <span style={{...font.sans,fontSize:11,color:C.textMuted}}>{briefWeek}</span>
+              {!briefLoading && briefContent && !briefDiffMode && briefReaderMode && (
+                <span style={{...font.sans,fontSize:10,fontWeight:600,color:C.textMuted,textTransform:"uppercase",letterSpacing:"0.06em"}}>Reader</span>
+              )}
             </div>
             <div style={{display:"flex",alignItems:"center",gap:4}}>
-              <label style={{display:"flex",alignItems:"center",gap:4,...font.sans,fontSize:11,color:C.textMuted,cursor:"pointer",padding:"4px 8px",borderRadius:6,background:briefDiffMode?C.cyanBg:"transparent"}}>
-                <input type="checkbox" checked={briefDiffMode} onChange={e=>setBriefDiffMode(e.target.checked)} style={{width:12,height:12}} /> Diff
+              <label style={{display:"flex",alignItems:"center",gap:4,...font.sans,fontSize:11,color:C.textMuted,cursor:briefLoading?"default":"pointer",padding:"4px 8px",borderRadius:6,background:briefReaderMode&&!briefDiffMode?C.cyanBg:"transparent",opacity:briefLoading?0.5:1}} title="Readable layout: serif analysis, tighter column, print-friendly">
+                <input type="checkbox" disabled={briefLoading||briefDiffMode} checked={briefReaderMode&&!briefDiffMode} onChange={e=>{const on=e.target.checked;setBriefReaderMode(on);if(on)setBriefDiffMode(false);}} style={{width:12,height:12}} /> Reader
               </label>
+              <label style={{display:"flex",alignItems:"center",gap:4,...font.sans,fontSize:11,color:C.textMuted,cursor:briefLoading?"default":"pointer",padding:"4px 8px",borderRadius:6,background:briefDiffMode?C.cyanBg:"transparent",opacity:briefLoading?0.5:1}}>
+                <input type="checkbox" disabled={briefLoading} checked={briefDiffMode} onChange={e=>{const on=e.target.checked;setBriefDiffMode(on);if(on)setBriefReaderMode(false);}} style={{width:12,height:12}} /> Diff
+              </label>
+              <Btn size="sm" variant="ghost" disabled={briefLoading||!briefContent||briefDiffMode} onClick={()=>window.print()} title="Hides this toolbar when printing">
+                Print
+              </Btn>
               <div style={{width:1,height:16,background:C.border,margin:"0 4px"}} />
               <Btn size="sm" onClick={()=>{const tmp=document.createElement("div");tmp.innerHTML=briefContent||"";navigator.clipboard?.writeText(tmp.textContent||tmp.innerText||"");}}>Copy Text</Btn>
               <Btn size="sm" onClick={()=>navigator.clipboard?.writeText(briefContent || "")}>Copy HTML</Btn>
@@ -7276,7 +7316,7 @@ FINAL REMINDER: No URLs. No links. No citations. No source lists. No "[text](url
             </div>
           </div>
           {/* Body */}
-          <div style={{flex:1,overflowY:"auto",padding:"28px 32px"}}>
+          <div className="brief-print-body" style={{flex:1,overflowY:"auto",padding:briefReaderMode&&!briefDiffMode?"36px 28px 48px":"28px 32px"}}>
             {briefLoading ? (
               <div style={{maxWidth:480,margin:"120px auto",textAlign:"center"}}>
                 <div style={{...font.sans,fontSize:20,fontWeight:700,color:C.text,marginBottom:10,letterSpacing:"-0.02em"}}>Building your brief</div>
@@ -7287,7 +7327,7 @@ FINAL REMINDER: No URLs. No links. No citations. No source lists. No "[text](url
                 <div style={{...font.mono,fontSize:11,color:C.textMuted,marginTop:10}}>{briefProgressSec}s</div>
               </div>
             ) : (
-              <div style={{maxWidth:900,margin:"0 auto"}}>
+              <div style={{maxWidth:briefReaderMode&&!briefDiffMode?820:900,margin:"0 auto"}}>
                 {briefDiffMode ? (
                   <div style={{background:"#fff",border:`1px solid #e5e7eb`,borderRadius:10,padding:"28px 32px"}}>
                     <div style={{...font.sans,fontSize:10,letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600,color:C.textMuted,borderBottom:`1px solid #f3f4f6`,paddingBottom:10,marginBottom:16}}>
@@ -7297,7 +7337,21 @@ FINAL REMINDER: No URLs. No links. No citations. No source lists. No "[text](url
                     {briefSnapshot ? <BriefSnapshotCharts ctx={briefSnapshot} /> : null}
                   </div>
                 ) : (
-                  <div dangerouslySetInnerHTML={{ __html: buildVisualBriefHtml(briefContent, briefSnapshot, briefWeek) }} />
+                  <div
+                    style={
+                      briefReaderMode
+                        ? {
+                            background: C.white,
+                            borderRadius: 12,
+                            border: `1px solid ${C.borderLight}`,
+                            boxShadow: "0 25px 50px -12px rgba(0,0,0,.12)",
+                            padding: "8px 12px 20px",
+                            overflow: "hidden",
+                          }
+                        : undefined
+                    }
+                    dangerouslySetInnerHTML={{ __html: visualBriefHtmlMemo }}
+                  />
                 )}
               </div>
             )}
