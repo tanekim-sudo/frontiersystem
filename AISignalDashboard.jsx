@@ -5730,6 +5730,182 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
   </Card>);
 }
 
+// ── MARKET & AI NEWS PULSE (on-demand macro + headlines + drivers) ─────────
+
+const PULSE_CACHE_KEY = PFX + "pulse_cache";
+
+function fredLatestVal(fredLatest, id) {
+  const row = (fredLatest || []).find((x) => x.series_id === id);
+  if (!row || row.value == null || row.error) return null;
+  const n = Number(row.value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function computeMacroDrivers(fredLatest) {
+  const drivers = [];
+  const vix = fredLatestVal(fredLatest, "VIXCLS");
+  const t10y2y = fredLatestVal(fredLatest, "T10Y2Y");
+  const dgs10 = fredLatestVal(fredLatest, "DGS10");
+  const dgs2 = fredLatestVal(fredLatest, "DGS2");
+  const nfci = fredLatestVal(fredLatest, "NFCI");
+  const unrate = fredLatestVal(fredLatest, "UNRATE");
+  if (vix != null && vix > 22) {
+    drivers.push({ tag: "Volatility", text: `VIX ~${vix.toFixed(1)} — risk appetite often shrinks; high-multiple / long-duration tech can re-rate until volatility mean-reverts.` });
+  } else if (vix != null && vix < 14) {
+    drivers.push({ tag: "Calm", text: `VIX ~${vix.toFixed(1)} — complacency risk, but funding costs and AI capex narratives matter more than fear right now.` });
+  }
+  if (t10y2y != null && t10y2y < 0) {
+    drivers.push({ tag: "Yield curve", text: `10Y–2Y spread is negative (${t10y2y.toFixed(2)} pp) — classic late-cycle signal; tightens financial conditions for long-duration equities.` });
+  }
+  if (nfci != null && nfci > 0.3) {
+    drivers.push({ tag: "Financial conditions", text: `Chicago Fed NFCI ${nfci.toFixed(2)} — credit and funding stress rising; watch enterprise IT budgets and startup runway.` });
+  } else if (nfci != null && nfci < -0.5) {
+    drivers.push({ tag: "Financial conditions", text: `Chicago Fed NFCI ${nfci.toFixed(2)} — loose conditions; supports risk assets and capex, including AI infrastructure spend.` });
+  }
+  if (dgs10 != null && dgs2 != null) {
+    drivers.push({ tag: "Rates", text: `2Y ${dgs2.toFixed(2)}% vs 10Y ${dgs10.toFixed(2)}% — the path of front-end rates drives discount rates for AI equities and private valuations.` });
+  }
+  if (unrate != null && unrate > 4.5) {
+    drivers.push({ tag: "Labor", text: `U-3 unemployment ${unrate.toFixed(1)}% — softer labor = easier Fed eventually, but also slower enterprise hiring for AI roles near term.` });
+  }
+  if (drivers.length === 0 && (vix != null || dgs10 != null)) {
+    drivers.push({ tag: "Backdrop", text: "Macro inputs are in a mixed/neutral band — lean on your tracking-group signals and headlines below for timing." });
+  }
+  return drivers.slice(0, 6);
+}
+
+function computeSignalMoves(verticals, allHistories, sources) {
+  const moves = [];
+  const srcList = (sources || []).filter((s) => s.enabled);
+  for (const v of verticals || []) {
+    for (const s of srcList) {
+      const key = `${v.id}_${s.id}`;
+      const hist = allHistories[key];
+      if (!hist || hist.length < 2) continue;
+      const a = hist[hist.length - 2].value;
+      const b = hist[hist.length - 1].value;
+      if (a == null || b == null) continue;
+      const pct = a > 0 ? ((b - a) / a) * 100 : null;
+      if (pct == null || !Number.isFinite(pct)) continue;
+      moves.push({ key, group: v.name, source: s.name, sourceId: s.id, pct, prev: a, cur: b });
+    }
+  }
+  moves.sort((x, y) => Math.abs(y.pct) - Math.abs(x.pct));
+  return moves.slice(0, 6);
+}
+
+function MarketAiPulsePanel({
+  overview,
+  newsPack,
+  loading,
+  error,
+  onRefresh,
+  macroDrivers,
+  signalMoves,
+  collapsed,
+  onToggleCollapsed,
+}) {
+  const fred = overview?.fred_latest || [];
+  const pick = (id) => {
+    const x = fred.find((r) => r.series_id === id);
+    if (!x || x.value == null) return "—";
+    const n = Number(x.value);
+    return Number.isFinite(n) ? (id === "UNRATE" || id === "VIXCLS" ? n.toFixed(2) : n.toFixed(2)) : "—";
+  };
+  const articles = newsPack?.articles || [];
+  return (
+    <Card style={{ borderLeft: `4px solid ${C.purple}`, padding: 0, overflow: "hidden", marginBottom: 20 }} className="fade-in">
+      <div style={{ padding: "14px 20px 12px", background: C.white, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <IcoC name="activity" size={18} color={C.purple} />
+            <span style={{ ...font.sans, fontSize: 15, fontWeight: 700, color: C.text }}>Live macro &amp; AI news pulse</span>
+            <Badge color={C.purple} bg={C.purpleBg} size="sm">On demand</Badge>
+          </div>
+          <div style={{ ...font.sans, fontSize: 11, color: C.textSec, marginTop: 6, lineHeight: 1.5, maxWidth: 900 }}>
+            Refresh anytime for fresh <strong style={{ color: C.text }}>FRED / Chicago Fed</strong> snapshot and <strong style={{ color: C.text }}>headlines</strong> (SerpAPI Google News).
+            “Drivers” combine macro rules of thumb with your <em>largest moves between the last two history points</em> on each signal — not a forecast.
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          <Btn variant="primary" size="sm" onClick={onRefresh} disabled={loading}>
+            {loading ? <><Spinner size={12} color="#fff" /> Updating…</> : <><IcoC name="refresh" size={12} color="#fff" /> Refresh macro &amp; news</>}
+          </Btn>
+          <Btn variant="ghost" size="sm" onClick={onToggleCollapsed}>{collapsed ? "Expand" : "Collapse"}</Btn>
+        </div>
+      </div>
+      {!collapsed && (
+        <div style={{ padding: "0 20px 18px" }}>
+          {error && <div style={{ ...font.sans, fontSize: 12, color: C.red, marginBottom: 8 }}>{error}</div>}
+          {overview?.fetched_at && (
+            <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginBottom: 10 }}>
+              Macro data pulled {new Date(overview.fetched_at).toLocaleString()}
+              {newsPack?.fetched_at && ` · Headlines ${new Date(newsPack.fetched_at).toLocaleString()}`}
+            </div>
+          )}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 8, marginBottom: 12 }}>
+            <div style={{ background: C.nested, borderRadius: 10, padding: "10px 12px" }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>VIX</div>
+              <div style={{ ...font.mono, fontSize: 18, fontWeight: 800 }}>{pick("VIXCLS")}</div>
+              <div style={{ fontSize: 9, color: C.textMuted, marginTop: 2 }}>{FRED_SERIES_EXPLAIN.VIXCLS?.slice(0, 120)}…</div>
+            </div>
+            <div style={{ background: C.nested, borderRadius: 10, padding: "10px 12px" }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>10Y / 2Y %</div>
+              <div style={{ ...font.mono, fontSize: 18, fontWeight: 800 }}>{pick("DGS10")} / {pick("DGS2")}</div>
+              <div style={{ fontSize: 9, color: C.textMuted, marginTop: 2 }}>10Y–2Y: {pick("T10Y2Y")} pp</div>
+            </div>
+            <div style={{ background: C.nested, borderRadius: 10, padding: "10px 12px" }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>U-3 %</div>
+              <div style={{ ...font.mono, fontSize: 18, fontWeight: 800 }}>{pick("UNRATE")}</div>
+              <div style={{ fontSize: 9, color: C.textMuted, marginTop: 2 }}>NFCI {pick("NFCI")}</div>
+            </div>
+          </div>
+          {macroDrivers.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ ...font.sans, fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 6 }}>Likely macro drivers (heuristic)</div>
+              <ul style={{ margin: 0, paddingLeft: 18, ...font.sans, fontSize: 11, color: C.textSec, lineHeight: 1.55 }}>
+                {macroDrivers.map((d, i) => (
+                  <li key={i} style={{ marginBottom: 4 }}><strong style={{ color: C.text }}>{d.tag}:</strong> {d.text}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {signalMoves.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ ...font.sans, fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 6 }}>What moved most in your dashboard (last → previous history point)</div>
+              <ul style={{ margin: 0, paddingLeft: 18, ...font.sans, fontSize: 11, color: C.textSec, lineHeight: 1.55 }}>
+                {signalMoves.map((m) => (
+                  <li key={m.key} style={{ marginBottom: 4 }}>
+                    <strong style={{ color: C.text }}>{m.group}</strong> — {m.source}: {m.pct >= 0 ? "+" : ""}{m.pct.toFixed(1)}% vs prior snapshot ({SOURCE_METRIC_BLURB[m.sourceId] || "per source"}).
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div>
+            <div style={{ ...font.sans, fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 6 }}>AI &amp; tech market headlines</div>
+            {!articles.length && !loading && (
+              <div style={{ fontSize: 11, color: C.textMuted }}>Click refresh to load headlines (requires SerpAPI key on the server).</div>
+            )}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {articles.map((a, i) => (
+                <div key={i} style={{ padding: "10px 12px", background: C.nested, borderRadius: 8, border: `1px solid ${C.borderLight}` }}>
+                  <div style={{ ...font.sans, fontSize: 12, fontWeight: 600, color: C.text, lineHeight: 1.4 }}>{a.title}</div>
+                  <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginTop: 4 }}>{a.source}{a.date ? ` · ${a.date}` : ""}</div>
+                  {a.snippet && <div style={{ ...font.sans, fontSize: 11, color: C.textSec, marginTop: 6, lineHeight: 1.45 }}>{a.snippet}</div>}
+                  {a.link && (
+                    <a href={a.link} target="_blank" rel="noopener noreferrer" style={{ ...font.sans, fontSize: 10, color: C.cyan, marginTop: 6, display: "inline-block" }}>Open article</a>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // ── APP ROOT ─────────────────────────────────────────────────────────────────
 
 function humanInterval(ms){ return ms<60000?`${Math.round(ms/1000)}s`:ms<3600000?`${Math.round(ms/60000)}m`:`${(ms/3600000).toFixed(1)}h`; }
@@ -5768,6 +5944,11 @@ export default function App() {
   const [briefBaseForDiff,setBriefBaseForDiff]=useState("");
   const [briefSnapshot,setBriefSnapshot]=useState(null);
   const [briefReaderMode,setBriefReaderMode]=useState(false);
+  const [pulseOverview,setPulseOverview]=useState(null);
+  const [pulseNews,setPulseNews]=useState(null);
+  const [pulseLoading,setPulseLoading]=useState(false);
+  const [pulseErr,setPulseErr]=useState(null);
+  const [pulseCollapsed,setPulseCollapsed]=useState(false);
   const [mailingList,setMailingList]=useState(()=>ld("mailing_list",[]));
   const [emailSending,setEmailSending]=useState(false);
   const [emailStatus,setEmailStatus]=useState(null);
@@ -5822,6 +6003,12 @@ export default function App() {
     }
     rows.sort((a,b)=>new Date(b.generated_at)-new Date(a.generated_at));
     setBriefHistory(rows);
+  }, []);
+
+  useEffect(() => {
+    const c = ld(PULSE_CACHE_KEY, null);
+    if (c?.overview) setPulseOverview(c.overview);
+    if (c?.news) setPulseNews(c.news);
   }, []);
 
   useEffect(() => {
@@ -5994,6 +6181,52 @@ export default function App() {
     if(na.length>0)setAlerts(p=>[...na,...p].slice(0,50));
     doCloudSync("up");
   },[fetchSource,doCloudSync]);
+
+  const refreshPulse=useCallback(async()=>{
+    setPulseLoading(true);
+    setPulseErr(null);
+    try{
+      const [rMacro,rNews]=await Promise.allSettled([fetch("/api/labor/overview"),fetch("/api/ai-news")]);
+      const errs=[];
+      let overview=null;
+      let newsPack=null;
+      if(rMacro.status==="fulfilled"&&rMacro.value.ok){
+        overview=await rMacro.value.json().catch(()=>null);
+        if(overview) {
+          setPulseOverview(overview);
+          try{
+            appendLaborMacroSnapshot({
+              fetched_at: overview.fetched_at,
+              chicago_release: overview.chicago_fed?.release_date ?? null,
+              forecast_u: overview.chicago_fed?.forecast_unemployment ?? null,
+              official_u3: overview.chicago_fed?.official_u3 ?? null,
+              jolts: (overview.fred_latest || []).find((x) => x.series_id === "JTSJOL")?.value ?? null,
+              claims: (overview.fred_latest || []).find((x) => x.series_id === "ICSA")?.value ?? null,
+            });
+          }catch{}
+        }
+      } else {
+        const msg=rMacro.status==="fulfilled"?(await rMacro.value.json().catch(()=>({}))).error||`${rMacro.value.status}`:String(rMacro.reason||"macro fetch failed");
+        errs.push(`Macro: ${msg}`);
+      }
+      if(rNews.status==="fulfilled"&&rNews.value.ok){
+        newsPack=await rNews.value.json().catch(()=>null);
+        if(newsPack) setPulseNews(newsPack);
+      } else {
+        const msg=rNews.status==="fulfilled"?(await rNews.value.json().catch(()=>({}))).error||`${rNews.value.status}`:String(rNews.reason||"news fetch failed");
+        errs.push(`News: ${msg}`);
+      }
+      if(errs.length) setPulseErr(errs.join(" · "));
+      if(overview||newsPack){
+        try{ sv(PULSE_CACHE_KEY,{ overview: overview||ld(PULSE_CACHE_KEY,null)?.overview, news: newsPack||ld(PULSE_CACHE_KEY,null)?.news, savedAt: Date.now() }); }catch{}
+      }
+      const pat=resolveGitPat();if(pat||signalStoreSecret()||databaseStoreSecret()) debouncedSyncToGist(pat,4000);
+    }catch(e){
+      setPulseErr(e.message||String(e));
+    }finally{
+      setPulseLoading(false);
+    }
+  },[resolveGitPat]);
 
   const updateKeywords=useCallback((vertId,sourceId,field,nv)=>{
     setConfig(prev=>{
@@ -6987,6 +7220,9 @@ FINAL REMINDER: No URLs. No links. No citations. No source lists. No "[text](url
     [briefContent, briefSnapshot, briefWeek, briefReaderMode]
   );
 
+  const pulseMacroDrivers = useMemo(() => computeMacroDrivers(pulseOverview?.fred_latest), [pulseOverview]);
+  const pulseSignalMoves = useMemo(() => computeSignalMoves(config.verticals, allHistories, config.sources), [config.verticals, allHistories, config.sources]);
+
   return(
     <div style={{background:"#f0f2f5",minHeight:"100vh",...font.sans}}>
       <style>{CSS}</style>
@@ -7005,6 +7241,9 @@ FINAL REMINDER: No URLs. No links. No citations. No source lists. No "[text](url
           <div style={{display:"flex",alignItems:"center",gap:5}}>
             <Btn variant={shouldPromoteBrief?"accent":"default"} size="sm" disabled={!canGenerateBrief||briefLoading} onClick={generateBrief}>
               {briefLoading ? <><Spinner size={11} color={shouldPromoteBrief?"#fff":C.textSec}/> Generating ({briefProgressSec}s)</> : lastBriefObj?.content_markdown ? "Regenerate Brief" : "Generate Brief"}
+            </Btn>
+            <Btn variant="default" size="sm" disabled={pulseLoading} onClick={refreshPulse} title="FRED + Chicago Fed snapshot and AI/tech headlines (SerpAPI)">
+              {pulseLoading ? <><Spinner size={11} color={C.textSec}/> Pulse…</> : <><IcoC name="activity" size={11} color={C.textSec}/> Macro &amp; news</>}
             </Btn>
             {briefContent && !briefLoading && <Btn variant="ghost" size="sm" onClick={()=>setBriefOpen(true)}>View Brief</Btn>}
             <Btn variant="ghost" size="sm" onClick={()=>setBriefHistoryOpen(true)}>Brief History</Btn>
@@ -7025,6 +7264,18 @@ FINAL REMINDER: No URLs. No links. No citations. No source lists. No "[text](url
       </div>
 
       <div style={{padding:"20px 28px 40px",maxWidth:1400,margin:"0 auto"}}>
+
+        <MarketAiPulsePanel
+          overview={pulseOverview}
+          newsPack={pulseNews}
+          loading={pulseLoading}
+          error={pulseErr}
+          onRefresh={refreshPulse}
+          macroDrivers={pulseMacroDrivers}
+          signalMoves={pulseSignalMoves}
+          collapsed={pulseCollapsed}
+          onToggleCollapsed={() => setPulseCollapsed((c) => !c)}
+        />
 
         {/* ─── Settings (always visible, collapsed by default) ─── */}
         <div style={{marginBottom:20}}>
