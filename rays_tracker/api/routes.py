@@ -5,8 +5,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from rays_tracker.collectors import chicago_fed_collector, fred_collector
-from rays_tracker.database import (
+from ..collectors import chicago_fed_collector, fred_collector
+from ..database import (
     fetch_chicago_fed_history,
     fetch_chicago_fed_latest,
     fetch_latest_signals_by_source,

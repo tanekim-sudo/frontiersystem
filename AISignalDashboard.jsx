@@ -1726,7 +1726,12 @@ function alignBriefParagraphsForDiff(oldParas, newParas) {
     if (matched) usedOld.add(bestJ);
     const oldText = matched ? oldParas[bestJ] : "";
     const changed = !matched || pNew !== oldText;
-    rows.push({ text: pNew, changed, status: !matched ? "new" : changed ? "revised" : "same" });
+    rows.push({
+      text: pNew,
+      oldText: matched ? oldText : "",
+      changed,
+      status: !matched ? "new" : changed ? "revised" : "same",
+    });
   }
   const removed = [];
   for (let j = 0; j < oldParas.length; j++) {
@@ -1740,36 +1745,95 @@ function paragraphDiffHtml(oldText, newText) {
   const oldP = splitBriefParagraphs(oldText);
   const newP = splitBriefParagraphs(newText);
   const { rows, removed } = alignBriefParagraphsForDiff(oldP, newP);
+  const added = rows.filter((r) => r.status === "new");
+  const revised = rows.filter((r) => r.status === "revised");
+  const same = rows.filter((r) => r.status === "same");
+
+  const sectionTitle = (n, color, bg, border) =>
+    `<div style="font:700 11px/1.2 ${F};letter-spacing:0.06em;text-transform:uppercase;color:${color};margin:24px 0 10px;padding:8px 10px;background:${bg};border-radius:6px;border-left:4px solid ${border}">${n}</div>`;
+
+  const mini = (label, color, bg) =>
+    `<span style="display:inline-flex;align-items:center;gap:6px;margin-right:14px;font:500 12px/1.4 ${F}"><span style="width:10px;height:10px;border-radius:2px;background:${color}"></span>${label}</span>`;
+
   const legend =
-    `<div style="font:500 12px/1.5 ${F};color:#4b5563;margin:0 0 20px;padding:12px 14px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px">` +
-    `<strong style="color:#111827">How to read this diff</strong> — Blocks are matched by <em>content</em>, not position, so edits do not falsely highlight everything below an insertion. ` +
-    `<span style="border-left:3px solid #f59e0b;padding-left:8px;margin-left:4px">Amber bar</span> = new or revised section; plain = unchanged since the first saved version of this week.</div>`;
-  const blocks = rows
-    .map(({ text, changed, status }) => {
-      const inner = simpleMarkdownToHtml(text);
-      if (!changed) {
-        return `<div style="margin:0 0 12px;padding:2px 0">${inner}</div>`;
-      }
-      const label =
-        status === "new"
-          ? `<div style="font:600 9px/1 ${F};text-transform:uppercase;letter-spacing:0.06em;color:#b45309;margin:0 0 8px">New in this version</div>`
-          : `<div style="font:600 9px/1 ${F};text-transform:uppercase;letter-spacing:0.06em;color:#b45309;margin:0 0 8px">Revised</div>`;
-      return (
-        `<div style="margin:0 0 16px;padding:14px 16px 14px 18px;background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0">` +
-        label +
-        `<div style="font:400 14px/1.7 ${F};color:#1f2937">${inner}</div></div>`
-      );
-    })
-    .join("");
-  let tail = "";
-  if (removed.length) {
-    const rInner = removed.map((t) => simpleMarkdownToHtml(t)).join("");
-    tail =
-      `<details style="margin-top:8px;font:${F}"><summary style="font:600 11px/1.4 ${F};color:#6b7280;cursor:pointer;user-select:none">` +
-      `${removed.length} section${removed.length > 1 ? "s" : ""} removed since first save</summary>` +
-      `<div style="margin-top:10px;padding:12px 14px;background:#f3f4f6;border-radius:8px;border:1px solid #e5e7eb;font:400 13px/1.65 ${F};color:#6b7280">${rInner}</div></details>`;
+    `<div style="font:500 13px/1.55 ${F};color:#374151;margin:0 0 16px;padding:14px 16px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 1px 2px rgba(0,0,0,.04)">` +
+    `<div style="font:700 14px/1.3 ${F};color:#111827;margin-bottom:8px">What you are looking at</div>` +
+    `<div style="color:#6b7280;margin-bottom:12px;line-height:1.5">This compares the <strong>first saved</strong> version of this week’s brief (baseline) to the <strong>current</strong> version. Paragraphs are <strong>matched by similar wording</strong>, not by line number — so inserts do not make everything below look “changed.”</div>` +
+    `<div style="display:flex;flex-wrap:wrap;gap:8px 0;padding-top:4px;border-top:1px solid #f3f4f6">` +
+    mini("Unchanged", "#9ca3af", "#f3f4f6") +
+    mini("Added", "#16a34a", "#dcfce7") +
+    mini("Edited", "#d97706", "#fef3c7") +
+    mini("Removed", "#dc2626", "#fee2e2") +
+    `</div></div>`;
+
+  const stats =
+    `<div style="font:600 12px/1.4 ${F};color:#1f2937;margin:0 0 20px;padding:10px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px">` +
+    `<strong>Summary:</strong> ${same.length} unchanged · ${revised.length} edited · ${added.length} new · ${removed.length} removed` +
+    `</div>`;
+
+  const box = (pad, bg, border, borderLeft, inner) =>
+    `<div style="padding:${pad};background:${bg};border:1px solid ${border};border-left:${borderLeft};border-radius:8px;font:400 13px/1.65 ${F};color:#1f2937;max-height:320px;overflow-y:auto">${inner}</div>`;
+
+  let body = "";
+
+  if (added.length) {
+    body += sectionTitle(`Added (${added.length})`, "#166534", "#f0fdf4", "#22c55e");
+    body += `<p style="font:400 12px/1.5 ${F};color:#6b7280;margin:-4px 0 12px">These blocks appear only in the current brief — nothing similar was in the first save.</p>`;
+    added.forEach(({ text }, i) => {
+      body +=
+        `<div style="margin:0 0 14px">` +
+        `<div style="font:600 10px/1 ${F};color:#15803d;margin:0 0 6px">Added block ${i + 1}</div>` +
+        box("12px 14px", "#f0fdf4", "#bbf7d0", "3px solid #22c55e", simpleMarkdownToHtml(text)) +
+        `</div>`;
+    });
+  } else {
+    body += sectionTitle("Added (0)", "#6b7280", "#f9fafb", "#9ca3af");
+    body += `<p style="font:400 12px/1.5 ${F};color:#9ca3af;margin:-4px 0 16px">No wholly new paragraphs vs the first save.</p>`;
   }
-  return `<div style="max-width:720px;margin:0 auto">${legend}${blocks}${tail}</div>`;
+
+  if (revised.length) {
+    body += sectionTitle(`Edited — before &amp; after (${revised.length})`, "#92400e", "#fffbeb", "#f59e0b");
+    body += `<p style="font:400 12px/1.5 ${F};color:#6b7280;margin:-4px 0 12px">Same topic detected in both versions, but the text changed. Read <strong>left = first save</strong>, <strong>right = current</strong>.</p>`;
+    revised.forEach(({ oldText, text }, i) => {
+      const left = simpleMarkdownToHtml(oldText || "—");
+      const right = simpleMarkdownToHtml(text);
+      body +=
+        `<div style="margin:0 0 18px">` +
+        `<div style="font:600 10px/1 ${F};color:#b45309;margin:0 0 8px">Edit ${i + 1}</div>` +
+        `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;align-items:start">` +
+        `<div><div style="font:600 10px/1 ${F};color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin:0 0 6px">Before (first save)</div>` +
+        box("10px 12px", "#f9fafb", "#e5e7eb", "3px solid #9ca3af", left) +
+        `</div>` +
+        `<div><div style="font:600 10px/1 ${F};color:#b45309;text-transform:uppercase;letter-spacing:0.05em;margin:0 0 6px">After (current)</div>` +
+        box("10px 12px", "#fffbeb", "#fde68a", "3px solid #f59e0b", right) +
+        `</div></div></div>`;
+    });
+  } else {
+    body += sectionTitle("Edited (0)", "#6b7280", "#f9fafb", "#9ca3af");
+    body += `<p style="font:400 12px/1.5 ${F};color:#9ca3af;margin:-4px 0 16px">No paragraph-level edits detected (only additions/removals, or identical text).</p>`;
+  }
+
+  if (removed.length) {
+    body += sectionTitle(`Removed (${removed.length})`, "#991b1b", "#fef2f2", "#ef4444");
+    body += `<p style="font:400 12px/1.5 ${F};color:#6b7280;margin:-4px 0 12px">These appeared in the first save but have no close match in the current brief.</p>`;
+    removed.forEach((t, i) => {
+      body +=
+        `<div style="margin:0 0 12px">` +
+        `<div style="font:600 10px/1 ${F};color:#b91c1c;margin:0 0 6px">Removed block ${i + 1}</div>` +
+        box("10px 12px", "#fef2f2", "#fecaca", "3px solid #ef4444", simpleMarkdownToHtml(t)) +
+        `</div>`;
+    });
+  }
+
+  if (same.length) {
+    body += `<details style="margin-top:8px;font:${F}"><summary style="font:600 12px/1.4 ${F};color:#4b5563;cursor:pointer;user-select:none;padding:10px 0;border-top:1px solid #e5e7eb">` +
+      `Show ${same.length} unchanged section${same.length > 1 ? "s" : ""} (collapsed by default)</summary>` +
+      `<div style="margin-top:12px;padding:12px 14px;background:#fafafa;border:1px solid #e5e7eb;border-radius:8px">` +
+      same.map(({ text }) => `<div style="margin:0 0 14px;padding-bottom:14px;border-bottom:1px solid #eee">${simpleMarkdownToHtml(text)}</div>`).join("") +
+      `</div></details>`;
+  }
+
+  return `<div style="max-width:880px;margin:0 auto">${legend}${stats}${body}</div>`;
 }
 function escapeHtml(s) {
   return String(s || "")
@@ -5797,6 +5861,7 @@ function computeSignalMoves(verticals, allHistories, sources) {
 function MarketAiPulsePanel({
   overview,
   newsPack,
+  stockPack,
   loading,
   error,
   onRefresh,
@@ -5805,6 +5870,11 @@ function MarketAiPulsePanel({
   collapsed,
   onToggleCollapsed,
 }) {
+  const [newsOpen, setNewsOpen] = useState(() => ld("pulse_news_section_open", false));
+  useEffect(() => {
+    sv("pulse_news_section_open", newsOpen);
+  }, [newsOpen]);
+
   const fred = overview?.fred_latest || [];
   const pick = (id) => {
     const x = fred.find((r) => r.series_id === id);
@@ -5812,7 +5882,7 @@ function MarketAiPulsePanel({
     const n = Number(x.value);
     return Number.isFinite(n) ? (id === "UNRATE" || id === "VIXCLS" ? n.toFixed(2) : n.toFixed(2)) : "—";
   };
-  const articles = newsPack?.articles || [];
+  const articles = (newsPack?.articles || []).slice(0, 6);
   return (
     <Card style={{ borderLeft: `4px solid ${C.purple}`, padding: 0, overflow: "hidden", marginBottom: 20 }} className="fade-in">
       <div style={{ padding: "14px 20px 12px", background: C.white, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
@@ -5823,13 +5893,13 @@ function MarketAiPulsePanel({
             <Badge color={C.purple} bg={C.purpleBg} size="sm">On demand</Badge>
           </div>
           <div style={{ ...font.sans, fontSize: 11, color: C.textSec, marginTop: 6, lineHeight: 1.5, maxWidth: 900 }}>
-            Refresh anytime for fresh <strong style={{ color: C.text }}>FRED / Chicago Fed</strong> snapshot and <strong style={{ color: C.text }}>headlines</strong> (SerpAPI Google News).
+            Refresh anytime for fresh <strong style={{ color: C.text }}>FRED / Chicago Fed</strong>, <strong style={{ color: C.text }}>AI stock pulse</strong> (Yahoo + optional headlines per ticker), and a <strong style={{ color: C.text }}>short curated list</strong> of AI demand news (max six, ranked for relevance).
             “Drivers” combine macro rules of thumb with your <em>largest moves between the last two history points</em> on each signal — not a forecast.
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
           <Btn variant="primary" size="sm" onClick={onRefresh} disabled={loading}>
-            {loading ? <><Spinner size={12} color="#fff" /> Updating…</> : <><IcoC name="refresh" size={12} color="#fff" /> Refresh macro &amp; news</>}
+            {loading ? <><Spinner size={12} color="#fff" /> Updating…</> : <><IcoC name="refresh" size={12} color="#fff" /> Refresh macro, stocks &amp; news</>}
           </Btn>
           <Btn variant="ghost" size="sm" onClick={onToggleCollapsed}>{collapsed ? "Expand" : "Collapse"}</Btn>
         </div>
@@ -5840,7 +5910,15 @@ function MarketAiPulsePanel({
           {overview?.fetched_at && (
             <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginBottom: 10 }}>
               Macro data pulled {new Date(overview.fetched_at).toLocaleString()}
+              {stockPack?.fetched_at && ` · Stocks ${new Date(stockPack.fetched_at).toLocaleString()}`}
               {newsPack?.fetched_at && ` · Headlines ${new Date(newsPack.fetched_at).toLocaleString()}`}
+            </div>
+          )}
+          {!overview?.fetched_at && (stockPack?.fetched_at || newsPack?.fetched_at) && (
+            <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginBottom: 10 }}>
+              {stockPack?.fetched_at && <>Stocks {new Date(stockPack.fetched_at).toLocaleString()}</>}
+              {stockPack?.fetched_at && newsPack?.fetched_at && " · "}
+              {newsPack?.fetched_at && <>Headlines {new Date(newsPack.fetched_at).toLocaleString()}</>}
             </div>
           )}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 8, marginBottom: 12 }}>
@@ -5860,6 +5938,50 @@ function MarketAiPulsePanel({
               <div style={{ fontSize: 9, color: C.textMuted, marginTop: 2 }}>NFCI {pick("NFCI")}</div>
             </div>
           </div>
+          {stockPack?.stocks?.length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ ...font.sans, fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>
+                STOCK PULSE · {(stockPack.week_key || "").replace(/^\d{4}-/, "") || "—"}
+              </div>
+              <div style={{ ...font.sans, fontSize: 9, color: C.textMuted, marginBottom: 8, lineHeight: 1.45 }}>
+                Delayed quotes via Yahoo. Right column is the top Google News match per ticker when SerpAPI is configured; otherwise a static “what to watch” lens.
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {stockPack.stocks.map((s) => {
+                  const ch = s.private ? C.green : s.changePct == null ? C.textMuted : s.changePct >= 0 ? C.green : C.red;
+                  return (
+                    <div
+                      key={s.ticker}
+                      style={{
+                        display: "flex",
+                        alignItems: "stretch",
+                        gap: 14,
+                        padding: "12px 14px",
+                        background: C.white,
+                        borderRadius: 10,
+                        border: `1px solid ${C.borderLight}`,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <div style={{ width: 92, flexShrink: 0 }}>
+                        <div style={{ ...font.mono, fontSize: 17, fontWeight: 800, color: C.text }}>{s.ticker}</div>
+                        <div style={{ ...font.sans, fontSize: 11, color: C.textMuted, marginTop: 2 }}>{s.priceDisplay}</div>
+                      </div>
+                      <div style={{ width: 110, flexShrink: 0, display: "flex", alignItems: "center" }}>
+                        <span style={{ ...font.mono, fontSize: 13, fontWeight: 700, color: ch }}>{s.changeLabel}</span>
+                      </div>
+                      <div style={{ flex: "1 1 200px", ...font.sans, fontSize: 11, color: C.textSec, lineHeight: 1.55, padding: "2px 0" }}>
+                        {s.note}
+                        {s.noteSource === "news" && (
+                          <span style={{ fontSize: 9, color: C.textMuted, marginLeft: 4 }}>(news headline)</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           {macroDrivers.length > 0 && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ ...font.sans, fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 6 }}>Likely macro drivers (heuristic)</div>
@@ -5882,23 +6004,98 @@ function MarketAiPulsePanel({
               </ul>
             </div>
           )}
-          <div>
-            <div style={{ ...font.sans, fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 6 }}>AI &amp; tech market headlines</div>
-            {!articles.length && !loading && (
-              <div style={{ fontSize: 11, color: C.textMuted }}>Click refresh to load headlines (requires SerpAPI key on the server).</div>
+          <div style={{ marginTop: 4, borderTop: `1px solid ${C.borderLight}`, paddingTop: 10 }}>
+            <button
+              type="button"
+              onClick={() => setNewsOpen((o) => !o)}
+              style={{
+                ...font.sans,
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 8,
+                padding: "8px 10px",
+                borderRadius: 8,
+                border: `1px solid ${C.borderLight}`,
+                background: C.nested,
+                cursor: "pointer",
+                textAlign: "left",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: C.text }}>AI demand news</span>
+                {articles.length > 0 && (
+                  <Badge color={C.cyan} bg={C.cyanBg} size="sm">
+                    {articles.length} pick{articles.length === 1 ? "" : "s"}
+                  </Badge>
+                )}
+                {newsPack?.curation && (
+                  <span style={{ fontSize: 9, color: C.textMuted }}>
+                    scanned {newsPack.curation.raw_count} · ranked
+                  </span>
+                )}
+              </div>
+              <span style={{ fontSize: 10, color: C.textMuted, flexShrink: 0 }}>{newsOpen ? "Hide ▴" : "Show ▾"}</span>
+            </button>
+            {!articles.length && !loading && newsOpen && (
+              <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginTop: 6, paddingLeft: 2 }}>
+                Run refresh after SerpAPI is configured. Items are filtered for datacenter, semis, hyperscaler spend, and earnings — not generic stock tips.
+              </div>
             )}
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {articles.map((a, i) => (
-                <div key={i} style={{ padding: "10px 12px", background: C.nested, borderRadius: 8, border: `1px solid ${C.borderLight}` }}>
-                  <div style={{ ...font.sans, fontSize: 12, fontWeight: 600, color: C.text, lineHeight: 1.4 }}>{a.title}</div>
-                  <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginTop: 4 }}>{a.source}{a.date ? ` · ${a.date}` : ""}</div>
-                  {a.snippet && <div style={{ ...font.sans, fontSize: 11, color: C.textSec, marginTop: 6, lineHeight: 1.45 }}>{a.snippet}</div>}
-                  {a.link && (
-                    <a href={a.link} target="_blank" rel="noopener noreferrer" style={{ ...font.sans, fontSize: 10, color: C.cyan, marginTop: 6, display: "inline-block" }}>Open article</a>
-                  )}
-                </div>
-              ))}
-            </div>
+            {newsOpen && articles.length > 0 && (
+              <div
+                style={{
+                  marginTop: 6,
+                  maxHeight: 200,
+                  overflowY: "auto",
+                  borderRadius: 8,
+                  border: `1px solid ${C.borderLight}`,
+                  background: C.white,
+                }}
+              >
+                {articles.map((a, i) => (
+                  <div
+                    key={`${a.link || ""}-${i}`}
+                    style={{
+                      padding: "6px 10px",
+                      borderBottom: i < articles.length - 1 ? `1px solid ${C.borderLight}` : "none",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 8, justifyContent: "space-between" }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div
+                          style={{ ...font.sans, fontSize: 11, fontWeight: 600, color: C.text, lineHeight: 1.35 }}
+                          title={a.snippet ? `${a.title}\n\n${a.snippet}` : a.title}
+                        >
+                          {a.title}
+                        </div>
+                        <div style={{ ...font.sans, fontSize: 9, color: C.textMuted, marginTop: 2 }}>
+                          {a.source}
+                          {a.date ? ` · ${a.date}` : ""}
+                        </div>
+                      </div>
+                      {a.link && (
+                        <a
+                          href={a.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ ...font.sans, fontSize: 10, color: C.cyan, flexShrink: 0, fontWeight: 600 }}
+                          title="Open"
+                        >
+                          ↗
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {newsPack?.curation?.note && newsOpen && articles.length > 0 && (
+              <div style={{ ...font.sans, fontSize: 9, color: C.textMuted, marginTop: 4, lineHeight: 1.35, paddingLeft: 2 }}>
+                {newsPack.curation.note}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -5946,6 +6143,7 @@ export default function App() {
   const [briefReaderMode,setBriefReaderMode]=useState(false);
   const [pulseOverview,setPulseOverview]=useState(null);
   const [pulseNews,setPulseNews]=useState(null);
+  const [pulseStocks,setPulseStocks]=useState(null);
   const [pulseLoading,setPulseLoading]=useState(false);
   const [pulseErr,setPulseErr]=useState(null);
   const [pulseCollapsed,setPulseCollapsed]=useState(false);
@@ -6009,6 +6207,7 @@ export default function App() {
     const c = ld(PULSE_CACHE_KEY, null);
     if (c?.overview) setPulseOverview(c.overview);
     if (c?.news) setPulseNews(c.news);
+    if (c?.stocks) setPulseStocks(c.stocks);
   }, []);
 
   useEffect(() => {
@@ -6186,10 +6385,15 @@ export default function App() {
     setPulseLoading(true);
     setPulseErr(null);
     try{
-      const [rMacro,rNews]=await Promise.allSettled([fetch("/api/labor/overview"),fetch("/api/ai-news")]);
+      const [rMacro,rNews,rStock]=await Promise.allSettled([
+        fetch("/api/labor/overview"),
+        fetch("/api/ai-news"),
+        fetch("/api/stock-pulse"),
+      ]);
       const errs=[];
       let overview=null;
       let newsPack=null;
+      let stockPack=null;
       if(rMacro.status==="fulfilled"&&rMacro.value.ok){
         overview=await rMacro.value.json().catch(()=>null);
         if(overview) {
@@ -6216,9 +6420,24 @@ export default function App() {
         const msg=rNews.status==="fulfilled"?(await rNews.value.json().catch(()=>({}))).error||`${rNews.value.status}`:String(rNews.reason||"news fetch failed");
         errs.push(`News: ${msg}`);
       }
+      if(rStock.status==="fulfilled"&&rStock.value.ok){
+        stockPack=await rStock.value.json().catch(()=>null);
+        if(stockPack) setPulseStocks(stockPack);
+      } else {
+        const msg=rStock.status==="fulfilled"?(await rStock.value.json().catch(()=>({}))).error||`${rStock.value.status}`:String(rStock.reason||"stock pulse fetch failed");
+        errs.push(`Stocks: ${msg}`);
+      }
       if(errs.length) setPulseErr(errs.join(" · "));
-      if(overview||newsPack){
-        try{ sv(PULSE_CACHE_KEY,{ overview: overview||ld(PULSE_CACHE_KEY,null)?.overview, news: newsPack||ld(PULSE_CACHE_KEY,null)?.news, savedAt: Date.now() }); }catch{}
+      if(overview||newsPack||stockPack){
+        const prev=ld(PULSE_CACHE_KEY,null)||{};
+        try{
+          sv(PULSE_CACHE_KEY,{
+            overview: overview||prev.overview,
+            news: newsPack||prev.news,
+            stocks: stockPack||prev.stocks,
+            savedAt: Date.now(),
+          });
+        }catch{}
       }
       const pat=resolveGitPat();if(pat||signalStoreSecret()||databaseStoreSecret()) debouncedSyncToGist(pat,4000);
     }catch(e){
@@ -6818,9 +7037,34 @@ export default function App() {
         if (Math.abs(jobMom - trendMom) > 25) divergences.push({ pair: "jobs_momentum_vs_trends_momentum", job_momentum_pct: jobMom, trend_momentum_pct: trendMom, delta: jobMom - trendMom, interpretation: jobMom > trendMom ? "Hiring acceleration outpacing search interest — conviction-driven build phase" : "Search interest surging ahead of hiring — awareness phase, not yet commitment" });
       }
 
+      const ckwRaw = v.keywords?.claude_attrib?.keywords;
+      const ckwArr = Array.isArray(ckwRaw) ? ckwRaw.filter(Boolean) : (ckwRaw ? [ckwRaw] : []);
+      const claudeHasSectorKeywords = ckwArr.length > 0;
+      if (!claudeHasSectorKeywords) {
+        dq.push(`${v.name}: Claude Attribution has no keywords — GitHub total_count is global (all Co-Authored-By: Claude commits), not specific to this group.`);
+      }
+
       return {
         name: v.name,
         keywords: v.keywords,
+        signal_sanity: {
+          claude_github_query: {
+            has_sector_keywords: claudeHasSectorKeywords,
+            keywords_used: ckwArr,
+            meaning: claudeHasSectorKeywords
+              ? "Claude row = GitHub commit search with co-author signature AND these keywords in the ~7d window."
+              : "Claude row = GitHub commit search for co-author signature only (~7d), NOT filtered by this group's theme. Do not interpret vs other groups that use keywords.",
+          },
+          job_postings: {
+            count: jobCount,
+            thin_history: (jobTs?.data_points || 0) < 5,
+            small_sample: jobCount < 25,
+            note: "TheirStack = postings matching keywords in the configured window, not hires, headcount, or revenue.",
+          },
+          google_trends: {
+            note: "Index is 0–100 relative to that keyword's own peak in the chart window — not search volume and not comparable across groups.",
+          },
+        },
         pipeline_stage: { index: stage.index + 1, label: stage.name, description: stage.description || "" },
         signals: {
           job_postings: {
@@ -6881,6 +7125,12 @@ export default function App() {
     const hfHist = getSignalHistory("hf_total");
     const hfTimeSeries = buildTimeSeries(hfHist);
 
+    const anyGlobalClaude = verticalsCtx.some((v) => !v.signal_sanity?.claude_github_query?.has_sector_keywords);
+    const anyScopedClaude = verticalsCtx.some((v) => v.signal_sanity?.claude_github_query?.has_sector_keywords);
+    if (anyGlobalClaude && anyScopedClaude) {
+      dq.push("Claude counts are not comparable across groups while some rows use global GitHub search (no keywords) and others use keyword filters.");
+    }
+
     const fingerprint = JSON.stringify(Object.keys(signalResults).sort().map((k) => [k, signalResults[k]?.count ?? 0]));
 
     // Compute threshold-flagged signals: which metrics crossed the user's brief thresholds this week
@@ -6900,7 +7150,40 @@ export default function App() {
         const chg3w = ts?.pct_change_3_weeks;
         const zScore = ts?.z_score_current;
         const crossed = (chg3w != null && Math.abs(chg3w) >= threshold) || (wow != null && Math.abs(wow) >= threshold) || (zScore != null && Math.abs(zScore) >= 2.0);
-        const entry = { vertical: v.name, signal: label, source, threshold, wow_1w: wow, change_3w: chg3w, z_score: zScore, crossed };
+        const caveats = [];
+        if (source === "claude_attrib") {
+          const ckw = v.keywords?.claude_attrib?.keywords;
+          const ckwArr = Array.isArray(ckw) ? ckw.filter(Boolean) : (ckw ? [ckw] : []);
+          if (!ckwArr.length) {
+            caveats.push("CLAUDE_GLOBAL_QUERY: count is all GitHub commits with Co-Authored-By Claude (~7d), not sector-specific. Do not spin as healthcare/vertical demand.");
+          }
+          if (chg3w != null && Math.abs(chg3w) >= 200) {
+            caveats.push("EXTREME_3W_PCT: usually sparse history or near-zero baseline — treat as data artifact until verified, not proportional demand.");
+          }
+          if ((ts?.data_points || 0) < 5) caveats.push("THIN_HISTORY: few stored points — volatility is expected.");
+        }
+        if (source === "theirstack") {
+          const jc = v.signals?.job_postings?.current_count ?? 0;
+          if (jc < 25) caveats.push("SMALL_N_JOBS: low posting count — do not call 'all-time high' unless JSON explicitly marks is_at_all_time_high AND you state the n.");
+          caveats.push("JOBS_ARE_MATCHES_NOT_HIRES: TheirStack keyword hits, not confirmed roles.");
+        }
+        if (source === "google_trends") {
+          caveats.push("TRENDS_INDEX_NOT_VOLUME: 0–100 index vs own peak in window.");
+        }
+        const entry = {
+          vertical: v.name,
+          signal: label,
+          source,
+          threshold,
+          wow_1w: wow,
+          change_3w: chg3w,
+          z_score: zScore,
+          crossed,
+          caveats,
+          latest_value: ts?.latest_value ?? null,
+          previous_value: ts?.previous_value ?? null,
+          data_points: ts?.data_points ?? null,
+        };
         if (crossed) flaggedSignals.push(entry);
         else quietSignals.push(entry);
       });
@@ -6910,17 +7193,41 @@ export default function App() {
       const hfWow = hfTimeSeries.pct_change_vs_previous;
       const hfChg3w = hfTimeSeries.pct_change_3_weeks;
       const hfCrossed = (hfChg3w != null && Math.abs(hfChg3w) >= hfThresh) || (hfWow != null && Math.abs(hfWow) >= hfThresh);
-      (hfCrossed ? flaggedSignals : quietSignals).push({ vertical: "Global", signal: "HuggingFace Downloads", source: "hf_downloads", threshold: hfThresh, wow_1w: hfWow, change_3w: hfChg3w, crossed: hfCrossed });
+      (hfCrossed ? flaggedSignals : quietSignals).push({
+        vertical: "Global",
+        signal: "HuggingFace Downloads",
+        source: "hf_downloads",
+        threshold: hfThresh,
+        wow_1w: hfWow,
+        change_3w: hfChg3w,
+        crossed: hfCrossed,
+        caveats: ["HF_ORG_SUM: public model download sums — not enterprise demand or revenue."],
+        latest_value: hfTimeSeries?.latest_value ?? null,
+        previous_value: hfTimeSeries?.previous_value ?? null,
+        data_points: hfTimeSeries?.data_points ?? null,
+      });
     }
 
-    // Conviction ratings: how many independent sources confirm the same move per vertical
+    // Conviction ratings — capped when data-integrity caveats exist (prevents "HIGH" on misleading Claude %).
     const convictionByVertical = {};
     verticalsCtx.forEach(v => {
       const flaggedForVert = flaggedSignals.filter(f => f.vertical === v.name);
       const confirming = flaggedForVert.length;
       const sameDirection = flaggedForVert.length >= 2 && flaggedForVert.every(f => (f.change_3w || f.wow_1w || 0) >= 0) || flaggedForVert.every(f => (f.change_3w || f.wow_1w || 0) <= 0);
-      const rating = confirming >= 3 ? "HIGH" : confirming === 2 && sameDirection ? "MEDIUM" : confirming >= 1 ? "SPECULATIVE" : null;
-      if (rating) convictionByVertical[v.name] = { rating, confirming_sources: flaggedForVert.map(f => f.signal), direction: flaggedForVert[0]?.change_3w >= 0 ? "accelerating" : "decelerating" };
+      let rating = confirming >= 3 ? "HIGH" : confirming === 2 && sameDirection ? "MEDIUM" : confirming >= 1 ? "SPECULATIVE" : null;
+      const hasIntegrityCaveat = flaggedForVert.some((f) =>
+        (f.caveats || []).some((c) => c.startsWith("CLAUDE_GLOBAL_QUERY") || c.startsWith("EXTREME_3W_PCT") || c.startsWith("SMALL_N_JOBS")),
+      );
+      if (hasIntegrityCaveat && rating === "HIGH") rating = "SPECULATIVE";
+      if (hasIntegrityCaveat && rating === "MEDIUM") rating = "SPECULATIVE";
+      if (rating) {
+        convictionByVertical[v.name] = {
+          rating,
+          confirming_sources: flaggedForVert.map((f) => f.signal),
+          direction: flaggedForVert[0]?.change_3w >= 0 ? "accelerating" : "decelerating",
+          capped_for_data_integrity: hasIntegrityCaveat,
+        };
+      }
     });
     flaggedSignals.forEach(f => {
       f.conviction = convictionByVertical[f.vertical]?.rating || "SPECULATIVE";
@@ -7028,62 +7335,46 @@ export default function App() {
       tmr = setInterval(() => setBriefProgressSec((s) => Math.min(60, s + 1)), 1000);
       const apiKey = ENV_KEYS.anthropic;
       if (!apiKey) throw new Error("Missing VITE_ANTHROPIC_API_KEY");
-      const stockTickers = ["MSFT", "AAPL", "NVDA", "GOOGL", "META", "PLTR", "ANTH"];
-      const aiCompanies = ["Anthropic", "OpenAI", "Google DeepMind", "Meta AI", "xAI", "Mistral", "Cohere", "Databricks", "Scale AI", "Palantir"];
-      const systemPrompt = `You are a senior market intelligence analyst at a top-tier hedge fund writing an internal weekly signal brief. Your readers are portfolio managers who make allocation decisions based on this document. Every sentence must earn its place.
+      const systemPrompt = `You write an INTERNAL weekly memo for an engineering + strategy team — not marketing, not a sell-side note, not a VC blog.
 
-ABSOLUTE RULES — VIOLATING THESE INVALIDATES THE BRIEF:
-1. NEVER include URLs, links, citations, footnotes, source lists, or references of any kind. No [text](url), no "Source:", no "according to [article]". Write with authority — state facts directly.
-2. NEVER use phrases like "according to reports", "sources indicate", "based on web search". State the fact or don't include it.
-3. NEVER include a SOURCES section. The brief is self-contained.
-4. Write clean prose. No markdown links. No parenthetical citations. No reference numbers.
-5. Be SHORT. Target 1.5 printed pages. Every word must carry weight.
-6. Use 3-week change as the primary signal metric. Week-over-week is secondary confirmation.
-7. ONLY write about signals marked "crossed: true" in threshold_flagged_signals. Quiet signals get one line max in the 60-second summary.
-8. If ZERO signals are flagged, produce only REGIME + 60 SECONDS + STOCK PULSE. Skip everything else.
+GROUND TRUTH (non-negotiable):
+- Web search is OFF. You only have the JSON in the user message (plus macro_labor_context). Every numeric claim MUST already exist in that JSON path (counts, percents, z-scores, FRED values, HF downloads). If something is not in the JSON (stock prices, private valuations, bill counts, revenue run-rates, "Stanford AI Index", etc.), you MUST write exactly: **Not in dashboard snapshot** — do not fill in from memory or guess.
+- Never invent "all-time high" for job postings unless job time_series.is_at_all_time_high is true; if job counts are small, say so.
+- If threshold_flagged_signals[].caveats includes CLAUDE_GLOBAL_QUERY: you MUST explain that the Claude number is a global GitHub commit search, not evidence that this vertical adopted Claude in production.
+- If caveats include EXTREME_3W_PCT: call it a likely baseline/history artifact; do not narrate as if demand scaled by that percentage.
+- If data_quality_flags or signal_sanity warn about comparability, obey them — no cross-group Claude league tables when one side is global.
+- conviction_ratings may already be capped to SPECULATIVE for data integrity — do not upgrade language to "HIGH" in prose.
 
-USE WEB SEARCH to gather current stock prices for ${stockTickers.join(", ")} and the 3-5 most significant AI industry developments from the past 2 weeks. Synthesize findings into your own analysis — do not quote or cite the sources.
+STYLE: Short, skeptical, concrete. No hype adjectives (unparalleled, tsunami, supercycle). No fake precision. No "based on web searches".
 
-OUTPUT FORMAT — use ## headers, ━━━ separators, **bold** for key numbers:
+OUTPUT — use ## headers and ━━━ between major sections. Target under 900 words.
 
 ## REGIME
-One line. EXPANSION, SOFTENING, or CONTRACTION RISK. Based on macro data provided (Chicago Fed, unemployment, financial stress, yield curve). Then 2-3 sentences on what this means for interpreting every signal that follows.
+At most 3 sentences. Only macro_labor_context + Chicago Fed fields present in JSON. If a series is missing, say what is missing.
 
-## THE WEEK IN 60 SECONDS
-4-5 bullets. Hard numbers. What you'd say in an elevator with your CIO. Format: "● Signal: **number** (direction), implication in one clause."
+## DATA SNAPSHOT (read-only)
+One bullet per tracking group: name, pipeline_stage.label, jobs count, trends index, repos count, Claude commits_7d — each with **exact values from JSON**. One line each. No interpretation.
 
-## STOCK PULSE
-For ${stockTickers.join(", ")}: ticker, price, weekly % change, one opinionated sentence on positioning. Format as a clean list, one line per ticker. Include Anthropic private market price if findable.
+## RELIABILITY & CAVEATS
+Bullets: pull from data_quality_flags, each vertical's signal_sanity, and any non-empty caveats on flagged rows. If nothing to warn, write "No major integrity flags this week." This section is mandatory.
 
 ## FLAGGED SIGNALS
-One block per flagged signal. Structure each as:
-**[Group Name] — [Signal Type]** | Conviction: HIGH/MEDIUM/SPECULATIVE
-- Movement: state the 3-week % change, the threshold it crossed, and whether this is acceleration or deceleration
-- Forward implication: translate this signal into what it means for the next 1-3 quarters. Job postings lead revenue by 1-2 quarters. GitHub activity leads enterprise adoption by 6-18 months. Trends lead procurement by 3-9 months.
-- Regime lens: one sentence on how the current macro regime modifies interpretation
+ONLY rows where crossed === true. For each:
+**[vertical] — [signal]** (source id: …)
+- Numbers: latest_value, previous_value, wow_1w, change_3w, z_score, data_points — only if present in JSON.
+- Caveats: quote the caveats array strings verbatim (or "none").
+- Interpretation: max 2 sentences, hedged, tied only to what the metric actually measures (see signal_sanity notes).
 
-## CONVICTION CALLS
-Only if HIGH conviction exists (3+ independent sources confirming same direction). Each call:
-- **Thesis** in one sentence
-- **Evidence**: which signals converge and what the numbers are
-- **Timing**: when this thesis should manifest in earnings/revenue
-- **Exposed equities**: specific tickers (MSFT, NVDA, etc.) and notable privates, weighted by signal strength
+## TEAM ACTIONS (this week)
+Exactly 5 numbered actions a PM could assign Monday morning (e.g. "Add Claude Attribution keywords for Healthcare or stop reporting that row as sector signal", "Export raw TheirStack sample for last 14d", "Document Google Trends query strings"). Must be operational, not strategic platitudes.
+
+## RISKS (max 2)
+Each bullet must name one flagged signal + one specific failure mode testable in data next week.
 
 ## WHAT WE GOT WRONG
-If prior week data is provided: review each prior conviction call. Score as CONFIRMED, EVOLVING, or WRONG with one sentence of evidence. If no prior brief exists, omit this section entirely.
+Only if prior_week_brief exists; else omit entirely. Max 4 sentences, same honesty rules.
 
-## RISKS
-Each risk must trace directly to a specific flagged signal from this week. No generic risks. If job postings in healthcare AI are flagged, the risk is regulatory overhang on SaMD or Epic renewal cycles — not "AI regulation may change." 2-3 risks max.
-
-EXAMPLE OF IDEAL TONE AND DENSITY:
-## REGIME
-SOFTENING — Unemployment ticking to **4.5%**, financial stress low at **-0.24**, yield curve positive. Labor cooling but not contracting. AI hiring acceleration in this backdrop signals defensive capability building before potential freezes.
-
-## THE WEEK IN 60 SECONDS
-● General AI jobs: **+15%** 3-week, driven by ML engineer and platform roles — budget commitment phase
-● Agentic AI search interest: **-33%** 3-week crash — hype cycle peaked, enterprise rejected pilot ROI
-● Meta: **$135B** 2026 capex guidance, Muse Spark launch driving **+4%** stock move
-● NVDA: **+1.7%** on sustained datacenter demand despite competition fears`;
+OMIT entirely: STOCK PULSE (live prices are in the dashboard pulse, not this JSON), CONVICTION CALLS as a hyped section, generic "AI industry developments", URLs, and sources lists.`;
 
       const flaggedCount = (ctx.threshold_flagged_signals?.flagged || []).length;
       const quietCount = ctx.threshold_flagged_signals?.quiet_count || 0;
@@ -7091,12 +7382,12 @@ SOFTENING — Unemployment ticking to **4.5%**, financial stress low at **-0.24*
       const convictionNote = Object.keys(ctx.conviction_ratings || {}).length > 0 ? `\nCONVICTION RATINGS:\n${Object.entries(ctx.conviction_ratings).map(([v, r]) => `${v}: ${r.rating} (${r.confirming_sources.join(", ")}) — ${r.direction}`).join("\n")}\n` : "";
       const userPrompt = `Week: ${ctx.week} | Generated: ${ctx.generated_at}
 ${flaggedCount} signals flagged across thresholds. ${quietCount} below threshold (quiet).
-${flaggedCount === 0 ? "ZERO flags — produce REGIME + 60 SECONDS + STOCK PULSE only. Skip all other sections." : `Deep-dive the ${flaggedCount} flagged signals. Quiet signals get one summary line max.`}
+${flaggedCount === 0 ? "ZERO threshold flags — still write REGIME, DATA SNAPSHOT, RELIABILITY (note: no flags), and TEAM ACTIONS focused on data hygiene and monitoring." : `Cover each of the ${flaggedCount} flagged signals (crossed: true) with numbers + caveats + short interpretation.`}
 ${convictionNote}${priorBriefNote}
 SIGNAL DATA (do NOT cite this as a source — synthesize into your analysis):
 ${JSON.stringify(ctx, null, 1)}
 
-FINAL REMINDER: No URLs. No links. No citations. No source lists. No "[text](url)" patterns. No "Source:" lines. Write clean authoritative prose. Search the web for stock prices and AI news, then write about what you found without referencing where you found it.`;
+FINAL REMINDER: No URLs or links. No numbers or "facts" unless they appear in the JSON above. If unsure, say what is missing instead of guessing.`;
 
 
 
@@ -7111,10 +7402,9 @@ FINAL REMINDER: No URLs. No links. No citations. No source lists. No "[text](url
         },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 8000,
+          max_tokens: 4500,
           system: systemPrompt,
           messages: [{ role: "user", content: userPrompt }],
-          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }],
         }),
       });
       if (!res.ok) {
@@ -7242,7 +7532,7 @@ FINAL REMINDER: No URLs. No links. No citations. No source lists. No "[text](url
             <Btn variant={shouldPromoteBrief?"accent":"default"} size="sm" disabled={!canGenerateBrief||briefLoading} onClick={generateBrief}>
               {briefLoading ? <><Spinner size={11} color={shouldPromoteBrief?"#fff":C.textSec}/> Generating ({briefProgressSec}s)</> : lastBriefObj?.content_markdown ? "Regenerate Brief" : "Generate Brief"}
             </Btn>
-            <Btn variant="default" size="sm" disabled={pulseLoading} onClick={refreshPulse} title="FRED + Chicago Fed snapshot and AI/tech headlines (SerpAPI)">
+            <Btn variant="default" size="sm" disabled={pulseLoading} onClick={refreshPulse} title="FRED + Chicago Fed, Yahoo stock pulse, AI headlines (SerpAPI)">
               {pulseLoading ? <><Spinner size={11} color={C.textSec}/> Pulse…</> : <><IcoC name="activity" size={11} color={C.textSec}/> Macro &amp; news</>}
             </Btn>
             {briefContent && !briefLoading && <Btn variant="ghost" size="sm" onClick={()=>setBriefOpen(true)}>View Brief</Btn>}
@@ -7268,6 +7558,7 @@ FINAL REMINDER: No URLs. No links. No citations. No source lists. No "[text](url
         <MarketAiPulsePanel
           overview={pulseOverview}
           newsPack={pulseNews}
+          stockPack={pulseStocks}
           loading={pulseLoading}
           error={pulseErr}
           onRefresh={refreshPulse}
@@ -7571,7 +7862,7 @@ FINAL REMINDER: No URLs. No links. No citations. No source lists. No "[text](url
             {briefLoading ? (
               <div style={{maxWidth:480,margin:"120px auto",textAlign:"center"}}>
                 <div style={{...font.sans,fontSize:20,fontWeight:700,color:C.text,marginBottom:10,letterSpacing:"-0.02em"}}>Building your brief</div>
-                <div style={{...font.sans,fontSize:12,color:C.textMuted,marginBottom:16,lineHeight:1.6}}>Searching live markets, AI news, and analyzing your dashboard signals</div>
+                <div style={{...font.sans,fontSize:12,color:C.textMuted,marginBottom:16,lineHeight:1.6}}>Analyzing your dashboard signals and macro snapshot (no live web search in brief)</div>
                 <div style={{height:4,background:"#e5e7eb",borderRadius:999,overflow:"hidden",maxWidth:320,margin:"0 auto"}}>
                   <div style={{height:"100%",width:`${Math.min(100,Math.round((briefProgressSec/50)*100))}%`,background:C.cyan,borderRadius:999,transition:"width .5s"}} />
                 </div>
@@ -7581,8 +7872,11 @@ FINAL REMINDER: No URLs. No links. No citations. No source lists. No "[text](url
               <div style={{maxWidth:briefReaderMode&&!briefDiffMode?820:900,margin:"0 auto"}}>
                 {briefDiffMode ? (
                   <div style={{background:"#fff",border:`1px solid #e5e7eb`,borderRadius:10,padding:"28px 32px"}}>
-                    <div style={{...font.sans,fontSize:10,letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600,color:C.textMuted,borderBottom:`1px solid #f3f4f6`,paddingBottom:10,marginBottom:16}}>
-                      Diff View · {briefWeek}
+                    <div style={{...font.sans,fontSize:10,letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:600,color:C.textMuted,borderBottom:`1px solid #f3f4f6`,paddingBottom:10,marginBottom:8}}>
+                      Changes vs first save · {briefWeek}
+                    </div>
+                    <div style={{...font.sans,fontSize:12,color:C.textSec,lineHeight:1.5,marginBottom:16,maxWidth:720}}>
+                      Below: <strong style={{color:C.text}}>Added</strong> (new only in current), <strong style={{color:C.text}}>Edited</strong> (before/after columns), <strong style={{color:C.text}}>Removed</strong> (dropped since first save). Unchanged sections are collapsed so you can scan what actually moved.
                     </div>
                     <div style={{ ...font.sans, fontSize: 14, lineHeight: 1.7, color: C.text }} dangerouslySetInnerHTML={{ __html: paragraphDiffHtml(briefBaseForDiff, briefContent) }} />
                     {briefSnapshot ? <BriefSnapshotCharts ctx={briefSnapshot} /> : null}

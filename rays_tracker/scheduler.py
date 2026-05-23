@@ -6,8 +6,8 @@ import logging
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from rays_tracker.collectors import chicago_fed_collector, fred_collector
-from rays_tracker.scoring.composite import recompute_all_scores
+from .collectors import chicago_fed_collector, fred_collector
+from .scoring.composite import recompute_all_scores
 
 logger = logging.getLogger(__name__)
 

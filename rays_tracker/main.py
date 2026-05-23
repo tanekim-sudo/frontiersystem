@@ -1,4 +1,4 @@
-"""FastAPI entry — run: uvicorn rays_tracker.main:app --reload --port 8765 (from repo root, PYTHONPATH=.)"""
+"""FastAPI entry — run: uvicorn <python_package>.main:app --reload --port 8765 (from repo root, PYTHONPATH=.)"""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from rays_tracker.api.routes import router
-from rays_tracker.database import init_db
+from .api.routes import router
+from .database import init_db
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     init_db()
     try:
-        from rays_tracker.scheduler import start_scheduler
+        from .scheduler import start_scheduler
 
         start_scheduler()
     except Exception as e:
@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Rays Capital — Labor & AI Demand Tracker", lifespan=lifespan)
+app = FastAPI(title="Labor & AI Demand Tracker", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

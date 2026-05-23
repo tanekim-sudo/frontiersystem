@@ -7,8 +7,8 @@ from typing import Any
 
 import requests
 
-from rays_tracker.config import settings
-from rays_tracker.database import insert_signal
+from ..config import settings
+from ..database import insert_signal
 
 logger = logging.getLogger(__name__)
 

@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     fred_api_key: str = ""
     bls_api_key: str = ""
     github_token: str = ""
-    database_url: str = f"sqlite:///{_REPO_ROOT / 'data' / 'rays_tracker.db'}"
+    database_url: str = f"sqlite:///{_REPO_ROOT / 'data' / 'demand_tracker.db'}"
 
 
 settings = Settings()

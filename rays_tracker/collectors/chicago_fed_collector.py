@@ -12,7 +12,7 @@ from typing import Any
 import pandas as pd
 import requests
 
-from rays_tracker.database import insert_chicago_fed_row, insert_signal, utc_now_iso
+from ..database import insert_chicago_fed_row, insert_signal, utc_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ CHICAGO_FED_URL = (
     "https://www.chicagofed.org/-/media/publications/chicago-fed-labor-market-indicators/"
     "chi-labor-market-indicators.xlsx"
 )
-USER_AGENT = "RaysCapital-Research/1.0 (+https://github.com)"
+USER_AGENT = "AIDemandTracker/1.0 (+https://github.com)"
 
 
 def _find_sheet(names: list[str], predicate) -> str | None:

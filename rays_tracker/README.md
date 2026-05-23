@@ -1,4 +1,4 @@
-# Rays Capital — Labor & AI Demand Tracker (Python API)
+# Labor & AI Demand Tracker (Python API)
 
 FastAPI service that ingests **free** macro/labor data, starting with **Chicago Fed Labor Market Indicators** (public xlsx) and **FRED** (free API key).
 
@@ -6,12 +6,12 @@ FastAPI service that ingests **free** macro/labor data, starting with **Chicago 
 
 ## Setup
 
-From the **repository root** (`Rays AI Demand Tracker`):
+From the repository root:
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate   # Windows
-pip install -r rays_tracker/requirements.txt
+pip install -r <python-backend-folder>/requirements.txt
 ```
 
 Copy env keys (repo root `.env`):
@@ -21,15 +21,15 @@ FRED_API_KEY=your_fred_key
 # Optional later:
 # BLS_API_KEY=
 # GITHUB_TOKEN=
-DATABASE_URL=sqlite:///./data/rays_tracker.db
+DATABASE_URL=sqlite:///./data/demand_tracker.db
 ```
 
-Run API (set `PYTHONPATH` to repo root so `rays_tracker` imports resolve):
+Run API (set `PYTHONPATH` to repo root so package imports resolve):
 
 ```bash
 # Windows PowerShell, from repo root
 $env:PYTHONPATH = (Get-Location).Path
-python -m uvicorn rays_tracker.main:app --reload --port 8765
+python -m uvicorn <python-package>.main:app --reload --port 8765
 ```
 
 Health: `http://127.0.0.1:8765/health`
@@ -53,7 +53,7 @@ Or `POST /api/refresh/all` (FRED requires `FRED_API_KEY`).
 | GET | `/api/signals/feed` | Recent `signals` rows |
 | POST | `/api/refresh/{collector}` | `chicago_fed`, `fred`, or `all` |
 
-Collectors for Indeed, LinkedIn, pytrends, BLS detail, layoffs, etc. are **stubs**; extend under `rays_tracker/collectors/`.
+Collectors for Indeed, LinkedIn, pytrends, BLS detail, layoffs, etc. are **stubs**; extend under the Python collectors folder.
 
 ## Chicago Fed workbook
 
@@ -64,10 +64,10 @@ The parser targets sheets **`1. Rates`** and **`2. Chicago Fed Real-Time UR`** (
 
 ## SQLite
 
-Default DB path: `data/rays_tracker.db` under the repo root (created automatically).
+Default DB path: `data/demand_tracker.db` under the repo root (created automatically).
 
 ## Vite dev proxy
 
-The main React app can call the Python API via the dev-server proxy prefix **`/rays-tracker`** (see `vite.config.js`). Example:
+The main React app can call the Python API via the dev-server proxy prefix **`/tracker`** (see `vite.config.js`). Example:
 
-`fetch('/rays-tracker/api/labor/overview')` → `http://127.0.0.1:8765/api/labor/overview`
+`fetch('/tracker/api/labor/overview')` → `http://127.0.0.1:8765/api/labor/overview`
