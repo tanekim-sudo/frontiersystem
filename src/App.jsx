@@ -6,6 +6,7 @@ import { LayerOverviewPanel } from "./features/live/LayerOverviewPanel.jsx";
 import { CompanyGrid } from "./features/live/CompanyGrid.jsx";
 import { CompanySignalsPanel } from "./features/live/CompanySignalsPanel.jsx";
 import { AlertsAndBriefPanel } from "./features/live/AlertsAndBriefPanel.jsx";
+import { RealityCheckPanel } from "./features/live/RealityCheckPanel.jsx";
 
 export default function App() {
   const [activeLayer, setActiveLayer] = useState("agent");
@@ -22,6 +23,10 @@ export default function App() {
     () => companies.find((c) => c.id === selectedCompanyId) || null,
     [companies, selectedCompanyId],
   );
+  const isDegradedMode = useMemo(
+    () => (alerts?.run_health || []).some((r) => r.status === "degraded_no_database" || String(r.error_message || "").includes("DATABASE_URL")),
+    [alerts],
+  );
 
   const loadLive = useCallback(async () => {
     try {
@@ -34,7 +39,8 @@ export default function App() {
       setCompanies(co);
       setLayerOverview(lo);
       setAlerts(al);
-      const companyId = selectedCompanyId || co.find((x) => x.layer === activeLayer)?.id || co[0]?.id || null;
+      const selectedStillValid = selectedCompanyId && co.some((x) => x.id === selectedCompanyId && x.layer === activeLayer);
+      const companyId = selectedStillValid ? selectedCompanyId : (co.find((x) => x.layer === activeLayer)?.id || co[0]?.id || null);
       setSelectedCompanyId(companyId);
       if (companyId) {
         const sig = await fetchCompanySignals(companyId, 180);
@@ -95,6 +101,7 @@ export default function App() {
       />
       <CompanySignalsPanel company={selectedCompany} signals={companySignals} />
       <AlertsAndBriefPanel layer={activeLayer} company={selectedCompany} signals={companySignals} alerts={alerts} />
+      <RealityCheckPanel degraded={isDegradedMode} />
     </DashboardShell>
   );
 }

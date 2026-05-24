@@ -223,37 +223,66 @@ function fallbackLayerOverview(layer) {
     threshold_direction: m.threshold_direction ?? null,
   }));
   const layerCompanies = SEED_COMPANIES.filter((c) => c.layer === layer);
+  const nowIso = new Date().toISOString();
+  const leaderboard = [];
+  for (const c of layerCompanies) {
+    for (const m of metrics.slice(0, Math.min(metrics.length, 8))) {
+      const score = 60 + ((Math.abs((c.id + m.id).split("").reduce((a, ch) => a + ch.charCodeAt(0), 0)) % 38));
+      leaderboard.push({
+        company_id: c.id,
+        company_name: c.name,
+        metric_id: m.id,
+        value_numeric: score,
+        observed_at: nowIso,
+      });
+    }
+  }
+  leaderboard.sort((a, b) => Number(b.value_numeric || 0) - Number(a.value_numeric || 0));
+
+  const defaultCatalysts = {
+    physical_ai: [{ id: "corl", title: "CoRL proceedings annual signal pass", event_type: "research_release", event_date: "2026-11-20", importance: 3, company_id: null }],
+    voice: [{ id: "tts_bench", title: "Quarterly TTS latency benchmark refresh", event_type: "benchmark", event_date: "2026-07-10", importance: 2, company_id: "elevenlabs" }],
+    spatial: [{ id: "meta_connect", title: "Meta Connect", event_type: "annual_catalyst", event_date: "2026-09-15", importance: 3, company_id: "meta_spatial" }],
+    agent: [{ id: "eu_ai_act", title: "EU AI Act broad applicability", event_type: "regulatory", event_date: "2026-08-02", importance: 3, company_id: null }],
+    neural: [{ id: "fda_cycle", title: "Quarterly FDA BCI approvals cycle check", event_type: "regulatory", event_date: "2026-10-01", importance: 2, company_id: null }],
+  };
   return {
     layer,
     metrics,
-    leaderboard: layerCompanies.map((c, i) => ({
-      company_id: c.id,
-      company_name: c.name,
-      metric_id: metrics[0]?.id || null,
-      value_numeric: 100 - i * 4,
-      observed_at: new Date().toISOString(),
-    })),
-    catalysts: [],
+    leaderboard: leaderboard.slice(0, 40),
+    catalysts: defaultCatalysts[layer] || [],
     scorecards: layerCompanies.map((c, i) => ({
       company_id: c.id,
-      avg_metric_value: 100 - i * 4,
+      avg_metric_value: 95 - i * 3,
     })),
     momentum: layerCompanies.map((c, i) => ({
       company_id: c.id,
-      avg_momentum_pct: 5 - i,
+      avg_momentum_pct: 7 - i * 1.2,
     })),
+    source_confidence: "mock_composite",
+    data_completeness_pct: 100,
   };
 }
 
 function fallbackCompanySignals(companyId) {
   const company = SEED_COMPANIES.find((c) => c.id === companyId);
   if (!company) return [];
-  const metrics = SEED_METRICS.filter((m) => m.layer === company.layer).slice(0, 3);
+  const metrics = SEED_METRICS.filter((m) => m.layer === company.layer);
   const out = [];
   const now = Date.now();
   for (const metric of metrics) {
-    for (let i = 0; i < 12; i++) {
-      const t = new Date(now - (11 - i) * 7 * 86400000);
+    for (let i = 0; i < 16; i++) {
+      const t = new Date(now - (15 - i) * 7 * 86400000);
+      const basis = Math.abs((company.id + metric.id).split("").reduce((a, ch) => a + ch.charCodeAt(0), 0));
+      let value = 0;
+      if ((metric.unit || "").includes("usd")) value = 20_000_000 + basis * 1400 + i * 450_000;
+      else if ((metric.unit || "").includes("hours")) value = 40_000 + basis * 14 + i * 700;
+      else if ((metric.unit || "").includes("units")) value = 120_000 + basis * 9 + i * 1200;
+      else if ((metric.unit || "").includes("milliseconds")) value = 280 - (basis % 35) - i;
+      else if ((metric.unit || "").includes("percent")) value = 42 + (basis % 30) + i * 0.6;
+      else if ((metric.unit || "").includes("ratio")) value = 0.8 + (basis % 140) / 100 + i * 0.03;
+      else if ((metric.unit || "").includes("count")) value = 250 + (basis % 600) + i * 35;
+      else value = 55 + (basis % 40) + i * 1.4;
       out.push({
         company_id: company.id,
         company_name: company.name,
@@ -262,11 +291,11 @@ function fallbackCompanySignals(companyId) {
         metric_name: metric.name,
         unit: metric.unit,
         source_id: "demo_fallback",
-        value_numeric: 80 + i * 2 + (Math.abs(metric.id.length - company.id.length) % 7),
+        value_numeric: Number(value.toFixed(3)),
         value_text: null,
         confidence: "medium",
         observed_at: t.toISOString(),
-        raw_json: { mode: "degraded_demo" },
+        raw_json: { mode: "degraded_demo", source_type: "mock", collector: "seeded_final_state_preview" },
       });
     }
   }
