@@ -1,4 +1,4 @@
-import { authorizedLive, makeJobId, withLiveDb } from "../lib/server/live-db.js";
+import { SEED_COMPANIES, SEED_METRICS, authorizedLive, makeJobId, withLiveDb } from "../lib/server/live-db.js";
 
 function parseQuery(req) {
   if (req.query && typeof req.query === "object") return req.query;
@@ -213,6 +213,91 @@ async function enqueueIngestion(client, body) {
   return inserted;
 }
 
+function fallbackLayerOverview(layer) {
+  const metrics = SEED_METRICS.filter((m) => m.layer === layer).map((m) => ({
+    id: m.id,
+    name: m.name,
+    unit: m.unit,
+    cadence: m.cadence,
+    threshold_value: m.threshold_value ?? null,
+    threshold_direction: m.threshold_direction ?? null,
+  }));
+  const layerCompanies = SEED_COMPANIES.filter((c) => c.layer === layer);
+  return {
+    layer,
+    metrics,
+    leaderboard: layerCompanies.map((c, i) => ({
+      company_id: c.id,
+      company_name: c.name,
+      metric_id: metrics[0]?.id || null,
+      value_numeric: 100 - i * 4,
+      observed_at: new Date().toISOString(),
+    })),
+    catalysts: [],
+    scorecards: layerCompanies.map((c, i) => ({
+      company_id: c.id,
+      avg_metric_value: 100 - i * 4,
+    })),
+    momentum: layerCompanies.map((c, i) => ({
+      company_id: c.id,
+      avg_momentum_pct: 5 - i,
+    })),
+  };
+}
+
+function fallbackCompanySignals(companyId) {
+  const company = SEED_COMPANIES.find((c) => c.id === companyId);
+  if (!company) return [];
+  const metrics = SEED_METRICS.filter((m) => m.layer === company.layer).slice(0, 3);
+  const out = [];
+  const now = Date.now();
+  for (const metric of metrics) {
+    for (let i = 0; i < 12; i++) {
+      const t = new Date(now - (11 - i) * 7 * 86400000);
+      out.push({
+        company_id: company.id,
+        company_name: company.name,
+        layer: company.layer,
+        metric_id: metric.id,
+        metric_name: metric.name,
+        unit: metric.unit,
+        source_id: "demo_fallback",
+        value_numeric: 80 + i * 2 + (Math.abs(metric.id.length - company.id.length) % 7),
+        value_text: null,
+        confidence: "medium",
+        observed_at: t.toISOString(),
+        raw_json: { mode: "degraded_demo" },
+      });
+    }
+  }
+  return out;
+}
+
+function fallbackResponse(resource, query) {
+  if (!resource || resource === "companies") {
+    return {
+      resource: "companies",
+      data: SEED_COMPANIES.map((c) => ({ ...c, active: true, latest_signals: [] })),
+    };
+  }
+  if (resource === "layer_overview") {
+    const layer = String(query.layer || "agent");
+    return { resource: "layer_overview", data: fallbackLayerOverview(layer) };
+  }
+  if (resource === "company_signals") {
+    const companyId = String(query.company_id || "").trim();
+    if (!companyId) throw new Error("company_id is required");
+    return { resource: "company_signals", data: fallbackCompanySignals(companyId) };
+  }
+  if (resource === "alerts") {
+    return { resource: "alerts", data: { threshold_hits: [], run_health: [{ collector_id: "live_backend", layer: "system", status: "degraded_no_database", started_at: new Date().toISOString(), finished_at: null, error_message: "DATABASE_URL not configured" }] } };
+  }
+  if (resource === "jobs") {
+    return { resource: "jobs", data: [] };
+  }
+  throw new Error(`Unknown resource: ${resource}`);
+}
+
 export default async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(204).end();
   const q = parseQuery(req);
@@ -225,39 +310,59 @@ export default async function handler(req, res) {
       if (resource !== "enqueue") {
         return res.status(400).json({ error: "POST supports only resource=enqueue" });
       }
-      const jobs = await withLiveDb((client) => enqueueIngestion(client, body));
-      return res.status(200).json({ ok: true, jobs });
+      try {
+        const jobs = await withLiveDb((client) => enqueueIngestion(client, body));
+        return res.status(200).json({ ok: true, jobs });
+      } catch (e) {
+        if ((e.message || "").includes("DATABASE_URL")) {
+          return res.status(200).json({ ok: true, degraded: true, jobs: [], note: "Live database not configured; enqueue accepted in no-op mode." });
+        }
+        throw e;
+      }
     }
 
     if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
 
-    const data = await withLiveDb(async (client) => {
-      if (!resource || resource === "companies") return { resource: "companies", data: await listCompanies(client) };
-      if (resource === "layer_overview") {
-        const layer = String(q.layer || "agent");
-        return { resource: "layer_overview", data: await layerOverview(client, layer) };
+    try {
+      const data = await withLiveDb(async (client) => {
+        if (!resource || resource === "companies") return { resource: "companies", data: await listCompanies(client) };
+        if (resource === "layer_overview") {
+          const layer = String(q.layer || "agent");
+          return { resource: "layer_overview", data: await layerOverview(client, layer) };
+        }
+        if (resource === "company_signals") {
+          const companyId = String(q.company_id || "").trim();
+          if (!companyId) throw new Error("company_id is required");
+          const days = Number(q.days || 120);
+          return { resource: "company_signals", data: await companySignals(client, companyId, days) };
+        }
+        if (resource === "alerts") {
+          return { resource: "alerts", data: await liveAlerts(client) };
+        }
+        if (resource === "jobs") {
+          const jobs = await client.query(
+            `select id, job_type, layer, company_id, status, scheduled_at, attempts, last_error
+             from public.ingestion_jobs
+             order by scheduled_at desc
+             limit 200`,
+          );
+          return { resource: "jobs", data: jobs.rows };
+        }
+        throw new Error(`Unknown resource: ${resource}`);
+      });
+      return res.status(200).json({ ...data, fetched_at: new Date().toISOString() });
+    } catch (e) {
+      if ((e.message || "").includes("DATABASE_URL")) {
+        const data = fallbackResponse(resource, q);
+        return res.status(200).json({
+          ...data,
+          degraded: true,
+          note: "DATABASE_URL not configured; serving fallback seeded live data.",
+          fetched_at: new Date().toISOString(),
+        });
       }
-      if (resource === "company_signals") {
-        const companyId = String(q.company_id || "").trim();
-        if (!companyId) throw new Error("company_id is required");
-        const days = Number(q.days || 120);
-        return { resource: "company_signals", data: await companySignals(client, companyId, days) };
-      }
-      if (resource === "alerts") {
-        return { resource: "alerts", data: await liveAlerts(client) };
-      }
-      if (resource === "jobs") {
-        const jobs = await client.query(
-          `select id, job_type, layer, company_id, status, scheduled_at, attempts, last_error
-           from public.ingestion_jobs
-           order by scheduled_at desc
-           limit 200`,
-        );
-        return { resource: "jobs", data: jobs.rows };
-      }
-      throw new Error(`Unknown resource: ${resource}`);
-    });
-    return res.status(200).json({ ...data, fetched_at: new Date().toISOString() });
+      throw e;
+    }
   } catch (e) {
     return res.status(500).json({ error: e.message || String(e), resource });
   }
