@@ -481,10 +481,90 @@ function interfaceLayerApiDevPlugin() {
   };
 }
 
+/** Serves /api/live during `vite` dev. */
+function liveApiDevPlugin() {
+  return {
+    name: 'live-api-dev',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        const pathOnly = (req.url || '').split('?')[0];
+        if (pathOnly !== '/api/live') return next();
+        if (req.method === 'OPTIONS') {
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.statusCode = 204;
+          res.end();
+          return;
+        }
+        const readBody = () =>
+          new Promise((resolve, reject) => {
+            let b = '';
+            req.on('data', (c) => { b += c; });
+            req.on('end', () => resolve(b));
+            req.on('error', reject);
+          });
+
+        const bodyStr = req.method === 'GET' ? '' : await readBody();
+        let bodyObj = {};
+        if (bodyStr) {
+          try { bodyObj = JSON.parse(bodyStr); } catch { bodyObj = {}; }
+        }
+        const mode = server.config.mode;
+        const rootEnv = loadEnv(mode, process.cwd(), '');
+        const prev = {
+          DATABASE_URL: process.env.DATABASE_URL,
+          DASHBOARD_STORE_SECRET: process.env.DASHBOARD_STORE_SECRET,
+        };
+        process.env.DATABASE_URL = rootEnv.DATABASE_URL || '';
+        process.env.DASHBOARD_STORE_SECRET = rootEnv.DASHBOARD_STORE_SECRET || '';
+        const mockReq = {
+          method: req.method,
+          headers: req.headers,
+          query: Object.fromEntries(new URL(req.url || '', 'http://localhost').searchParams),
+          body: bodyObj,
+          url: req.url,
+          on: req.on.bind(req),
+        };
+        const mockRes = {
+          statusCode: 200,
+          status(c) { this.statusCode = c; return this; },
+          setHeader(k, v) { res.setHeader(k, v); },
+          json(obj) {
+            if (!res.headersSent) {
+              res.setHeader('Access-Control-Allow-Origin', '*');
+              res.setHeader('Content-Type', 'application/json');
+              res.statusCode = this.statusCode || 200;
+              res.end(JSON.stringify(obj));
+            }
+          },
+          end(chunk) {
+            if (!res.headersSent) {
+              res.statusCode = this.statusCode || 200;
+              res.end(chunk ?? '');
+            }
+          },
+        };
+        try {
+          const { default: handler } = await import('./api/live.js');
+          await handler(mockReq, mockRes);
+        } catch (e) {
+          if (!res.headersSent) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: e.message || String(e) }));
+          }
+        } finally {
+          process.env.DATABASE_URL = prev.DATABASE_URL;
+          process.env.DASHBOARD_STORE_SECRET = prev.DASHBOARD_STORE_SECRET;
+        }
+      });
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
-    plugins: [react(), laborApiDevPlugin(), signalStoreApiDevPlugin(), dashboardStateApiDevPlugin(), dashboardHealthApiDevPlugin(), aiNewsApiDevPlugin(), stockPulseApiDevPlugin(), interfaceLayerApiDevPlugin()],
+    plugins: [react(), laborApiDevPlugin(), signalStoreApiDevPlugin(), dashboardStateApiDevPlugin(), dashboardHealthApiDevPlugin(), aiNewsApiDevPlugin(), stockPulseApiDevPlugin(), interfaceLayerApiDevPlugin(), liveApiDevPlugin()],
     server: {
       open: true,
       port: 5173,

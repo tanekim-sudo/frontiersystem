@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from '../AISignalDashboard.jsx';
+import App from './App.jsx';
 
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null, info: null }; }

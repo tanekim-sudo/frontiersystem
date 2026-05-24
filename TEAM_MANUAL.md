@@ -1,174 +1,103 @@
-# Interface-Layer Intelligence Tracker — Team Manual
+# Live Interface-Transition Platform — Operations Manual
 
 ## Mission
 
-This platform tracks the interface layer of AI adoption across five investable transitions:
+Operate a live, multi-company intelligence system for interface-layer transitions across:
 
-1. Physical AI
-2. Voice
-3. Spatial
-4. Agent
-5. Neural
+- `physical_ai`
+- `voice`
+- `spatial`
+- `agent`
+- `neural`
 
-The system keeps all existing signal infrastructure (jobs, trends, GitHub, Claude attribution, macro, HuggingFace, briefs) and reorganizes research workflow around layer-specific operating dashboards.
+The production target is always-on ingestion with external workers, normalized storage, and a dense PM-grade dashboard for ranking and timing transitions.
 
----
+## Runtime Architecture
 
-## Operating Model
+- Frontend and read APIs run on Vercel.
+- Live ingestion runs in external workers (`workers/`).
+- Canonical data lives in Postgres/Supabase using normalized tables (`migrations/001_live_interface_platform.sql`).
+- `dashboard_state` remains for user state and UI preferences; it is no longer the primary signal store.
 
-### Layer tabs
+## Live Data Model
 
-Use the top-level layer tabs as the primary navigation model:
+Core entities:
 
-- `Physical AI`
-- `Voice`
-- `Spatial`
-- `Agent`
-- `Neural`
+- `companies`
+- `metric_definitions`
+- `observations`
+- `ingestion_jobs`
+- `ingestion_runs`
+- `catalyst_events`
 
-Each layer tab contains:
+### Data quality rules
 
-- canonical signal definitions
-- manual data-entry controls
-- stored signal history
-- analyst notes
-- catalyst/event markers
-- integration status (stub/live)
+- Every observation must include:
+  - `company_id`
+  - `metric_id`
+  - `source_id`
+  - `observed_at`
+- Upserts are idempotent on `(company_id, metric_id, source_id, observed_at)`.
+- Use `ingestion_run_id` for full traceability.
 
-### Existing signals (preserved)
+## Ingestion Operations
 
-The prior infrastructure remains active and refreshable under the `Agent` layer context:
+### Scheduler
 
-- TheirStack jobs
-- Google Trends
-- GitHub repo velocity
-- Claude code attribution
-- HuggingFace leaderboard
-- Macro/news pulse
-- Weekly brief generation
+- Enqueue by cadence and priority.
+- Never scrape inside web request paths.
+- Use `ingestion_jobs` for orchestration and retries.
 
----
+### Worker loop
 
-## Signal Framework by Layer
+- Lease queued jobs with skip-locked semantics.
+- Execute collector pipeline: fetch -> normalize -> validate -> upsert.
+- Record run status and counts in `ingestion_runs`.
+- Requeue failed jobs with bounded attempts and backoff.
 
-## 1) Physical AI
+## API Contract (Live)
 
-- Production hours database (Formic, Agility, Zipline, Waymo)
-- Teradyne UR ASP (quarterly)
-- Deployment+operations / R&D hiring ratio
-- Sim-to-real transfer reliability
+Single live surface: `/api/live`
 
-Falsification rule:
+- `GET ?resource=companies`
+- `GET ?resource=layer_overview&layer=<layer>`
+- `GET ?resource=company_signals&company_id=<id>&days=<n>`
+- `GET ?resource=alerts`
+- `GET ?resource=jobs`
+- `POST ?resource=enqueue` (requires `Authorization: Bearer DASHBOARD_STORE_SECRET`)
 
-- If contact-rich sim-to-real reliability sustains >=85%, real-world deployment-data moat weakens materially.
+## Dashboard Usage
 
-## 2) Voice
+The new shell is live-first:
 
-- ElevenLabs ARR trajectory
-- Cartesia commit velocity and SDK breadth
-- Ambient voice DAU/MAU (presence apps, not chatbot usage)
-- Enterprise voice AI job velocity (Fortune 500)
-- TTS latency benchmark composite
+- Layer overview
+- Leader/laggard ranking
+- Catalyst rail
+- Company trajectory charts
+- Live alerts and run-health
+- Live brief workspace
 
-## 3) Spatial
+Automatic fallback to legacy dashboard occurs if live backend is unavailable.
 
-- Meta Ray-Ban inferred units
-- Himax AR/VR revenue
-- Spatial SDK downloads
-- Waveguide manufacturing-hire signal
-- Annual catalyst: Meta Connect
+## Environment
 
-## 4) Agent
+Required for live platform:
 
-- OSWorld benchmark success rate
-- Enterprise software deployment+governance / research jobs ratio
-- Governance-infra GitHub velocity
-- NRR vs gross margin false-moat signature
-- Pilot-to-production conversion rate
-- Regulatory catalyst: EU AI Act full applicability (2026-08-02)
+- `DATABASE_URL`
+- `DASHBOARD_STORE_SECRET`
 
-## 5) Neural
+Worker controls:
 
-- Patient implant count
-- Electrode count trajectory by generation
-- FDA milestone tracker
-- Through-skull ultrasound resolution signals
-- S-1 filing watchlist for major private BCI companies
+- `WORKER_ID`
+- `WORKER_POLL_SECONDS`
+- `WORKER_BATCH_SIZE`
 
----
+Keep browser-exposed secrets (`VITE_*`) for client-only features only.
 
-## Data Capture Protocol
+## Migration and Cutover
 
-For each manual datapoint, capture:
-
-- `value`
-- `period` (e.g., `2026-W22`, `2026-Q3`, `2026-05`)
-- `source note` (filing, release, transcript, primary call)
-- `confidence` (`low`, `medium`, `high`)
-
-Data quality discipline:
-
-- never infer precision not present in source
-- separate observed value from interpretation
-- log caveats in signal notes
-- use event markers for catalysts, not raw value fields
-
----
-
-## API Keys and Placeholder Strategy
-
-The app is designed to run in manual/stub mode with zero integration keys.
-
-You can optionally add keys in:
-
-- `.env` (recommended, takes precedence)
-- Settings -> API Keys (dashboard-stored placeholders)
-
-Placeholder variables:
-
-- `VITE_FORMIC_API_KEY`
-- `VITE_AGILITY_API_KEY`
-- `VITE_ZIPLINE_API_KEY`
-- `VITE_WAYMO_API_KEY`
-- `VITE_TERADYNE_API_KEY`
-- `VITE_ELEVENLABS_API_KEY`
-- `VITE_CARTESIA_API_KEY`
-- `VITE_OSWORLD_API_KEY`
-- `VITE_FDA_API_KEY`
-- `VITE_SEC_API_KEY`
-
----
-
-## Brief and Alert Use
-
-Weekly briefs now include interface-layer intelligence context:
-
-- layer signal momentum
-- threshold/falsification proximity
-- catalyst windows
-- notes + event annotations
-
-Alerting includes:
-
-- threshold watch triggers
-- catalyst window reminders
-- existing signal divergence alerts
-
----
-
-## Workflow Checklist (Weekly)
-
-1. Refresh integrations per layer tab.
-2. Enter new manual datapoints with source notes.
-3. Add/adjust catalyst markers.
-4. Review legacy infrastructure in Agent layer.
-5. Generate brief and review caveats before distribution.
-6. Push updates to cloud storage.
-
----
-
-## Governance Notes
-
-- This is an internal decision-support system, not an external report generator.
-- Treat manual entries as audit-traceable research artifacts.
-- Keep assumptions falsifiable and dated.
+- Dual-read mode is active:
+  - New shell reads normalized `/api/live`.
+  - Legacy dashboard remains fallback-safe.
+- Gradually retire manual-primary flows as collectors go live per source.
+- Keep stale-data and degraded-mode indicators visible during source outages.
