@@ -425,14 +425,14 @@ function dashboardHealthApiDevPlugin() {
   };
 }
 
-/** Serves /api/interface-layer/* during `vite` dev. */
+/** Serves /api/interface-layer during `vite` dev. */
 function interfaceLayerApiDevPlugin() {
   return {
     name: 'interface-layer-api-dev',
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         const pathOnly = (req.url || '').split('?')[0];
-        if (!pathOnly.startsWith('/api/interface-layer/')) return next();
+        if (pathOnly !== '/api/interface-layer') return next();
         if (req.method === 'OPTIONS') {
           res.setHeader('Access-Control-Allow-Origin', '*');
           res.statusCode = 204;
@@ -445,22 +445,8 @@ function interfaceLayerApiDevPlugin() {
           res.end(JSON.stringify({ error: 'Method not allowed' }));
           return;
         }
-        const layer = pathOnly.replace('/api/interface-layer/', '').trim();
-        const map = {
-          physical_ai: './api/interface-layer/physical_ai.js',
-          voice: './api/interface-layer/voice.js',
-          spatial: './api/interface-layer/spatial.js',
-          agent: './api/interface-layer/agent.js',
-          neural: './api/interface-layer/neural.js',
-        };
-        const target = map[layer];
-        if (!target) {
-          res.statusCode = 404;
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ error: `Unknown layer: ${layer}` }));
-          return;
-        }
-        const mockReq = { method: 'GET', headers: req.headers, query: Object.fromEntries(new URL(req.url || '', 'http://localhost').searchParams) };
+        const params = Object.fromEntries(new URL(req.url || '', 'http://localhost').searchParams);
+        const mockReq = { method: 'GET', headers: req.headers, query: params };
         const mockRes = {
           statusCode: 200,
           status(c) { this.statusCode = c; return this; },
@@ -481,7 +467,7 @@ function interfaceLayerApiDevPlugin() {
           },
         };
         try {
-          const { default: handler } = await import(target);
+          const { default: handler } = await import('./api/interface-layer.js');
           await handler(mockReq, mockRes);
         } catch (e) {
           if (!res.headersSent) {

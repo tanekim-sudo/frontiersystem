@@ -6647,7 +6647,7 @@ export default function App() {
   const refreshLayerIntegration = useCallback(async (layerId) => {
     setLayerIntegrationStatus((prev) => ({ ...prev, [layerId]: { loading: true } }));
     try {
-      const r = await fetch(`/api/interface-layer/${layerId}`);
+      const r = await fetch(`/api/interface-layer?layer=${encodeURIComponent(layerId)}`);
       if (!r.ok) {
         const txt = await r.text().catch(() => "");
         throw new Error(txt || `HTTP ${r.status}`);
