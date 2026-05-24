@@ -425,10 +425,80 @@ function dashboardHealthApiDevPlugin() {
   };
 }
 
+/** Serves /api/interface-layer/* during `vite` dev. */
+function interfaceLayerApiDevPlugin() {
+  return {
+    name: 'interface-layer-api-dev',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        const pathOnly = (req.url || '').split('?')[0];
+        if (!pathOnly.startsWith('/api/interface-layer/')) return next();
+        if (req.method === 'OPTIONS') {
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.statusCode = 204;
+          res.end();
+          return;
+        }
+        if (req.method !== 'GET') {
+          res.statusCode = 405;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: 'Method not allowed' }));
+          return;
+        }
+        const layer = pathOnly.replace('/api/interface-layer/', '').trim();
+        const map = {
+          physical_ai: './api/interface-layer/physical_ai.js',
+          voice: './api/interface-layer/voice.js',
+          spatial: './api/interface-layer/spatial.js',
+          agent: './api/interface-layer/agent.js',
+          neural: './api/interface-layer/neural.js',
+        };
+        const target = map[layer];
+        if (!target) {
+          res.statusCode = 404;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: `Unknown layer: ${layer}` }));
+          return;
+        }
+        const mockReq = { method: 'GET', headers: req.headers, query: Object.fromEntries(new URL(req.url || '', 'http://localhost').searchParams) };
+        const mockRes = {
+          statusCode: 200,
+          status(c) { this.statusCode = c; return this; },
+          setHeader(k, v) { res.setHeader(k, v); },
+          json(obj) {
+            if (!res.headersSent) {
+              res.setHeader('Access-Control-Allow-Origin', '*');
+              res.setHeader('Content-Type', 'application/json');
+              res.statusCode = this.statusCode || 200;
+              res.end(JSON.stringify(obj));
+            }
+          },
+          end(chunk) {
+            if (!res.headersSent) {
+              res.statusCode = this.statusCode || 200;
+              res.end(chunk ?? '');
+            }
+          },
+        };
+        try {
+          const { default: handler } = await import(target);
+          await handler(mockReq, mockRes);
+        } catch (e) {
+          if (!res.headersSent) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: e.message || String(e) }));
+          }
+        }
+      });
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
-    plugins: [react(), laborApiDevPlugin(), signalStoreApiDevPlugin(), dashboardStateApiDevPlugin(), dashboardHealthApiDevPlugin(), aiNewsApiDevPlugin(), stockPulseApiDevPlugin()],
+    plugins: [react(), laborApiDevPlugin(), signalStoreApiDevPlugin(), dashboardStateApiDevPlugin(), dashboardHealthApiDevPlugin(), aiNewsApiDevPlugin(), stockPulseApiDevPlugin(), interfaceLayerApiDevPlugin()],
     server: {
       open: true,
       port: 5173,

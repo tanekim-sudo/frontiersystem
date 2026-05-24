@@ -102,6 +102,7 @@ function shouldMirrorIdentityKeyToGist(k) {
   if (k.startsWith(`${HSPFX}patterns_`)) return true;
   if (k.startsWith(`${HSPFX}history_latest_`) || k.startsWith(`${HSPFX}weekly_latest_`)) return true;
   if (k === "ec_history") return true;
+  if (k.startsWith("layer_")) return true;
   return false;
 }
 
@@ -1850,7 +1851,128 @@ const ENV_KEYS = {
   google_trends: import.meta.env.VITE_SERPAPI_KEY || "",
   github: import.meta.env.VITE_GITHUB_PAT || "",
   anthropic: import.meta.env.VITE_ANTHROPIC_API_KEY || "",
+  formic_api: import.meta.env.VITE_FORMIC_API_KEY || "",
+  agility_api: import.meta.env.VITE_AGILITY_API_KEY || "",
+  zipline_api: import.meta.env.VITE_ZIPLINE_API_KEY || "",
+  waymo_api: import.meta.env.VITE_WAYMO_API_KEY || "",
+  teradyne_api: import.meta.env.VITE_TERADYNE_API_KEY || "",
+  elevenlabs_api: import.meta.env.VITE_ELEVENLABS_API_KEY || "",
+  cartesia_api: import.meta.env.VITE_CARTESIA_API_KEY || "",
+  osworld_api: import.meta.env.VITE_OSWORLD_API_KEY || "",
+  fda_api: import.meta.env.VITE_FDA_API_KEY || "",
+  sec_api: import.meta.env.VITE_SEC_API_KEY || "",
 };
+
+const INTERFACE_LAYER_ORDER = ["physical_ai", "voice", "spatial", "agent", "neural"];
+
+const INTERFACE_LAYER_API_KEYS = [
+  { id: "formic_api", label: "Formic API", env: "VITE_FORMIC_API_KEY" },
+  { id: "agility_api", label: "Agility Robotics API", env: "VITE_AGILITY_API_KEY" },
+  { id: "zipline_api", label: "Zipline API", env: "VITE_ZIPLINE_API_KEY" },
+  { id: "waymo_api", label: "Waymo API", env: "VITE_WAYMO_API_KEY" },
+  { id: "teradyne_api", label: "Teradyne/UR API", env: "VITE_TERADYNE_API_KEY" },
+  { id: "elevenlabs_api", label: "ElevenLabs API", env: "VITE_ELEVENLABS_API_KEY" },
+  { id: "cartesia_api", label: "Cartesia API", env: "VITE_CARTESIA_API_KEY" },
+  { id: "osworld_api", label: "OSWorld Feed API", env: "VITE_OSWORLD_API_KEY" },
+  { id: "fda_api", label: "FDA Data API", env: "VITE_FDA_API_KEY" },
+  { id: "sec_api", label: "SEC Filing API", env: "VITE_SEC_API_KEY" },
+];
+
+const INTERFACE_LAYERS = {
+  physical_ai: {
+    id: "physical_ai",
+    label: "Physical AI",
+    cadence: "weekly / quarterly",
+    thesis: "Track real-world deployment scale and the durability of production-data moats in robotics and autonomy.",
+    catalysts: [
+      { id: "corl_annual", label: "CoRL proceedings annual review", cadence: "annual", nextKnownDate: null },
+    ],
+    signals: [
+      { id: "physical_production_hours", label: "Production hours database (Formic, Agility, Zipline, Waymo)", cadence: "weekly", sourceType: "manual", unit: "hours", watchThreshold: null, falsification: null },
+      { id: "physical_ur_asp", label: "Teradyne Universal Robots ASP", cadence: "quarterly", sourceType: "manual", unit: "usd", watchThreshold: null, falsification: null },
+      { id: "physical_job_deployment_ratio", label: "Deployment+operations roles / R&D roles", cadence: "weekly", sourceType: "manual", unit: "ratio", watchThreshold: null, falsification: null },
+      { id: "physical_sim_to_real_reliability", label: "Sim-to-real transfer reliability", cadence: "quarterly", sourceType: "manual", unit: "percent", watchThreshold: 85, falsification: "If contact-rich manipulation reliability crosses 85%, deployment-data moat weakens materially." },
+    ],
+  },
+  voice: {
+    id: "voice",
+    label: "Voice",
+    cadence: "weekly",
+    thesis: "Measure always-on voice interface monetization, developer pull, and enterprise deployment readiness.",
+    catalysts: [],
+    signals: [
+      { id: "voice_elevenlabs_arr", label: "ElevenLabs ARR trajectory", cadence: "weekly", sourceType: "manual", unit: "usd", watchThreshold: null, falsification: null },
+      { id: "voice_cartesia_commit_velocity", label: "Cartesia commit velocity + SDK breadth", cadence: "weekly", sourceType: "manual", unit: "index", watchThreshold: null, falsification: null },
+      { id: "voice_ambient_dau_mau", label: "Ambient voice DAU/MAU", cadence: "weekly", sourceType: "manual", unit: "ratio", watchThreshold: null, falsification: null },
+      { id: "voice_f500_job_velocity", label: "Fortune 500 enterprise voice AI job postings", cadence: "weekly", sourceType: "manual", unit: "count", watchThreshold: null, falsification: null },
+      { id: "voice_tts_latency", label: "TTS latency benchmark composite", cadence: "quarterly", sourceType: "manual", unit: "milliseconds", watchThreshold: null, falsification: null },
+    ],
+  },
+  spatial: {
+    id: "spatial",
+    label: "Spatial",
+    cadence: "weekly / quarterly",
+    thesis: "Track unit-scale adoption and manufacturing readiness for wearable and AR interface stacks.",
+    catalysts: [
+      { id: "meta_connect", label: "Meta Connect keynote", cadence: "annual", nextKnownDate: "2026-09-01" },
+    ],
+    signals: [
+      { id: "spatial_rayban_units", label: "Meta Ray-Ban inferred unit volume", cadence: "quarterly", sourceType: "manual", unit: "units", watchThreshold: null, falsification: null },
+      { id: "spatial_himax_revenue", label: "Himax AR/VR revenue", cadence: "quarterly", sourceType: "manual", unit: "usd", watchThreshold: null, falsification: null },
+      { id: "spatial_sdk_downloads", label: "Meta spatial SDK downloads", cadence: "weekly", sourceType: "manual", unit: "count", watchThreshold: null, falsification: null },
+      { id: "spatial_waveguide_hires", label: "Waveguide process-engineering hiring (Dispelix/WaveOptics)", cadence: "weekly", sourceType: "manual", unit: "count", watchThreshold: null, falsification: null },
+    ],
+  },
+  agent: {
+    id: "agent",
+    label: "Agent",
+    cadence: "weekly / quarterly",
+    thesis: "Time enterprise software disruption and governance infrastructure demand as agents approach production reliability.",
+    catalysts: [
+      { id: "eu_ai_act_full", label: "EU AI Act full applicability", cadence: "event", nextKnownDate: "2026-08-02" },
+    ],
+    signals: [
+      { id: "agent_osworld_success", label: "OSWorld benchmark success rate", cadence: "weekly", sourceType: "manual", unit: "percent", watchThreshold: 80, falsification: "Crossing durable human baseline invalidates incumbent seat-based moat assumptions faster." },
+      { id: "agent_job_deployment_ratio", label: "Enterprise software: deployment+governance / research jobs", cadence: "weekly", sourceType: "manual", unit: "ratio", watchThreshold: null, falsification: null },
+      { id: "agent_gov_commit_velocity", label: "Governance infra GitHub commit velocity", cadence: "weekly", sourceType: "manual", unit: "index", watchThreshold: null, falsification: null },
+      { id: "agent_nrr_margin_signature", label: "False-moat signature (NRR down, gross margin up)", cadence: "quarterly", sourceType: "manual", unit: "index", watchThreshold: null, falsification: null },
+      { id: "agent_pilot_to_prod", label: "Pilot-to-production conversion rate", cadence: "quarterly", sourceType: "manual", unit: "percent", watchThreshold: null, falsification: null },
+    ],
+    legacySignals: ["theirstack", "google_trends", "github_repos", "claude_attrib", "hf_downloads", "macro_pulse"],
+  },
+  neural: {
+    id: "neural",
+    label: "Neural",
+    cadence: "monthly",
+    thesis: "Measure clinical and regulatory progress that determines the investability window of neural interface platforms.",
+    catalysts: [],
+    signals: [
+      { id: "neural_patient_implants", label: "Patient implant count", cadence: "monthly", sourceType: "manual", unit: "count", watchThreshold: null, falsification: null },
+      { id: "neural_electrode_generation", label: "Electrode count per generation", cadence: "monthly", sourceType: "manual", unit: "count", watchThreshold: null, falsification: null },
+      { id: "neural_fda_milestones", label: "FDA pathway milestones (Neuralink/Synchron)", cadence: "monthly", sourceType: "manual", unit: "milestone", watchThreshold: null, falsification: null },
+      { id: "neural_ultrasound_resolution", label: "Through-skull ultrasound resolution progress", cadence: "monthly", sourceType: "manual", unit: "index", watchThreshold: null, falsification: "Material resolution breakthrough without surgical acoustic window upgrades long-duration optionality." },
+      { id: "neural_s1_signals", label: "S-1 filing signal watch (major private BCI)", cadence: "monthly", sourceType: "manual", unit: "event", watchThreshold: null, falsification: null },
+    ],
+  },
+};
+
+function normalizeLayerNumeric(value) {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function summarizeLayerSignalHistory(entries = []) {
+  if (!Array.isArray(entries) || entries.length < 2) return { latest: null, previous: null, wow_pct: null };
+  const sorted = [...entries].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  const latest = sorted[sorted.length - 1];
+  const previous = sorted[sorted.length - 2];
+  const latestN = normalizeLayerNumeric(latest?.value);
+  const prevN = normalizeLayerNumeric(previous?.value);
+  let wow_pct = null;
+  if (latestN != null && prevN != null && prevN !== 0) wow_pct = ((latestN - prevN) / Math.abs(prevN)) * 100;
+  return { latest, previous, wow_pct };
+}
 function resolveKey(source, configKeys) {
   const gh = source.apiConfig.authType === "bearer" && source.apiConfig.endpoint.includes("github");
   const kid = gh ? "github" : source.id;
@@ -1921,6 +2043,10 @@ function buildDefaultConfig() {
     },
     apiKeys: {}, scoreWeights: {},
     stageMultipliers: { s1:0.7, s2:1.0, s3:1.2, s4:1.5 },
+    interfaceLayer: {
+      activeTab: "agent",
+      mapExistingSignalsToAgentLayer: true,
+    },
   };
 }
 
@@ -5542,7 +5668,7 @@ function GitHubHistoryChart({ ghHist, tsHist, overlayJobs=false }) {
 
 // ── INLINE SETTINGS ──────────────────────────────────────────────────────────
 
-function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,mailingList,onUpdateMailingList,onCloudSync}){
+function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,mailingList,onUpdateMailingList,onCloudSync,layerApiKeys,onUpdateLayerApiKey}){
   const[section,setSection]=useState(null);
   const update=fn=>setConfig(prev=>{const next=fn(prev);sv("config",next);return next;});
 
@@ -5713,6 +5839,34 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
     )}
   </div>);
 
+  const apiKeysContent=(<div>
+    <div style={{...font.sans,fontSize:12,color:C.textSec,marginBottom:10,lineHeight:1.55}}>
+      Paste keys now or leave blank for manual/stub mode. Environment keys (`.env`) always take precedence over dashboard-stored placeholders.
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:10}}>
+      {INTERFACE_LAYER_API_KEYS.map((k)=>{
+        const envValue = ENV_KEYS[k.id] || "";
+        const val = layerApiKeys?.[k.id] || "";
+        const effective = envValue || val;
+        const statusColor = envValue ? C.green : effective ? C.amber : C.textMuted;
+        const statusText = envValue ? "Detected from .env" : effective ? "Saved in dashboard storage" : "Missing (manual mode)";
+        return (
+          <Card key={k.id} style={{padding:"10px 12px",background:C.nested}}>
+            <div style={{...font.sans,fontSize:11,fontWeight:700,color:C.text}}>{k.label}</div>
+            <div style={{...font.mono,fontSize:10,color:C.textMuted,marginTop:2}}>{k.env}</div>
+            <input
+              value={val}
+              onChange={e=>onUpdateLayerApiKey(k.id,e.target.value)}
+              placeholder={`Paste ${k.label} here`}
+              style={{marginTop:8,width:"100%",fontSize:11,padding:"7px 9px",border:`1px solid ${C.border}`,borderRadius:8}}
+            />
+            <div style={{...font.sans,fontSize:10,color:statusColor,marginTop:6}}>{statusText}</div>
+          </Card>
+        );
+      })}
+    </div>
+  </div>);
+
   const instructionsContent=(<div>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
       {[
@@ -5781,6 +5935,7 @@ function InlineSettings({config,setConfig,githubWatchlists,setGithubWatchlists,m
     {id:"instructions",label:"Instructions",content:instructionsContent},
     {id:"groups",label:"Signal Groups",content:groupsContent},
     {id:"scoring",label:"Weights & Alerts",content:scoringContent},
+    {id:"apikeys",label:"API Keys",content:apiKeysContent},
     {id:"mailing",label:"Mailing List",content:mailingContent},
   ];
 
@@ -6107,6 +6262,145 @@ function MarketAiPulsePanel({
 
 function humanInterval(ms){ return ms<60000?`${Math.round(ms/1000)}s`:ms<3600000?`${Math.round(ms/60000)}m`:`${(ms/3600000).toFixed(1)}h`; }
 
+function InterfaceLayerPanel({
+  layerId,
+  layerSignals,
+  layerHistories,
+  layerNotes,
+  layerEvents,
+  layerDrafts,
+  onDraftChange,
+  onAddSignalPoint,
+  onUpdateLayerNote,
+  onAddLayerEvent,
+  onRefreshLayerIntegration,
+  integrationStatus,
+}) {
+  const layer = INTERFACE_LAYERS[layerId];
+  if (!layer) return null;
+  const status = integrationStatus?.[layerId];
+  return (
+    <Card style={{ marginBottom: 20, padding: "16px 18px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 10 }}>
+        <div>
+          <div style={{ ...font.sans, fontSize: 15, fontWeight: 800, color: C.text }}>{layer.label} Layer</div>
+          <div style={{ ...font.sans, fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+            Cadence: {layer.cadence} · {layer.thesis}
+          </div>
+          {!!layer.legacySignals?.length && (
+            <div style={{ ...font.sans, fontSize: 10.5, color: C.textMuted, marginTop: 4 }}>
+              Existing infrastructure preserved in this layer: {layer.legacySignals.join(", ")}.
+            </div>
+          )}
+        </div>
+        <Btn size="sm" variant="ghost" onClick={() => onRefreshLayerIntegration(layer.id)}>
+          Refresh Integration
+        </Btn>
+      </div>
+
+      <div style={{ ...font.sans, fontSize: 11, color: status?.ok ? C.green : status?.error ? C.red : C.textMuted, marginBottom: 12 }}>
+        {status?.loading ? "Checking layer integration..." : status?.error ? `Integration error: ${status.error}` : status?.note || "Manual/stub mode active."}
+      </div>
+
+      {layer.catalysts?.length > 0 && (
+        <Card style={{ padding: "10px 12px", background: C.nested, marginBottom: 12 }}>
+          <div style={{ ...font.sans, fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 6 }}>Catalyst watch</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 8 }}>
+            {layer.catalysts.map((c) => (
+              <div key={c.id} style={{ padding: "7px 8px", border: `1px solid ${C.borderLight}`, borderRadius: 8, background: C.white }}>
+                <div style={{ ...font.sans, fontSize: 11, fontWeight: 600, color: C.text }}>{c.label}</div>
+                <div style={{ ...font.sans, fontSize: 10, color: C.textMuted, marginTop: 2 }}>
+                  {c.nextKnownDate ? `Next known date: ${c.nextKnownDate}` : "Next date: to be entered"}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(340px,1fr))", gap: 12 }}>
+        {layer.signals.map((sig) => {
+          const points = layerSignals?.[sig.id] || [];
+          const hist = layerHistories?.[sig.id] || [];
+          const summary = summarizeLayerSignalHistory(hist);
+          const draft = layerDrafts?.[sig.id] || { value: "", period: "", source: "", confidence: "medium" };
+          const note = layerNotes?.[sig.id] || "";
+          return (
+            <Card key={sig.id} style={{ padding: "10px 12px", background: C.nested }}>
+              <div style={{ ...font.sans, fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 3 }}>{sig.label}</div>
+              <div style={{ ...font.sans, fontSize: 10.5, color: C.textMuted, lineHeight: 1.45, marginBottom: 8 }}>
+                {sig.cadence} · {sig.sourceType} · unit: {sig.unit}
+              </div>
+              {sig.falsification && (
+                <div style={{ ...font.sans, fontSize: 10.5, color: C.amber, marginBottom: 8, lineHeight: 1.4 }}>
+                  Falsification trigger: {sig.falsification}
+                </div>
+              )}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 6 }}>
+                <input
+                  value={draft.value}
+                  placeholder="Value"
+                  onChange={(e) => onDraftChange(sig.id, { ...draft, value: e.target.value })}
+                  style={{ fontSize: 11, padding: "6px 8px" }}
+                />
+                <input
+                  value={draft.period}
+                  placeholder="Period (2026-W22)"
+                  onChange={(e) => onDraftChange(sig.id, { ...draft, period: e.target.value })}
+                  style={{ fontSize: 11, padding: "6px 8px" }}
+                />
+                <input
+                  value={draft.source}
+                  placeholder="Source note"
+                  onChange={(e) => onDraftChange(sig.id, { ...draft, source: e.target.value })}
+                  style={{ gridColumn: "1 / span 2", fontSize: 11, padding: "6px 8px" }}
+                />
+                <select
+                  value={draft.confidence || "medium"}
+                  onChange={(e) => onDraftChange(sig.id, { ...draft, confidence: e.target.value })}
+                  style={{ gridColumn: "1 / span 2", fontSize: 11, padding: "6px 8px" }}
+                >
+                  <option value="low">Confidence: low</option>
+                  <option value="medium">Confidence: medium</option>
+                  <option value="high">Confidence: high</option>
+                </select>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <Btn size="sm" variant="default" onClick={() => onAddSignalPoint(layer.id, sig.id, draft)}>Save data point</Btn>
+                <span style={{ ...font.sans, fontSize: 10, color: C.textMuted }}>{points.length} entries</span>
+              </div>
+              {summary.latest && (
+                <div style={{ ...font.sans, fontSize: 10.5, color: C.textSec, marginBottom: 8 }}>
+                  Latest: <strong>{String(summary.latest.value)}</strong>
+                  {summary.wow_pct != null ? ` · WoW ${summary.wow_pct >= 0 ? "+" : ""}${summary.wow_pct.toFixed(1)}%` : ""}
+                </div>
+              )}
+              <textarea
+                value={note}
+                placeholder="Analyst notes for this signal"
+                onChange={(e) => onUpdateLayerNote(sig.id, e.target.value)}
+                style={{ width: "100%", minHeight: 54, fontSize: 11, padding: "6px 8px", border: `1px solid ${C.border}`, borderRadius: 8, resize: "vertical", marginBottom: 8 }}
+              />
+              <Btn size="sm" variant="ghost" onClick={() => onAddLayerEvent(layer.id, sig.id)}>
+                Add catalyst/event marker
+              </Btn>
+              {Array.isArray(layerEvents?.[sig.id]) && layerEvents[sig.id].length > 0 && (
+                <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+                  {layerEvents[sig.id].slice(-3).reverse().map((ev) => (
+                    <div key={ev.id} style={{ ...font.sans, fontSize: 10, color: C.textMuted, padding: "4px 6px", borderRadius: 6, background: C.white, border: `1px solid ${C.borderLight}` }}>
+                      {ev.date}: {ev.label}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
 export default function App() {
   const [config,setConfig]=useState(()=>ld("config",buildDefaultConfig()));
   const [signalResults,setSignalResults]=useState({});
@@ -6148,6 +6442,14 @@ export default function App() {
   const [pulseErr,setPulseErr]=useState(null);
   const [pulseCollapsed,setPulseCollapsed]=useState(false);
   const [mailingList,setMailingList]=useState(()=>ld("mailing_list",[]));
+  const [activeLayer,setActiveLayer]=useState(()=>ld("active_layer",(ld("config",buildDefaultConfig())?.interfaceLayer?.activeTab)||"agent"));
+  const [layerSignals,setLayerSignals]=useState(()=>ld("layer_signals",{}));
+  const [layerHistories,setLayerHistories]=useState(()=>ld("layer_histories",{}));
+  const [layerNotes,setLayerNotes]=useState(()=>ld("layer_notes",{}));
+  const [layerEvents,setLayerEvents]=useState(()=>ld("layer_events",{}));
+  const [layerDrafts,setLayerDrafts]=useState({});
+  const [layerApiKeys,setLayerApiKeys]=useState(()=>ld("layer_api_keys",{}));
+  const [layerIntegrationStatus,setLayerIntegrationStatus]=useState({});
   const [emailSending,setEmailSending]=useState(false);
   const [emailStatus,setEmailStatus]=useState(null);
   const addRef=useRef(null);
@@ -6164,6 +6466,7 @@ export default function App() {
     const pat=resolveGitPat();if(pat||signalStoreSecret()||databaseStoreSecret())debouncedSyncToGist(pat);
   },[config]);
   useEffect(()=>{if(addingGroup&&addRef.current)addRef.current.focus();},[addingGroup]);
+  useEffect(()=>{sv("active_layer",activeLayer);},[activeLayer]);
   useEffect(() => {
     setGithubWatchlists(prev => {
       const next = { ...prev };
@@ -6282,6 +6585,88 @@ export default function App() {
     return () => setGitPatResolver(() => "");
   }, [resolveGitPat]);
 
+  const updateLayerApiKey = useCallback((keyId, value) => {
+    setLayerApiKeys((prev) => {
+      const next = { ...prev, [keyId]: value };
+      sv("layer_api_keys", next);
+      return next;
+    });
+  }, []);
+
+  const updateLayerDraft = useCallback((signalId, draft) => {
+    setLayerDrafts((prev) => ({ ...prev, [signalId]: draft }));
+  }, []);
+
+  const addLayerSignalPoint = useCallback((layerId, signalId, draft) => {
+    const value = draft?.value;
+    if (value == null || value === "") return;
+    const entry = {
+      id: `${signalId}_${Date.now()}`,
+      layerId,
+      signalId,
+      value,
+      period: draft?.period || "",
+      source: draft?.source || "",
+      confidence: draft?.confidence || "medium",
+      date: new Date().toISOString().slice(0, 10),
+      ts: Date.now(),
+    };
+    setLayerSignals((prev) => {
+      const next = { ...prev, [signalId]: [...(prev[signalId] || []), entry].slice(-300) };
+      sv("layer_signals", next);
+      return next;
+    });
+    setLayerHistories((prev) => {
+      const histEntry = { ts: entry.ts, date: entry.date, period: entry.period, value: entry.value };
+      const next = { ...prev, [signalId]: [...(prev[signalId] || []), histEntry].slice(-500) };
+      sv("layer_histories", next);
+      return next;
+    });
+    setLayerDrafts((prev) => ({ ...prev, [signalId]: { value: "", period: "", source: "", confidence: draft?.confidence || "medium" } }));
+  }, []);
+
+  const updateLayerNote = useCallback((signalId, note) => {
+    setLayerNotes((prev) => {
+      const next = { ...prev, [signalId]: note };
+      sv("layer_notes", next);
+      return next;
+    });
+  }, []);
+
+  const addLayerEvent = useCallback((layerId, signalId) => {
+    const label = window.prompt("Event/catalyst label");
+    if (!label) return;
+    const event = { id: `${signalId}_${Date.now()}`, layerId, signalId, date: new Date().toISOString().slice(0, 10), label: label.trim() };
+    setLayerEvents((prev) => {
+      const next = { ...prev, [signalId]: [...(prev[signalId] || []), event].slice(-100) };
+      sv("layer_events", next);
+      return next;
+    });
+  }, []);
+
+  const refreshLayerIntegration = useCallback(async (layerId) => {
+    setLayerIntegrationStatus((prev) => ({ ...prev, [layerId]: { loading: true } }));
+    try {
+      const r = await fetch(`/api/interface-layer/${layerId}`);
+      if (!r.ok) {
+        const txt = await r.text().catch(() => "");
+        throw new Error(txt || `HTTP ${r.status}`);
+      }
+      const j = await r.json();
+      setLayerIntegrationStatus((prev) => ({
+        ...prev,
+        [layerId]: {
+          loading: false,
+          ok: true,
+          note: j?.integration_status || "Layer endpoint responded.",
+          fetched_at: j?.fetched_at || new Date().toISOString(),
+        },
+      }));
+    } catch (e) {
+      setLayerIntegrationStatus((prev) => ({ ...prev, [layerId]: { loading: false, error: e.message || String(e) } }));
+    }
+  }, []);
+
   const doCloudSync=useCallback(async(direction)=>{
     const pat=resolveGitPat();if(!pat&&!signalStoreSecret()&&!databaseStoreSecret())return;
     setCloudStatus(direction==="up"?"saving…":"loading…");
@@ -6373,13 +6758,54 @@ export default function App() {
     const pat=resolveGitPat();if(pat||signalStoreSecret()||databaseStoreSecret())debouncedSyncToGist(pat,3000);
   },[resolveGitPat]);
 
+  const buildLayerWatchAlerts = useCallback(() => {
+    const out = [];
+    INTERFACE_LAYER_ORDER.forEach((layerId) => {
+      const layer = INTERFACE_LAYERS[layerId];
+      if (!layer) return;
+      (layer.signals || []).forEach((sig) => {
+        const hist = layerHistories[sig.id] || [];
+        const summary = summarizeLayerSignalHistory(hist);
+        const latestN = normalizeLayerNumeric(summary.latest?.value);
+        if (sig.watchThreshold != null && latestN != null && latestN >= sig.watchThreshold) {
+          out.push({
+            id: `layer_threshold_${sig.id}_${summary.latest?.ts || Date.now()}`,
+            level: "amber",
+            source: "layer_watch",
+            title: `${layer.label}: ${sig.label}`,
+            message: `Threshold reached (${latestN} >= ${sig.watchThreshold}).`,
+            pinned: false,
+            createdAt: Date.now(),
+          });
+        }
+      });
+      (layer.catalysts || []).forEach((cat) => {
+        if (!cat.nextKnownDate) return;
+        const days = Math.round((new Date(cat.nextKnownDate).getTime() - Date.now()) / 86400000);
+        if (days >= 0 && days <= 30) {
+          out.push({
+            id: `layer_catalyst_${layerId}_${cat.id}_${cat.nextKnownDate}`,
+            level: "green",
+            source: "layer_catalyst",
+            title: `${layer.label} catalyst window`,
+            message: `${cat.label} in ${days} day(s).`,
+            pinned: false,
+            createdAt: Date.now(),
+          });
+        }
+      });
+    });
+    return out;
+  }, [layerHistories]);
+
   const refreshAll=useCallback(async()=>{
     const cfg=configRef.current;
     await Promise.allSettled(cfg.sources.filter(s=>s.enabled).map(src=>fetchSource(src.id)));
     const sr=srRef.current;const na=evalAlerts(cfg.verticals,sr,cfg.alertRules,cfg.alertThreshold||10);
-    if(na.length>0)setAlerts(p=>[...na,...p].slice(0,50));
+    const layerAlerts = buildLayerWatchAlerts();
+    if(na.length>0||layerAlerts.length>0)setAlerts(p=>[...layerAlerts,...na,...p].slice(0,80));
     doCloudSync("up");
-  },[fetchSource,doCloudSync]);
+  },[fetchSource,doCloudSync,buildLayerWatchAlerts]);
 
   const refreshPulse=useCallback(async()=>{
     setPulseLoading(true);
@@ -7250,6 +7676,38 @@ export default function App() {
       }
     } catch {}
 
+    const interfaceLayerIntelligence = INTERFACE_LAYER_ORDER.map((layerId) => {
+      const layer = INTERFACE_LAYERS[layerId];
+      const signalRows = (layer?.signals || []).map((sig) => {
+        const entries = layerHistories[sig.id] || [];
+        const summary = summarizeLayerSignalHistory(entries);
+        return {
+          id: sig.id,
+          label: sig.label,
+          cadence: sig.cadence,
+          source_type: sig.sourceType,
+          unit: sig.unit,
+          watch_threshold: sig.watchThreshold,
+          falsification_trigger: sig.falsification,
+          latest: summary.latest ? { value: summary.latest.value, date: summary.latest.date, period: summary.latest.period } : null,
+          previous: summary.previous ? { value: summary.previous.value, date: summary.previous.date, period: summary.previous.period } : null,
+          wow_pct: summary.wow_pct,
+          note: layerNotes[sig.id] || null,
+          recent_events: (layerEvents[sig.id] || []).slice(-3),
+        };
+      });
+      return {
+        id: layerId,
+        label: layer?.label || layerId,
+        thesis: layer?.thesis || "",
+        cadence: layer?.cadence || "",
+        catalysts: layer?.catalysts || [],
+        signal_count: signalRows.length,
+        populated_signals: signalRows.filter((s) => s.latest).length,
+        signals: signalRows,
+      };
+    });
+
     const ctx = {
       generated_at: new Date().toISOString(),
       week: wk,
@@ -7279,6 +7737,7 @@ export default function App() {
         hugging_face_leaderboard: hfSummary,
         hf_download_trend: hfTimeSeries,
       },
+      interface_layer_intelligence: interfaceLayerIntelligence,
       data_quality_flags: [...new Set(dq)].slice(0, 15),
       signal_interpretation_guide: {
         theirstack: { leadLag: SOURCE_INFO.theirstack.leadLag, investment: SOURCE_INFO.theirstack.investment },
@@ -7289,7 +7748,7 @@ export default function App() {
       signal_movement_interpretation: buildSignalMovementInterpretationForBrief(),
     };
     return trimPayloadSize(ctx, 32000);
-  }, [composites, signalResults, githubHistoryByVertical, tsHistoryByVertical, crossCorr]);
+  }, [composites, signalResults, githubHistoryByVertical, tsHistoryByVertical, crossCorr, layerHistories, layerNotes, layerEvents]);
 
   const generateBrief = useCallback(async () => {
     const baseCtx = buildBriefContext();
@@ -7555,26 +8014,81 @@ FINAL REMINDER: No URLs or links. No numbers or "facts" unless they appear in th
 
       <div style={{padding:"20px 28px 40px",maxWidth:1400,margin:"0 auto"}}>
 
-        <MarketAiPulsePanel
-          overview={pulseOverview}
-          newsPack={pulseNews}
-          stockPack={pulseStocks}
-          loading={pulseLoading}
-          error={pulseErr}
-          onRefresh={refreshPulse}
-          macroDrivers={pulseMacroDrivers}
-          signalMoves={pulseSignalMoves}
-          collapsed={pulseCollapsed}
-          onToggleCollapsed={() => setPulseCollapsed((c) => !c)}
-        />
+        {(activeLayer === "physical_ai" || activeLayer === "agent") && (
+          <MarketAiPulsePanel
+            overview={pulseOverview}
+            newsPack={pulseNews}
+            stockPack={pulseStocks}
+            loading={pulseLoading}
+            error={pulseErr}
+            onRefresh={refreshPulse}
+            macroDrivers={pulseMacroDrivers}
+            signalMoves={pulseSignalMoves}
+            collapsed={pulseCollapsed}
+            onToggleCollapsed={() => setPulseCollapsed((c) => !c)}
+          />
+        )}
 
         {/* ─── Settings (always visible, collapsed by default) ─── */}
         <div style={{marginBottom:20}}>
-          <InlineSettings config={config} setConfig={setConfig} githubWatchlists={githubWatchlists} setGithubWatchlists={setGithubWatchlists} mailingList={mailingList} onUpdateMailingList={updateMailingList} onCloudSync={()=>{const pat=resolveGitPat();if(pat||signalStoreSecret()||databaseStoreSecret())debouncedSyncToGist(pat);}}/>
+          <InlineSettings
+            config={config}
+            setConfig={setConfig}
+            githubWatchlists={githubWatchlists}
+            setGithubWatchlists={setGithubWatchlists}
+            mailingList={mailingList}
+            onUpdateMailingList={updateMailingList}
+            onCloudSync={()=>{const pat=resolveGitPat();if(pat||signalStoreSecret()||databaseStoreSecret())debouncedSyncToGist(pat);}}
+            layerApiKeys={layerApiKeys}
+            onUpdateLayerApiKey={updateLayerApiKey}
+          />
         </div>
 
+        <Card style={{marginBottom:14,padding:"10px 12px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+            {INTERFACE_LAYER_ORDER.map((id)=>{
+              const layer = INTERFACE_LAYERS[id];
+              const on = activeLayer===id;
+              return (
+                <button
+                  key={id}
+                  onClick={()=>setActiveLayer(id)}
+                  style={{
+                    ...font.sans,
+                    fontSize:12,
+                    fontWeight:700,
+                    padding:"7px 12px",
+                    borderRadius:8,
+                    border:on?`2px solid ${C.cyan}`:`1px solid ${C.border}`,
+                    background:on?C.cyanBg:C.white,
+                    color:on?C.cyan:C.textSec,
+                    cursor:"pointer",
+                  }}
+                >
+                  {layer.label}
+                </button>
+              );
+            })}
+          </div>
+        </Card>
+
+        <InterfaceLayerPanel
+          layerId={activeLayer}
+          layerSignals={layerSignals}
+          layerHistories={layerHistories}
+          layerNotes={layerNotes}
+          layerEvents={layerEvents}
+          layerDrafts={layerDrafts}
+          onDraftChange={updateLayerDraft}
+          onAddSignalPoint={addLayerSignalPoint}
+          onUpdateLayerNote={updateLayerNote}
+          onAddLayerEvent={addLayerEvent}
+          onRefreshLayerIntegration={refreshLayerIntegration}
+          integrationStatus={layerIntegrationStatus}
+        />
+
         {/* ─── Empty state prompt ─── */}
-        {config.verticals.length === 0 && (
+        {activeLayer === "agent" && config.verticals.length === 0 && (
           <Card className="fade-in" style={{padding:"28px 32px",marginBottom:20,textAlign:"center"}}>
             <IcoC name="trendUp" size={24} color={C.cyan}/>
             <div style={{...font.sans,fontSize:16,fontWeight:700,color:C.text,margin:"12px 0 6px"}}>Create your first tracking group to get started</div>
@@ -7590,6 +8104,25 @@ FINAL REMINDER: No URLs or links. No numbers or "facts" unless they appear in th
           </Card>
         )}
 
+        {activeLayer === "physical_ai" && (
+          <>
+            <div style={{marginBottom:10}}>
+              <div style={{...font.sans,fontSize:13,fontWeight:700,color:C.text}}>National context</div>
+              <div style={{...font.sans,fontSize:11,color:C.textMuted,marginTop:4}}>US-wide labor indicators — not filtered by your keywords.</div>
+            </div>
+            <div style={{marginBottom:28}}>
+              <LaborMacroPanel
+                onAfterLoad={() => {
+                  const pat = resolveGitPat();
+                  if (pat || signalStoreSecret() || databaseStoreSecret()) debouncedSyncToGist(pat, 4000);
+                }}
+              />
+            </div>
+          </>
+        )}
+
+        {activeLayer === "agent" && (
+        <>
         {/* ─── Group bar ─── */}
         <div style={{marginBottom:14}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
@@ -7757,19 +8290,6 @@ FINAL REMINDER: No URLs or links. No numbers or "facts" unless they appear in th
           <EarningsCallPanel />
         </div>
 
-        <div style={{marginBottom:10}}>
-          <div style={{...font.sans,fontSize:13,fontWeight:700,color:C.text}}>National context</div>
-          <div style={{...font.sans,fontSize:11,color:C.textMuted,marginTop:4}}>US-wide labor indicators — not filtered by your keywords.</div>
-        </div>
-        <div style={{marginBottom:28}}>
-          <LaborMacroPanel
-            onAfterLoad={() => {
-              const pat = resolveGitPat();
-              if (pat || signalStoreSecret() || databaseStoreSecret()) debouncedSyncToGist(pat, 4000);
-            }}
-          />
-        </div>
-
         {/* ─── Backfill progress (global) ─── */}
         {historyProgress.active && (
           <Card style={{marginBottom:16}} className="fade-in">
@@ -7794,6 +8314,8 @@ FINAL REMINDER: No URLs or links. No numbers or "facts" unless they appear in th
           <div style={{marginBottom:28}}>
             <AlertFeed alerts={alerts} onPin={id=>setAlerts(p=>p.map(a=>a.id===id?{...a,pinned:!a.pinned}:a))}/>
           </div>
+        )}
+        </>
         )}
       </div>
 
