@@ -1973,6 +1973,58 @@ function summarizeLayerSignalHistory(entries = []) {
   if (latestN != null && prevN != null && prevN !== 0) wow_pct = ((latestN - prevN) / Math.abs(prevN)) * 100;
   return { latest, previous, wow_pct };
 }
+
+function demoHash(str) {
+  let h = 2166136261;
+  const s = String(str || "");
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return h >>> 0;
+}
+
+function makeDemoSeries({ seedKey, points = 56, stepDays = 7, base = 100, drift = 0.9, volatility = 0.08, floor = 1, cap = null }) {
+  const rng = mockTheirStackRng(demoHash(seedKey));
+  const out = [];
+  const now = Date.now();
+  let val = base;
+  for (let i = points - 1; i >= 0; i--) {
+    const ts = now - i * stepDays * 86400000;
+    const wiggle = (rng() - 0.5) * 2 * volatility;
+    const seasonal = Math.sin((points - i) / 5) * base * (volatility * 0.6);
+    val = val * (1 + wiggle * 0.22) + drift + seasonal * 0.05;
+    if (cap != null) val = Math.min(cap, val);
+    val = Math.max(floor, val);
+    out.push({
+      ts,
+      isoDate: new Date(ts).toISOString(),
+      value: Math.round(val),
+      date: new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+    });
+  }
+  return out;
+}
+
+function demoItemsForSource(sourceId, verticalName, count) {
+  if (sourceId === "theirstack") {
+    return [
+      { title: `Senior AI Engineer - ${verticalName}`, body: "Production deployment, model monitoring, and platform rollout ownership." },
+      { title: `${verticalName} AI Platform Lead`, body: "Scale AI workflows from pilot to enterprise production systems." },
+      { title: `MLOps Engineer - ${verticalName}`, body: "Inference reliability, governance, and CI/CD for model delivery." },
+    ];
+  }
+  if (sourceId === "google_trends") {
+    return [{ title: `Relative interest: ${count} (0–100 scale)`, body: "Sustained search momentum from enterprise operators and decision-makers." }];
+  }
+  if (sourceId === "github_repos") {
+    return [
+      { title: `${verticalName.toLowerCase().replace(/\s+/g, "-")}-agents`, body: "Workflow orchestration and observability improvements." },
+      { title: `${verticalName.toLowerCase().replace(/\s+/g, "-")}-governance`, body: "Policy and audit integration updates." },
+    ];
+  }
+  if (sourceId === "claude_attrib") {
+    return [{ title: `${count.toLocaleString()} Claude-attributed commits (7d)`, body: "Signature: Co-Authored-By: Claude" }];
+  }
+  return [];
+}
 function resolveKey(source, configKeys) {
   const gh = source.apiConfig.authType === "bearer" && source.apiConfig.endpoint.includes("github");
   const kid = gh ? "github" : source.id;
@@ -2003,7 +2055,121 @@ const DEFAULT_SOURCES = [
     responsePaths: { countPath: "total_count", itemsPath: "items", titleField: "commit.message", bodyField: "" } },
 ];
 
-const DEFAULT_VERTICALS = [];
+function kwPack({ title = [], desc = [], trends = [], repos = [], claude = [] }) {
+  return {
+    theirstack: { titleKeywords: title, descriptionKeywords: desc },
+    google_trends: { keywords: trends },
+    github_repos: { keywords: repos },
+    claude_attrib: { keywords: claude.length ? claude : repos },
+  };
+}
+
+const DEFAULT_VERTICALS = [
+  {
+    id: "rays_enterprise_ai_demand",
+    name: "Rays Core - Enterprise AI Demand",
+    color: "#0ea5e9",
+    description: "Legacy core demand stack for enterprise AI hiring and deployment intent.",
+    keywords: kwPack({
+      title: ["AI Engineer", "MLOps Engineer", "AI Product Manager", "AI Platform Engineer", "AI Governance Lead"],
+      desc: ["enterprise ai deployment", "llm ops", "ai copilot rollout", "model governance", "genai production"],
+      trends: ["enterprise ai copilot", "llm ops", "ai governance", "agentic workflow"],
+      repos: ["langchain", "llamaindex", "crewai", "openai sdk", "anthropic sdk"],
+      claude: ["Claude Code", "anthropic", "agent"],
+    }),
+  },
+  {
+    id: "rays_ai_infrastructure_supply",
+    name: "Rays Core - AI Infrastructure Supply",
+    color: "#14b8a6",
+    description: "Legacy supply-side tracker for GPUs, model serving, inference, and data center software.",
+    keywords: kwPack({
+      title: ["Inference Engineer", "GPU Performance Engineer", "ML Infrastructure Engineer", "Distributed Systems AI"],
+      desc: ["model serving", "inference optimization", "gpu cluster", "vector database", "ai infrastructure"],
+      trends: ["ai inference", "model serving", "gpu cloud", "vector database"],
+      repos: ["vllm", "triton inference server", "ray serve", "deepspeed", "kubeflow"],
+      claude: ["inference", "serving", "gpu"],
+    }),
+  },
+  {
+    id: "rays_ai_coding_adoption",
+    name: "Rays Core - AI Coding Adoption",
+    color: "#a855f7",
+    description: "Legacy coding-assistant penetration tracker using the same old signal cards and history logic.",
+    keywords: kwPack({
+      title: ["Developer Productivity Engineer", "Platform Productivity Engineer", "AI Tooling Engineer"],
+      desc: ["ai coding assistant", "code generation", "developer copilot", "code review ai"],
+      trends: ["claude code", "github copilot", "cursor ai", "ai coding assistant"],
+      repos: ["cursor", "copilot", "claude code", "aider", "continue.dev"],
+      claude: ["Co-Authored-By: Claude", "Claude Code", "copilot"],
+    }),
+  },
+  {
+    id: "layer_physical_ai",
+    name: "Layer - Physical AI",
+    color: "#22c55e",
+    description: "Physical deployment and robotics scale signals mapped to classic tracker cards.",
+    keywords: kwPack({
+      title: ["Robotics Deployment Engineer", "Autonomy Operations", "Field Robotics Engineer", "Warehouse Robotics"],
+      desc: ["robot fleet deployment", "autonomous vehicle operations", "sim to real transfer", "robotics production scale"],
+      trends: ["physical ai", "warehouse robotics", "autonomous delivery robot", "sim to real robotics"],
+      repos: ["isaac sim", "gr00t", "physical intelligence", "vla model"],
+      claude: ["robotics", "autonomy", "sim-to-real"],
+    }),
+  },
+  {
+    id: "layer_voice",
+    name: "Layer - Voice",
+    color: "#f59e0b",
+    description: "Voice-native interface demand tracked through the classic multi-source signal mechanism.",
+    keywords: kwPack({
+      title: ["Voice AI Engineer", "Speech ML Engineer", "Conversational AI Product Manager"],
+      desc: ["text to speech latency", "ambient voice app", "enterprise voice agent", "voice sdk integration"],
+      trends: ["elevenlabs", "voice ai", "ambient voice app", "cartesia"],
+      repos: ["elevenlabs", "cartesia", "coqui tts", "whisper", "realtime voice"],
+      claude: ["voice", "tts", "speech"],
+    }),
+  },
+  {
+    id: "layer_spatial",
+    name: "Layer - Spatial",
+    color: "#ef4444",
+    description: "Spatial interface adoption and hardware ecosystem scale on the legacy workflow.",
+    keywords: kwPack({
+      title: ["AR Engineer", "XR Product Engineer", "Spatial Computing Engineer", "Optics Process Engineer"],
+      desc: ["smart glasses", "spatial computing sdk", "ar waveguide", "xr manufacturing"],
+      trends: ["meta ray ban", "spatial computing", "xr sdk", "waveguide"],
+      repos: ["openxr", "arkit", "arcore", "spatial sdk", "visionos"],
+      claude: ["spatial", "ar", "xr"],
+    }),
+  },
+  {
+    id: "layer_agent",
+    name: "Layer - Agent",
+    color: "#06b6d4",
+    description: "Agent reliability and enterprise production crossing signals in classic cards.",
+    keywords: kwPack({
+      title: ["AI Agent Engineer", "AI Governance Engineer", "Agent Operations", "AI Risk Manager"],
+      desc: ["agent orchestration", "agent governance", "ai audit trail", "enterprise ai agent deployment"],
+      trends: ["ai agent", "agentic workflow", "osworld benchmark", "ai governance"],
+      repos: ["autogen", "langgraph", "crewai", "openai agents", "agentops"],
+      claude: ["agent", "governance", "audit"],
+    }),
+  },
+  {
+    id: "layer_neural",
+    name: "Layer - Neural",
+    color: "#6366f1",
+    description: "Neural interface progress monitored with the same long-horizon tracker mechanics.",
+    keywords: kwPack({
+      title: ["BCI Engineer", "Neural Signal Processing Engineer", "Neurotech Clinical Operations"],
+      desc: ["brain computer interface", "electrode array", "neural implant trial", "fda breakthrough device"],
+      trends: ["neuralink", "synchron bci", "brain computer interface", "neural implant"],
+      repos: ["openbci", "neuralink", "bci signal processing", "brain decoding"],
+      claude: ["bci", "neural", "implant"],
+    }),
+  },
+];
 
 const DEFAULT_STAGES = [
   { id:"s1",name:"Early Research",color:C.blue,weight:1,titlePatterns:["strategy","innovation","ai lead","evaluating","exploring","research"],descriptionPatterns:["assess","evaluate","pilot program","proof of concept planning"] },
@@ -6441,6 +6607,7 @@ export default function App() {
   const [pulseLoading,setPulseLoading]=useState(false);
   const [pulseErr,setPulseErr]=useState(null);
   const [pulseCollapsed,setPulseCollapsed]=useState(false);
+  const [hfRenderKey,setHfRenderKey]=useState(0);
   const [mailingList,setMailingList]=useState(()=>ld("mailing_list",[]));
   const [activeLayer,setActiveLayer]=useState(()=>ld("active_layer",(ld("config",buildDefaultConfig())?.interfaceLayer?.activeTab)||"agent"));
   const [layerSignals,setLayerSignals]=useState(()=>ld("layer_signals",{}));
@@ -6551,6 +6718,327 @@ export default function App() {
       return next;
     });
   },[]);
+
+  useEffect(() => {
+    const migKey = `${HSPFX}classic_groups_seed_v1`;
+    if (localStorage.getItem(migKey)) return;
+    setConfig((prev) => {
+      const existingIds = new Set((prev.verticals || []).map((v) => v.id));
+      const toAdd = DEFAULT_VERTICALS.filter((v) => !existingIds.has(v.id));
+      if (!toAdd.length) {
+        localStorage.setItem(migKey, "1");
+        return prev;
+      }
+      const seeded = toAdd.map((v, idx) => ({ ...v, color: v.color || PALETTE[(prev.verticals.length + idx) % PALETTE.length] }));
+      const next = { ...prev, verticals: [...(prev.verticals || []), ...seeded] };
+      sv("config", next);
+      localStorage.setItem(migKey, "1");
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const demoKey = `${HSPFX}full_demo_seed_v2`;
+    if (localStorage.getItem(demoKey)) return;
+    if (!config.verticals?.length || !config.sources?.length) return;
+    try {
+      const now = Date.now();
+      const historiesPatch = {};
+      const resultsPatch = {};
+      const tsPatch = {};
+
+      config.verticals.forEach((v, vi) => {
+        const srcBase = {
+          theirstack: 90 + vi * 22,
+          google_trends: 34 + (vi % 6) * 8,
+          github_repos: 1800 + vi * 620,
+          claude_attrib: 260 + vi * 95,
+        };
+        const srcDrift = {
+          theirstack: 1.25 + (vi % 3) * 0.15,
+          google_trends: 0.2 + (vi % 4) * 0.06,
+          github_repos: 4.8 + (vi % 5) * 0.7,
+          claude_attrib: 1.8 + (vi % 4) * 0.3,
+        };
+        (config.sources || []).forEach((source) => {
+          if (!source?.id) return;
+          const sId = source.id;
+          const isTrends = sId === "google_trends";
+          const hist = makeDemoSeries({
+            seedKey: `${v.id}:${sId}:hist`,
+            points: 56,
+            stepDays: 7,
+            base: srcBase[sId] ?? 80 + vi * 11,
+            drift: srcDrift[sId] ?? 0.8,
+            volatility: isTrends ? 0.13 : 0.1,
+            floor: isTrends ? 10 : 1,
+            cap: isTrends ? 100 : null,
+          }).map((p) => ({ ...p, value: isTrends ? Math.max(1, Math.min(100, p.value)) : p.value }));
+          const signalKey = `${v.id}_${sId}`;
+          historiesPatch[signalKey] = hist;
+          sv(`hist_${signalKey}`, hist);
+
+          const latest = hist[hist.length - 1]?.value || 0;
+          const items = demoItemsForSource(sId, v.name, latest);
+          let result = { count: latest, items, timestamp: now };
+          if (sId === "google_trends") {
+            const vals = hist.map((p) => p.value || 0);
+            const l4 = vals.slice(-4);
+            const avg = l4.length ? Math.max(1, Math.round(l4.reduce((a, b) => a + b, 0) / l4.length)) : 1;
+            result = { ...result, values: vals, momentum: Math.round(((latest - avg) / avg) * 100) };
+          }
+          if (source.type === "classified_text") {
+            const classification = classifyItems(items, config.stages || DEFAULT_STAGES);
+            result = { ...result, classification, items: classification.stagedItems || items };
+          }
+          resultsPatch[signalKey] = result;
+        });
+
+        const kh = hashKeywordsForVertical(v);
+        const monthly = makeDemoSeries({
+          seedKey: `${v.id}:theirstack:monthly`,
+          points: 30,
+          stepDays: 30,
+          base: 70 + vi * 18,
+          drift: 1.1 + (vi % 4) * 0.2,
+          volatility: 0.09,
+          floor: 5,
+        }).map((p) => ({ month: p.isoDate.slice(0, 7), count: p.value }));
+        const weekly = makeDemoSeries({
+          seedKey: `${v.id}:theirstack:weekly`,
+          points: 52,
+          stepDays: 7,
+          base: 85 + vi * 20,
+          drift: 1.3 + (vi % 3) * 0.17,
+          volatility: 0.11,
+          floor: 5,
+        }).map((p) => ({ week: weekKeyFromDate(new Date(p.ts)), count: p.value }));
+        const derivedPack = deriveHistoryMetrics(monthly, weekly);
+        const payload = { verticalId: v.id, keywordsHash: kh, generatedAt: new Date().toISOString(), ...derivedPack };
+        tsPatch[v.id] = payload;
+        sv(historyKey(v.id, kh), payload);
+        sv(weeklyKey(v.id, kh), { verticalId: v.id, keywordsHash: kh, weekly: derivedPack.weekly, generatedAt: payload.generatedAt });
+        sv(historyLatestKey(v.id), payload);
+        sv(weeklyLatestKey(v.id), { verticalId: v.id, keywordsHash: kh, weekly: derivedPack.weekly, generatedAt: payload.generatedAt });
+      });
+
+      setAllHistories((prev) => ({ ...prev, ...historiesPatch }));
+      setSignalResults((prev) => ({ ...prev, ...resultsPatch }));
+      setTsHistoryByVertical((prev) => {
+        const next = { ...prev, ...tsPatch };
+        recomputeCrossCorr(next);
+        return next;
+      });
+
+      const layerSignalsSeed = {};
+      const layerHistoriesSeed = {};
+      const layerNotesSeed = {};
+      const layerEventsSeed = {};
+      const layerIntegrationSeed = {};
+      INTERFACE_LAYER_ORDER.forEach((layerId, li) => {
+        const layer = INTERFACE_LAYERS[layerId];
+        if (!layer) return;
+        layerIntegrationSeed[layerId] = {
+          loading: false,
+          ok: true,
+          note: "Demo snapshot seeded for presentation mode.",
+          fetched_at: new Date(now - li * 3600000).toISOString(),
+        };
+        (layer.signals || []).forEach((sig, si) => {
+          const stepDays = String(sig.cadence || "").includes("month") ? 30 : 7;
+          const points = stepDays === 30 ? 18 : 26;
+          const base = sig.watchThreshold != null ? Math.max(1, sig.watchThreshold * 0.84) : 42 + li * 13 + si * 9;
+          const hist = makeDemoSeries({
+            seedKey: `${layerId}:${sig.id}:layer`,
+            points,
+            stepDays,
+            base,
+            drift: sig.watchThreshold != null ? 0.55 : 0.8,
+            volatility: 0.08,
+            floor: 1,
+          }).map((p) => ({ ts: p.ts, date: p.isoDate.slice(0, 10), period: stepDays === 30 ? p.isoDate.slice(0, 7) : `W${weekKeyFromDate(new Date(p.ts))}`, value: p.value }));
+          layerHistoriesSeed[sig.id] = hist;
+          layerSignalsSeed[sig.id] = hist.map((p, idx) => ({
+            id: `${sig.id}_seed_${idx}`,
+            layerId,
+            signalId: sig.id,
+            value: p.value,
+            period: p.period,
+            source: "Seeded demo feed",
+            confidence: idx > hist.length - 4 ? "high" : "medium",
+            date: p.date,
+            ts: p.ts,
+          }));
+          layerNotesSeed[sig.id] = `Demo note: ${sig.label} is prefilled for presentation mode with ${hist.length} periods of history.`;
+          layerEventsSeed[sig.id] = [{
+            id: `${sig.id}_demo_event`,
+            layerId,
+            signalId: sig.id,
+            date: new Date(now - (21 + si) * 86400000).toISOString().slice(0, 10),
+            label: `${layer.label} catalyst checkpoint`,
+          }];
+        });
+      });
+      sv("layer_signals", layerSignalsSeed);
+      sv("layer_histories", layerHistoriesSeed);
+      sv("layer_notes", layerNotesSeed);
+      sv("layer_events", layerEventsSeed);
+      setLayerSignals(layerSignalsSeed);
+      setLayerHistories(layerHistoriesSeed);
+      setLayerNotes(layerNotesSeed);
+      setLayerEvents(layerEventsSeed);
+      setLayerIntegrationStatus(layerIntegrationSeed);
+
+      const hfOrgs = HF_ORGS.map((org, idx) => ({
+        orgId: org.id,
+        totalDownloads: Math.round(3800000 + idx * 270000 + (HF_ORGS.length - idx) * 150000),
+        modelCount: 10,
+        topModels: [
+          { id: `${org.id}/foundation-chat`, downloads: Math.round(520000 + idx * 43000), likes: 2400 - idx * 55, pipeline: "text-generation" },
+          { id: `${org.id}/reasoning-instruct`, downloads: Math.round(410000 + idx * 36000), likes: 1800 - idx * 41, pipeline: "text-generation" },
+        ],
+      })).sort((a, b) => b.totalDownloads - a.totalDownloads);
+      const hfPayload = { orgs: hfOrgs, timestamp: now };
+      sv("hf_lb", hfPayload);
+      const hfHistory = Array.from({ length: 12 }, (_, i) => {
+        const ts = now - (11 - i) * 30 * 86400000;
+        const row = { ts, date: new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" }) };
+        hfOrgs.forEach((o, oi) => {
+          row[o.orgId] = Math.round(o.totalDownloads * (0.68 + i * 0.028 + oi * 0.0015));
+        });
+        return row;
+      });
+      sv("hist_hf", hfHistory);
+      const hfTotalHist = hfHistory.map((r) => {
+        const total = hfOrgs.reduce((sum, o) => sum + (r[o.orgId] || 0), 0);
+        return {
+          ts: r.ts,
+          isoDate: new Date(r.ts).toISOString(),
+          value: total,
+          date: new Date(r.ts).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        };
+      });
+      sv("hist_hf_total", hfTotalHist);
+
+      const overviewSeed = {
+        fetched_at: new Date(now - 12 * 60000).toISOString(),
+        chicago_fed: { release_date: "2026-05-15", forecast_unemployment: 4.33, official_u3: 4.2 },
+        fred_latest: [
+          { series_id: "UNRATE", value: 4.2, observed_at: "2026-05-01" },
+          { series_id: "ICSA", value: 242000, observed_at: "2026-05-22" },
+          { series_id: "JTSJOL", value: 7900000, observed_at: "2026-04-01" },
+          { series_id: "VIXCLS", value: 17.4, observed_at: "2026-05-23" },
+          { series_id: "T10Y2Y", value: -0.24, observed_at: "2026-05-23" },
+          { series_id: "DGS10", value: 4.08, observed_at: "2026-05-23" },
+          { series_id: "DGS2", value: 4.32, observed_at: "2026-05-23" },
+          { series_id: "NFCI", value: -0.31, observed_at: "2026-05-23" },
+        ],
+      };
+      const newsSeed = {
+        fetched_at: new Date(now - 10 * 60000).toISOString(),
+        curation: { raw_count: 24, note: "Seeded demo curation prioritizing deployment, budgets, and enterprise adoption milestones." },
+        articles: [
+          { title: "Enterprise copilots move from pilot to broad rollout in regulated sectors", source: "FT", published_at: "2026-05-23T14:10:00Z", url: "https://example.com/demo-1" },
+          { title: "Robotics integrators report record deployment backlog", source: "Reuters", published_at: "2026-05-23T11:30:00Z", url: "https://example.com/demo-2" },
+          { title: "Voice SDK vendors announce lower-latency production stack", source: "The Information", published_at: "2026-05-22T17:05:00Z", url: "https://example.com/demo-3" },
+        ],
+      };
+      const stockSeed = {
+        fetched_at: new Date(now - 9 * 60000).toISOString(),
+        week_key: weekKeyFromDate(new Date()),
+        stocks: [
+          { ticker: "NVDA", name: "NVIDIA", price: 141.6, change_pct_5d: 3.4, signal: "risk-on" },
+          { ticker: "MSFT", name: "Microsoft", price: 472.2, change_pct_5d: 1.8, signal: "steady" },
+          { ticker: "META", name: "Meta", price: 612.5, change_pct_5d: 2.6, signal: "momentum" },
+          { ticker: "PLTR", name: "Palantir", price: 39.8, change_pct_5d: -1.1, signal: "consolidating" },
+        ],
+      };
+      sv(PULSE_CACHE_KEY, { overview: overviewSeed, news: newsSeed, stocks: stockSeed, savedAt: now });
+      setPulseOverview(overviewSeed);
+      setPulseNews(newsSeed);
+      setPulseStocks(stockSeed);
+
+      const ann = [
+        { id: `seed_ann_${now}_1`, ts: now - 3 * 86400000, isoDate: new Date(now - 3 * 86400000).toISOString(), type: "insight", note: "Demo memo: deployment ratios accelerating in core enterprise groups.", author: "Research", signalKey: "rays_enterprise_ai_demand" },
+        { id: `seed_ann_${now}_2`, ts: now - 2 * 86400000, isoDate: new Date(now - 2 * 86400000).toISOString(), type: "risk", note: "Watchlist: governance hiring still outpacing public disclosure of production conversion.", author: "PM", signalKey: "layer_agent" },
+        { id: `seed_ann_${now}_3`, ts: now - 1 * 86400000, isoDate: new Date(now - 1 * 86400000).toISOString(), type: "event", note: "Spatial layer catalyst prep: Meta Connect preview cycle started.", author: "Research", signalKey: "layer_spatial" },
+      ];
+      sv("annotations", ann);
+      setAnnotations(ann);
+
+      setAlerts([
+        { id: `seed_alert_${now}_1`, ts: now - 30 * 60000, vertical: "Rays Core - Enterprise AI Demand", text: "Job postings up 18% WoW and stage shifted toward implementation.", severity: "green", pinned: true },
+        { id: `seed_alert_${now}_2`, ts: now - 22 * 60000, vertical: "Layer - Agent", text: "Claude-attributed commits crossed internal acceleration threshold.", severity: "amber", pinned: false },
+        { id: `seed_alert_${now}_3`, ts: now - 12 * 60000, vertical: "Layer - Physical AI", text: "GitHub repo activity inflected higher on robotics deployment stack.", severity: "green", pinned: false },
+        { id: `seed_alert_${now}_4`, ts: now - 9 * 60000, vertical: "Layer - Voice", text: "Voice deployment hiring ratio moved above 1.3x baseline.", severity: "amber", pinned: false },
+      ]);
+
+      const wkNow = weekKeyFromDate(new Date(now));
+      const wkPrev = weekKeyFromDate(new Date(now - 7 * 86400000));
+      const snapshotBase = {
+        week: wkNow,
+        generated_at: new Date(now - 14 * 60000).toISOString(),
+        total_verticals_tracked: config.verticals.length,
+        verticals: config.verticals.map((v) => {
+          const tsHist = tsPatch[v.id];
+          const latestJob = resultsPatch[`${v.id}_theirstack`];
+          const latestTrend = resultsPatch[`${v.id}_google_trends`];
+          return {
+            id: v.id,
+            name: v.name,
+            theirstack_historical: {
+              baseline_monthly_avg: tsHist?.derived?.baseline || null,
+              recent_monthly: (tsHist?.monthly || []).slice(-8).map((m) => ({ month: m.month, count: m.count, index: m.index })),
+            },
+            signals: {
+              job_postings: {
+                current_count: latestJob?.count || 0,
+                pct_change_vs_previous: tsHist?.derived?.current_vs_prev_pct || null,
+                time_series: { recent_values: (historiesPatch[`${v.id}_theirstack`] || []).slice(-16).map((p) => ({ date: p.isoDate.slice(0, 10), value: p.value })) },
+                classification_stage: latestJob?.classification?.dominantStage?.name || null,
+                classification_confidence: latestJob?.classification?.confidence || null,
+              },
+              google_trends: {
+                current_index: latestTrend?.count || 0,
+                pct_change_vs_previous: latestTrend?.momentum || 0,
+                time_series: { recent_values: (historiesPatch[`${v.id}_google_trends`] || []).slice(-16).map((p) => ({ date: p.isoDate.slice(0, 10), value: p.value })) },
+              },
+            },
+          };
+        }),
+      };
+      const briefBody = [
+        "## Executive Summary",
+        "- Demo mode seeded with full cross-layer and legacy tracker history.",
+        "- Enterprise AI demand remains in implementation acceleration phase across core groups.",
+        "- Agent and physical AI layers show strongest multi-signal convergence this week.",
+        "",
+        "## Actionable Readouts",
+        "- Prioritize names with sustained jobs + repo + attribution alignment.",
+        "- Monitor governance hiring spread for compliance spend confirmation.",
+      ].join("\n");
+      const currentBrief = {
+        generated_at: snapshotBase.generated_at,
+        first_generated_at: new Date(now - 20 * 60000).toISOString(),
+        content_markdown: briefBody,
+        first_content_markdown: briefBody,
+        data_snapshot: snapshotBase,
+      };
+      const previousBrief = {
+        generated_at: new Date(now - 8 * 86400000).toISOString(),
+        first_generated_at: new Date(now - 8 * 86400000).toISOString(),
+        content_markdown: briefBody.replace("this week", "last week"),
+        first_content_markdown: briefBody.replace("this week", "last week"),
+        data_snapshot: { ...snapshotBase, week: wkPrev },
+      };
+      sv(briefStorageKey(wkNow), currentBrief);
+      sv(briefStorageKey(wkPrev), previousBrief);
+      sv(BRIEF_LAST_KEY, wkNow);
+
+      localStorage.setItem(demoKey, "1");
+      setHfRenderKey((k) => k + 1);
+    } catch {}
+  }, [alerts?.length, annotations?.length, config.sources, config.stages, config.verticals, recomputeCrossCorr]);
 
   useEffect(() => {
     const outdated = {};
@@ -8072,21 +8560,6 @@ FINAL REMINDER: No URLs or links. No numbers or "facts" unless they appear in th
           </div>
         </Card>
 
-        <InterfaceLayerPanel
-          layerId={activeLayer}
-          layerSignals={layerSignals}
-          layerHistories={layerHistories}
-          layerNotes={layerNotes}
-          layerEvents={layerEvents}
-          layerDrafts={layerDrafts}
-          onDraftChange={updateLayerDraft}
-          onAddSignalPoint={addLayerSignalPoint}
-          onUpdateLayerNote={updateLayerNote}
-          onAddLayerEvent={addLayerEvent}
-          onRefreshLayerIntegration={refreshLayerIntegration}
-          integrationStatus={layerIntegrationStatus}
-        />
-
         {/* ─── Empty state prompt ─── */}
         {activeLayer === "agent" && config.verticals.length === 0 && (
           <Card className="fade-in" style={{padding:"28px 32px",marginBottom:20,textAlign:"center"}}>
@@ -8306,7 +8779,7 @@ FINAL REMINDER: No URLs or links. No numbers or "facts" unless they appear in th
 
         {/* ─── Hugging Face ─── */}
         <div style={{marginBottom:28}}>
-          <HuggingFaceLeaderboard onDataChanged={()=>{const pat=resolveGitPat();if(pat||signalStoreSecret()||databaseStoreSecret())debouncedSyncToGist(pat,3000);}}/>
+          <HuggingFaceLeaderboard key={hfRenderKey} onDataChanged={()=>{const pat=resolveGitPat();if(pat||signalStoreSecret()||databaseStoreSecret())debouncedSyncToGist(pat,3000);}}/>
         </div>
 
         {/* ─── Alerts ─── */}
