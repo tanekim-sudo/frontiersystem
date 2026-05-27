@@ -6623,6 +6623,11 @@ export default function App() {
   const migratedLabelsRef=useRef(false);
   const cancelHistoryRef=useRef(false);
   const configRef=useRef(config);const srRef=useRef(signalResults);const ldRef=useRef(loading);
+  const recomputeCrossCorr = useCallback((histObj) => {
+    const matrix = computeCrossCorrMatrix(histObj);
+    setCrossCorr(matrix);
+    sv(crossCorrKey(), matrix);
+  }, []);
   const cloudSyncDoneRef=useRef(false);
   useEffect(()=>{configRef.current=config;},[config]);
   useEffect(()=>{srRef.current=signalResults;},[signalResults]);
@@ -7488,12 +7493,6 @@ export default function App() {
     const json = await res.json();
     return json.total_count || 0;
   }, [buildGitHubQuery]);
-
-  const recomputeCrossCorr = useCallback((histObj) => {
-    const matrix = computeCrossCorrMatrix(histObj);
-    setCrossCorr(matrix);
-    sv(crossCorrKey(), matrix);
-  }, []);
 
   const backfillSignalSource = useCallback(async (verticalId, sourceId) => {
     const vert = configRef.current.verticals.find(v => v.id === verticalId);
