@@ -8573,7 +8573,23 @@ FINAL REMINDER: No URLs or links. No numbers or "facts" unless they appear in th
   );
 
   const pulseMacroDrivers = useMemo(() => computeMacroDrivers(pulseOverview?.fred_latest), [pulseOverview]);
-  const pulseSignalMoves = useMemo(() => computeSignalMoves(config.verticals, allHistories, config.sources), [config.verticals, allHistories, config.sources]);
+  const visibleVerticals = useMemo(() => {
+    const all = config.verticals || [];
+    if (!all.length) return [];
+    const layerId = `layer_${activeLayer}`;
+    if (activeLayer === "agent") {
+      return all.filter((v) => !String(v.id || "").startsWith("layer_") || v.id === "layer_agent");
+    }
+    const scoped = all.filter((v) => v.id === layerId);
+    if (scoped.length) return scoped;
+    return all.filter((v) => String(v.id || "").startsWith("layer_") && String(v.id || "").includes(activeLayer));
+  }, [activeLayer, config.verticals]);
+  const pulseSignalMoves = useMemo(() => computeSignalMoves(visibleVerticals, allHistories, config.sources), [visibleVerticals, allHistories, config.sources]);
+  useEffect(() => {
+    const allowed = new Set(visibleVerticals.map((v) => v.id));
+    setOverlaySelected((prev) => prev.filter((k) => allowed.has(k.split("_")[0])));
+    if (editingGroupId && !allowed.has(editingGroupId)) setEditingGroupId(null);
+  }, [visibleVerticals, editingGroupId]);
 
   return(
     <div style={{background:"#f0f2f5",minHeight:"100vh",...font.sans}}>
@@ -8675,13 +8691,30 @@ FINAL REMINDER: No URLs or links. No numbers or "facts" unless they appear in th
           </div>
         </Card>
 
+        <InterfaceLayerPanel
+          layerId={activeLayer}
+          layerSignals={layerSignals}
+          layerHistories={layerHistories}
+          layerNotes={layerNotes}
+          layerEvents={layerEvents}
+          layerDrafts={layerDrafts}
+          onDraftChange={updateLayerDraft}
+          onAddSignalPoint={addLayerSignalPoint}
+          onUpdateLayerNote={updateLayerNote}
+          onAddLayerEvent={addLayerEvent}
+          onRefreshLayerIntegration={refreshLayerIntegration}
+          integrationStatus={layerIntegrationStatus}
+        />
+
         {/* ─── Empty state prompt ─── */}
-        {activeLayer === "agent" && config.verticals.length === 0 && (
+        {visibleVerticals.length === 0 && (
           <Card className="fade-in" style={{padding:"28px 32px",marginBottom:20,textAlign:"center"}}>
             <IcoC name="trendUp" size={24} color={C.cyan}/>
-            <div style={{...font.sans,fontSize:16,fontWeight:700,color:C.text,margin:"12px 0 6px"}}>Create your first tracking group to get started</div>
+            <div style={{...font.sans,fontSize:16,fontWeight:700,color:C.text,margin:"12px 0 6px"}}>
+              No tracking group mapped to this layer yet
+            </div>
             <p style={{...font.sans,fontSize:12,color:C.textSec,margin:"0 0 16px",lineHeight:1.6,maxWidth:520,marginLeft:"auto",marginRight:"auto"}}>
-              A tracking group is a vertical, theme, or sector you want to monitor.
+              Add a group and map its keywords to this layer so source tracking cards populate here.
             </p>
             <div style={{display:"flex",gap:8,alignItems:"center",justifyContent:"center",maxWidth:420,margin:"0 auto"}}>
               <input ref={addRef} value={newGroupName} onChange={e=>setNewGroupName(e.target.value)} placeholder="e.g. Healthcare AI, FinTech..."
@@ -8709,23 +8742,21 @@ FINAL REMINDER: No URLs or links. No numbers or "facts" unless they appear in th
           </>
         )}
 
-        {activeLayer === "agent" && (
-        <>
         {/* ─── Group bar ─── */}
         <div style={{marginBottom:14}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-              {config.verticals.map(v=>{
+              {visibleVerticals.map(v=>{
                 const isEditing = editingGroupId === v.id;
                 return(<button key={v.id} onClick={()=>setEditingGroupId(isEditing?null:v.id)} style={{...font.sans,fontSize:12,fontWeight:600,padding:"5px 14px",borderRadius:8,cursor:"pointer",border:isEditing?`2px solid ${v.color||C.cyan}`:`1px solid ${(v.color||C.cyan)+"40"}`,background:isEditing?(v.color||C.cyan)+"18":"transparent",color:isEditing?(v.color||C.cyan):C.text,transition:"all .15s",outline:"none"}}>{v.name}</button>);
               })}
-              {addingGroup?(
+              {activeLayer === "agent" && addingGroup?(
                 <div style={{display:"flex",gap:4,alignItems:"center"}}>
                   <input ref={addRef} value={newGroupName} onChange={e=>setNewGroupName(e.target.value)} placeholder="Group name" style={{width:160,fontSize:12,padding:"4px 8px"}}
                     onKeyDown={e=>{if(e.key==="Enter"&&newGroupName.trim()){addGroup(newGroupName.trim());setNewGroupName("");setAddingGroup(false);}if(e.key==="Escape"){setAddingGroup(false);setNewGroupName("");}}}/>
                   <Btn variant="primary" size="sm" onClick={()=>{if(newGroupName.trim()){addGroup(newGroupName.trim());setNewGroupName("");setAddingGroup(false);}}}>Add</Btn>
                 </div>
-              ):<Btn variant="ghost" size="sm" onClick={()=>setAddingGroup(true)}>+ Add group</Btn>}
+              ):activeLayer === "agent" ? <Btn variant="ghost" size="sm" onClick={()=>setAddingGroup(true)}>+ Add group</Btn> : null}
             </div>
             {overlaySelected.length>0&&(
               <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -8737,7 +8768,7 @@ FINAL REMINDER: No URLs or links. No numbers or "facts" unless they appear in th
 
           {/* Expanded keyword editor for selected group */}
           {editingGroupId && (()=>{
-            const v = config.verticals.find(vt=>vt.id===editingGroupId);
+            const v = visibleVerticals.find(vt=>vt.id===editingGroupId);
             if (!v) return null;
             const sourceKwConfig = [
               { sourceId: "theirstack", label: "Job Postings (TheirStack)", fields: { titleKeywords: "Title keywords", descriptionKeywords: "Description keywords" } },
@@ -8778,7 +8809,7 @@ FINAL REMINDER: No URLs or links. No numbers or "facts" unless they appear in th
         </div>
 
         {/* Overlay chart */}
-        {overlaySelected.length>=2 && <OverlayChart selectedKeys={overlaySelected} allHistories={allHistories} sources={config.sources} verticals={config.verticals}/>}
+        {overlaySelected.length>=2 && <OverlayChart selectedKeys={overlaySelected} allHistories={allHistories} sources={config.sources} verticals={visibleVerticals}/>}
 
         {/* ─── Brief Flagging Thresholds (inline-editable) ─── */}
         <Card style={{marginBottom:20,padding:"14px 18px"}}>
@@ -8825,9 +8856,9 @@ FINAL REMINDER: No URLs or links. No numbers or "facts" unless they appear in th
         </Card>
 
         {/* ─── Signal Convergence Panel ─── */}
-        {config.verticals.length > 0 && (
+        {visibleVerticals.length > 0 && (
           <SignalConvergencePanel
-            verticals={config.verticals}
+            verticals={visibleVerticals}
             sources={config.sources}
             signalResults={signalResults}
           />
@@ -8838,7 +8869,7 @@ FINAL REMINDER: No URLs or links. No numbers or "facts" unless they appear in th
           annotations={annotations}
           onAdd={(ann) => setAnnotations(addAnnotation(ann))}
           onDelete={(id) => setAnnotations(deleteAnnotation(id))}
-          verticals={config.verticals}
+          verticals={visibleVerticals}
         />
 
         {/* ─── Per-group signal metrics (each row = one source × your groups & keywords) ─── */}
@@ -8855,7 +8886,7 @@ FINAL REMINDER: No URLs or links. No numbers or "facts" unless they appear in th
                 key={src.id}
                 source={src}
                 demoTheirStack={src.id === "theirstack" && resolveTheirStackMocking(src, config.apiKeys)}
-                verticals={config.verticals}
+                verticals={visibleVerticals}
                 signalResults={signalResults}
                 loading={loading}
                 errors={errors}
@@ -8902,8 +8933,6 @@ FINAL REMINDER: No URLs or links. No numbers or "facts" unless they appear in th
           <div style={{marginBottom:28}}>
             <AlertFeed alerts={alerts} onPin={id=>setAlerts(p=>p.map(a=>a.id===id?{...a,pinned:!a.pinned}:a))}/>
           </div>
-        )}
-        </>
         )}
       </div>
 
