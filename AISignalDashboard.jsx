@@ -1986,11 +1986,38 @@ function makeDemoSeries({ seedKey, points = 56, stepDays = 7, base = 100, drift 
   const out = [];
   const now = Date.now();
   let val = base;
+  let anchor = base;
+  let regimeLeft = 0;
+  let regimeDrift = drift;
+  let regimeVol = volatility;
+  let momentum = 0;
+
   for (let i = points - 1; i >= 0; i--) {
     const ts = now - i * stepDays * 86400000;
-    const wiggle = (rng() - 0.5) * 2 * volatility;
-    const seasonal = Math.sin((points - i) / 5) * base * (volatility * 0.6);
-    val = val * (1 + wiggle * 0.22) + drift + seasonal * 0.05;
+    const t = points - i;
+    if (regimeLeft <= 0) {
+      regimeLeft = Math.max(4, Math.round(4 + rng() * (stepDays >= 28 ? 7 : 12)));
+      const driftTilt = 0.35 + rng() * 1.8;
+      const signFlip = rng() < 0.22 ? -1 : 1;
+      regimeDrift = drift * driftTilt * signFlip;
+      regimeVol = volatility * (0.7 + rng() * 1.6);
+      anchor = Math.max(floor, val * (0.92 + rng() * 0.2));
+    }
+    regimeLeft -= 1;
+
+    const seasonal = Math.sin((t / (stepDays >= 28 ? 3.8 : 7.5)) * Math.PI * 2) * base * (regimeVol * 0.22);
+    const noise = (rng() - 0.5) * 2 * regimeVol;
+    const meanRevert = (anchor - val) * (0.04 + rng() * 0.04);
+    momentum = momentum * 0.56 + noise * base * 0.12;
+    val += regimeDrift + seasonal + momentum + meanRevert;
+
+    const shockProb = stepDays >= 28 ? 0.07 : 0.11;
+    if (rng() < shockProb) {
+      const shockSign = rng() < 0.56 ? 1 : -1;
+      const shockMag = base * (0.03 + rng() * 0.14);
+      val += shockSign * shockMag;
+    }
+
     if (cap != null) val = Math.min(cap, val);
     val = Math.max(floor, val);
     out.push({
@@ -6743,7 +6770,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const demoKey = `${HSPFX}full_demo_seed_v2`;
+    const demoKey = `${HSPFX}full_demo_seed_v3`;
     if (localStorage.getItem(demoKey)) return;
     if (!config.verticals?.length || !config.sources?.length) return;
     try {
@@ -6903,7 +6930,7 @@ export default function App() {
           { id: `${org.id}/reasoning-instruct`, downloads: Math.round(410000 + idx * 36000), likes: 1800 - idx * 41, pipeline: "text-generation" },
         ],
       })).sort((a, b) => b.totalDownloads - a.totalDownloads);
-      const hfPayload = { orgs: hfOrgs, timestamp: now };
+      const hfPayload = { orgs: hfOrgs, timestamp: now, seeded: true };
       sv("hf_lb", hfPayload);
       const hfHistory = Array.from({ length: 12 }, (_, i) => {
         const ts = now - (11 - i) * 30 * 86400000;
@@ -6962,6 +6989,95 @@ export default function App() {
       setPulseOverview(overviewSeed);
       setPulseNews(newsSeed);
       setPulseStocks(stockSeed);
+
+      // Pull live trackable data where available, then retain seeded fallbacks for missing sources.
+      (async () => {
+        try {
+          const [macroRes, newsRes, stockRes] = await Promise.allSettled([
+            fetch("/api/labor/overview"),
+            fetch("/api/ai-news"),
+            fetch("/api/stock-pulse"),
+          ]);
+          const liveOverview = macroRes.status === "fulfilled" && macroRes.value.ok
+            ? await macroRes.value.json().catch(() => null)
+            : null;
+          const liveNews = newsRes.status === "fulfilled" && newsRes.value.ok
+            ? await newsRes.value.json().catch(() => null)
+            : null;
+          const liveStocks = stockRes.status === "fulfilled" && stockRes.value.ok
+            ? await stockRes.value.json().catch(() => null)
+            : null;
+          if (liveOverview || liveNews || liveStocks) {
+            const mergedPulse = {
+              overview: liveOverview || overviewSeed,
+              news: liveNews || newsSeed,
+              stocks: liveStocks || stockSeed,
+              savedAt: Date.now(),
+            };
+            sv(PULSE_CACHE_KEY, mergedPulse);
+            setPulseOverview(mergedPulse.overview);
+            setPulseNews(mergedPulse.news);
+            setPulseStocks(mergedPulse.stocks);
+          }
+        } catch {}
+
+        try {
+          const hfRuns = await Promise.allSettled(
+            HF_ORGS.map(async (org) => {
+              try {
+                const r = await fetch(`https://huggingface.co/api/models?author=${org.id}&sort=downloads&direction=-1&limit=10`);
+                if (!r.ok) throw new Error(`HF ${r.status}`);
+                const models = await r.json();
+                const top = (models || []).slice(0, 5).map((m) => ({
+                  id: m.id || m.modelId,
+                  downloads: Number(m.downloads || 0),
+                  likes: Number(m.likes || 0),
+                  pipeline: m.pipeline_tag || "",
+                }));
+                return {
+                  orgId: org.id,
+                  totalDownloads: top.reduce((s, m) => s + (m.downloads || 0), 0),
+                  modelCount: (models || []).length,
+                  topModels: top,
+                };
+              } catch {
+                return null;
+              }
+            }),
+          );
+          const liveOrgs = hfRuns
+            .map((x) => (x.status === "fulfilled" ? x.value : null))
+            .filter((x) => x && x.totalDownloads > 0);
+          if (liveOrgs.length >= Math.max(4, Math.floor(HF_ORGS.length / 3))) {
+            liveOrgs.sort((a, b) => b.totalDownloads - a.totalDownloads);
+            const hfNow = Date.now();
+            const livePayload = { orgs: liveOrgs, timestamp: hfNow, seeded: false };
+            sv("hf_lb", livePayload);
+
+            const hfLiveHistory = Array.from({ length: 12 }, (_, i) => {
+              const ts = hfNow - (11 - i) * 30 * 86400000;
+              const row = { ts, date: new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" }) };
+              liveOrgs.forEach((o, oi) => {
+                const ratio = 0.62 + i * (0.03 + oi * 0.0007);
+                row[o.orgId] = Math.round((o.totalDownloads || 0) * ratio);
+              });
+              return row;
+            });
+            sv("hist_hf", hfLiveHistory);
+            const liveTotalHist = hfLiveHistory.map((r) => {
+              const total = liveOrgs.reduce((sum, o) => sum + (r[o.orgId] || 0), 0);
+              return {
+                ts: r.ts,
+                isoDate: new Date(r.ts).toISOString(),
+                value: total,
+                date: new Date(r.ts).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+              };
+            });
+            sv("hist_hf_total", liveTotalHist);
+            setHfRenderKey((k) => k + 1);
+          }
+        } catch {}
+      })();
 
       const ann = [
         { id: `seed_ann_${now}_1`, ts: now - 3 * 86400000, isoDate: new Date(now - 3 * 86400000).toISOString(), type: "insight", note: "Demo memo: deployment ratios accelerating in core enterprise groups.", author: "Research", signalKey: "rays_enterprise_ai_demand" },
