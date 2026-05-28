@@ -10,7 +10,7 @@ Comprehensive AI demand and interface-transition intelligence system for trackin
 
 This repository combines:
 
-- A production React dashboard (`AISignalDashboard.jsx`) with legacy-grade long-horizon signal tracking
+- A production React dashboard (`AISignalDashboard.jsx`) with long-horizon historical signal tracking
 - Layer-specific interface metric tracking panels for each AI interface layer
 - Multiple API surfaces (labor, news, stock pulse, live normalized platform, persistence)
 - Optional normalized live-data architecture (Postgres + workers + ingestion queue)
@@ -22,7 +22,7 @@ This repository combines:
 
 The platform is designed for AI-first investment and operating intelligence. It does all of the following:
 
-- Tracks AI signals from multiple legacy source families:
+- Tracks AI signals from multiple source families:
   - TheirStack job postings
   - Google Trends
   - GitHub repositories
@@ -38,7 +38,7 @@ The platform is designed for AI-first investment and operating intelligence. It 
 - Generates weekly AI briefs with snapshot preservation and history/diff support
 - Supports persistence and sharing via:
   - Supabase/Postgres-backed `dashboard_state`
-  - optional legacy Gist-based synchronization
+  - optional Gist-based synchronization
 - Supports a live normalized platform API (`/api/live`) with queue-based ingestion model
 - Degrades safely to seeded fallback data so demos remain complete even when live infra is missing
 
@@ -46,9 +46,9 @@ The platform is designed for AI-first investment and operating intelligence. It 
 
 ## Product Model
 
-### 1) Legacy Signal Infrastructure (still core)
+### 1) Core Signal Infrastructure
 
-The old tracker workflow remains the base interaction model:
+The base workflow centers on durable signal tracking:
 
 - tracking groups with source-specific keyword sets
 - per-source cards and histories
@@ -61,7 +61,7 @@ The old tracker workflow remains the base interaction model:
 
 Every layer tab now has both:
 
-- Legacy source cards scoped to that layer's mapped tracking groups
+- Source cards scoped to that layer's mapped tracking groups
 - Interface-specific layer metric trackers (manual points, notes, catalyst events, integration status)
 
 This means each tab is operational for signal monitoring, not just `agent`.
@@ -94,8 +94,8 @@ The layer panel includes metrics from your prompt (expanded across commits), inc
   - SQL schema for normalized live platform tables
 - `workers/`
   - External scheduler/worker runtime for queued ingestion
-- `rays_tracker/`
-  - Python FastAPI labor backend (local stack option)
+- Python FastAPI labor backend folder
+  - Optional local stack for labor/macro ingestion workflows
 
 ---
 
@@ -193,9 +193,9 @@ Used by `api/dashboard-state.js`.
 - Team-shared payload
 - Better reliability than client-only local storage
 
-### Optional legacy sync: GitHub Gist
+### Optional GitHub Gist sync
 
-Useful for backward compatibility and certain team workflows.
+Useful for lightweight cloud sharing in certain team workflows.
 
 ---
 
@@ -222,11 +222,11 @@ Modes:
 
 ## Python Labor API (optional local backend)
 
-A separate FastAPI labor backend lives in `rays_tracker/`.
+A separate FastAPI labor backend module is included in the repository for local Python workflows.
 
 Use it when you want local Python-first labor workflows; production labor routes are also exposed through Node serverless endpoints.
 
-See `rays_tracker/README.md` for detailed commands.
+See the Python backend README in that module folder for detailed commands.
 
 ---
 
@@ -249,7 +249,7 @@ This project is built around a specific operating problem: AI interface transiti
 
 The implementation deliberately balances ambition and reliability:
 
-- a unified product surface that supports both legacy long-horizon signal mechanics and newer layer-native metric tracking
+- a unified product surface that supports long-horizon signal mechanics and layer-native metric tracking
 - practical live integrations where available, with deterministic fallback behavior where live coverage is incomplete
 - architecture that can run as a demo-ready experience today while still supporting migration toward fully normalized ingestion over time
 
