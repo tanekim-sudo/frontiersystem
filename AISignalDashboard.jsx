@@ -1891,6 +1891,8 @@ const INTERFACE_LAYERS = {
       { id: "physical_production_hours", label: "Production hours database (Formic, Agility, Zipline, Waymo)", cadence: "weekly", sourceType: "manual", unit: "hours", watchThreshold: null, falsification: null },
       { id: "physical_ur_asp", label: "Teradyne Universal Robots ASP", cadence: "quarterly", sourceType: "manual", unit: "usd", watchThreshold: null, falsification: null },
       { id: "physical_job_deployment_ratio", label: "Deployment+operations roles / R&D roles", cadence: "weekly", sourceType: "manual", unit: "ratio", watchThreshold: null, falsification: null },
+      { id: "physical_cosmos_capability", label: "NVIDIA Cosmos capability update index", cadence: "quarterly", sourceType: "manual", unit: "index", watchThreshold: null, falsification: null },
+      { id: "physical_vla_paper_velocity", label: "VLA model paper velocity (Physical Intelligence, Skild, GR00T)", cadence: "quarterly", sourceType: "manual", unit: "count", watchThreshold: null, falsification: null },
       { id: "physical_sim_to_real_reliability", label: "Sim-to-real transfer reliability", cadence: "quarterly", sourceType: "manual", unit: "percent", watchThreshold: 85, falsification: "If contact-rich manipulation reliability crosses 85%, deployment-data moat weakens materially." },
     ],
   },
@@ -1903,6 +1905,7 @@ const INTERFACE_LAYERS = {
     signals: [
       { id: "voice_elevenlabs_arr", label: "ElevenLabs ARR trajectory", cadence: "weekly", sourceType: "manual", unit: "usd", watchThreshold: null, falsification: null },
       { id: "voice_cartesia_commit_velocity", label: "Cartesia commit velocity + SDK breadth", cadence: "weekly", sourceType: "manual", unit: "index", watchThreshold: null, falsification: null },
+      { id: "voice_sdk_integration_breadth", label: "Voice SDK integration breadth across ambient apps", cadence: "weekly", sourceType: "manual", unit: "count", watchThreshold: null, falsification: null },
       { id: "voice_ambient_dau_mau", label: "Ambient voice DAU/MAU", cadence: "weekly", sourceType: "manual", unit: "ratio", watchThreshold: null, falsification: null },
       { id: "voice_f500_job_velocity", label: "Fortune 500 enterprise voice AI job postings", cadence: "weekly", sourceType: "manual", unit: "count", watchThreshold: null, falsification: null },
       { id: "voice_tts_latency", label: "TTS latency benchmark composite", cadence: "quarterly", sourceType: "manual", unit: "milliseconds", watchThreshold: null, falsification: null },
@@ -1921,6 +1924,7 @@ const INTERFACE_LAYERS = {
       { id: "spatial_himax_revenue", label: "Himax AR/VR revenue", cadence: "quarterly", sourceType: "manual", unit: "usd", watchThreshold: null, falsification: null },
       { id: "spatial_sdk_downloads", label: "Meta spatial SDK downloads", cadence: "weekly", sourceType: "manual", unit: "count", watchThreshold: null, falsification: null },
       { id: "spatial_waveguide_hires", label: "Waveguide process-engineering hiring (Dispelix/WaveOptics)", cadence: "weekly", sourceType: "manual", unit: "count", watchThreshold: null, falsification: null },
+      { id: "spatial_meta_connect_conviction", label: "Meta Connect conviction signal (annual event impact)", cadence: "annual", sourceType: "manual", unit: "index", watchThreshold: null, falsification: null },
     ],
   },
   agent: {
@@ -1937,6 +1941,8 @@ const INTERFACE_LAYERS = {
       { id: "agent_gov_commit_velocity", label: "Governance infra GitHub commit velocity", cadence: "weekly", sourceType: "manual", unit: "index", watchThreshold: null, falsification: null },
       { id: "agent_nrr_margin_signature", label: "False-moat signature (NRR down, gross margin up)", cadence: "quarterly", sourceType: "manual", unit: "index", watchThreshold: null, falsification: null },
       { id: "agent_pilot_to_prod", label: "Pilot-to-production conversion rate", cadence: "quarterly", sourceType: "manual", unit: "percent", watchThreshold: null, falsification: null },
+      { id: "agent_saas_short_timing", label: "Seat-based SaaS short timing instrument", cadence: "weekly", sourceType: "manual", unit: "index", watchThreshold: null, falsification: null },
+      { id: "agent_eu_ai_act_audit_demand", label: "EU AI Act audit-trail demand pressure", cadence: "weekly", sourceType: "manual", unit: "index", watchThreshold: null, falsification: null },
     ],
     legacySignals: ["theirstack", "google_trends", "github_repos", "claude_attrib", "hf_downloads", "macro_pulse"],
   },
@@ -1951,6 +1957,8 @@ const INTERFACE_LAYERS = {
       { id: "neural_electrode_generation", label: "Electrode count per generation", cadence: "monthly", sourceType: "manual", unit: "count", watchThreshold: null, falsification: null },
       { id: "neural_fda_milestones", label: "FDA pathway milestones (Neuralink/Synchron)", cadence: "monthly", sourceType: "manual", unit: "milestone", watchThreshold: null, falsification: null },
       { id: "neural_ultrasound_resolution", label: "Through-skull ultrasound resolution progress", cadence: "monthly", sourceType: "manual", unit: "index", watchThreshold: null, falsification: "Material resolution breakthrough without surgical acoustic window upgrades long-duration optionality." },
+      { id: "neural_shapiro_publication_signal", label: "Shapiro lab publication signal (non-surgical resolution breakthroughs)", cadence: "monthly", sourceType: "manual", unit: "index", watchThreshold: null, falsification: null },
+      { id: "neural_merge_optional_to_core", label: "Merge Labs optionality-to-core transition signal", cadence: "monthly", sourceType: "manual", unit: "index", watchThreshold: null, falsification: null },
       { id: "neural_s1_signals", label: "S-1 filing signal watch (major private BCI)", cadence: "monthly", sourceType: "manual", unit: "event", watchThreshold: null, falsification: null },
     ],
   },
@@ -8632,6 +8640,19 @@ FINAL REMINDER: No URLs or links. No numbers or "facts" unless they appear in th
       </div>
 
       <div style={{padding:"20px 28px 40px",maxWidth:1400,margin:"0 auto"}}>
+        <Card style={{marginBottom:14,padding:"12px 14px",borderLeft:`4px solid ${C.cyan}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <div>
+              <div style={{...font.sans,fontSize:14,fontWeight:800,color:C.text}}>
+                AI Interface Transition Intelligence Platform
+              </div>
+              <div style={{...font.sans,fontSize:11,color:C.textSec,marginTop:4,lineHeight:1.5,maxWidth:900}}>
+                AI-first command center for tracking adoption, deployment, and market inflections across Physical AI, Voice, Spatial, Agent, and Neural layers using both legacy live sources and layer-specific interface metrics.
+              </div>
+            </div>
+            <Badge color={C.cyan} bg={C.cyanBg} size="sm">AI-First Tracking</Badge>
+          </div>
+        </Card>
 
         {(activeLayer === "physical_ai" || activeLayer === "agent") && (
           <MarketAiPulsePanel
@@ -8874,9 +8895,9 @@ FINAL REMINDER: No URLs or links. No numbers or "facts" unless they appear in th
 
         {/* ─── Per-group signal metrics (each row = one source × your groups & keywords) ─── */}
         <div style={{marginBottom:10}}>
-          <div style={{...font.sans,fontSize:13,fontWeight:700,color:C.text}}>Tracking-group metrics</div>
+          <div style={{...font.sans,fontSize:13,fontWeight:700,color:C.text}}>AI signal tracking metrics</div>
           <div style={{...font.sans,fontSize:11,color:C.textMuted,marginTop:4,maxWidth:720,lineHeight:1.5}}>
-            Each card is one data source. Rows are your signal groups — keywords apply per group. Use Refresh on a card or per row; Backfill where available builds history (TheirStack monthly in demo mode works without an API key).
+            Each card is one AI-relevant signal source. Rows are your layer-mapped groups; keywords apply per group. Use Refresh on a card or per row; Backfill where available builds history (TheirStack monthly in demo mode works without an API key).
           </div>
         </div>
         <div style={{marginBottom:28}}>
