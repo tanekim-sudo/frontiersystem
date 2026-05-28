@@ -243,66 +243,29 @@ See `rays_tracker/README.md` for detailed commands.
 
 ---
 
-## Evaluation Rubric Coverage
+## Project Context and Development Notes
 
-This section maps the project directly to the requested evaluation criteria.
+This project is built around a specific operating problem: AI interface transitions are material, but their signals are fragmented across different systems, cadences, and confidence levels. The platform consolidates those inputs into one workflow so decision-making can move from scattered monitoring to structured, repeatable signal review.
 
-### Problem & Insight (3 points)
+The implementation deliberately balances ambition and reliability:
 
-- **Meaningful problem/opportunity**: AI interface transitions are high-impact but fragmented across heterogeneous signals (jobs, repos, benchmarks, regulatory events, macro context). This project unifies those signals into one operational intelligence system.
-- **Compelling motivation**: The platform is built to support real-time conviction building and timing decisions across five interface layers, not just static reporting.
-- **Original/ambitious approach**: It combines legacy long-horizon tracking mechanics, layer-native metric tracking, live API integrations, normalized live-data architecture, and graceful degraded/demo behavior in one system.
+- a unified product surface that supports both legacy long-horizon signal mechanics and newer layer-native metric tracking
+- practical live integrations where available, with deterministic fallback behavior where live coverage is incomplete
+- architecture that can run as a demo-ready experience today while still supporting migration toward fully normalized ingestion over time
 
-### Execution & Technical Work (5 points)
+Development has been iterative, with emphasis on usability and operational stability:
 
-- **Substantial build scope**:
-  - integrated dashboard with layer tabs and per-layer metric panels
-  - source adapters (jobs/trends/github/attribution/news/stocks/macro)
-  - persistence paths (Supabase/Postgres + optional Gist compatibility)
-  - optional normalized live stack (`/api/live`, queue, workers, schema)
-- **Functional artifact**: Usable end-to-end in both live and fallback modes; build and runtime checks are part of normal iteration.
-- **Scope-aligned technical effort**: UI, API, data model, queue/worker runtime, and persistence were all implemented to match the multi-layer product scope.
-- **Clear iteration evidence**: Commit history shows repeated UX/data/reliability iterations (layer wiring, startup crash fixes, realism improvements, refresh hardening, AI-first framing).
+- repeated improvements to layer-tab wiring, metric coverage, and data realism
+- hardening passes for refresh behavior and startup/runtime error handling
+- explicit degraded-mode support so missing credentials or unavailable services do not collapse the experience
 
-### Evaluation & Evidence (3 points)
+Validation is handled in multiple forms throughout iteration:
 
-- **Validation attempts included**:
-  - production builds (`npm run build`)
-  - runtime smoke tests (headless checks and tab interaction verification)
-  - failure-mode hardening (e.g., fallback instead of crash/blank states)
-- **Limitations are explicit**:
-  - some metrics are manual-entry until fully integrated data sources are connected
-  - live availability depends on API keys, endpoint quotas, and backend configuration
-  - degraded mode is intentional and documented
-- **Evidence types represented**:
-  - build/test outputs
-  - operational checks
-  - data-path fallback behavior
-  - commit-level progression over time
+- production builds and runtime smoke checks
+- behavior verification for key UI flows (layer tabs, tracking panels, refresh paths)
+- failure-mode testing around missing API keys, endpoint errors, and database availability
 
-### Communication & Presentation (2 points)
-
-- **Readable for non-team reviewers**:
-  - clear architecture and endpoint documentation
-  - setup/repro instructions
-  - workflow and troubleshooting sections
-- **Demo-ready communication**:
-  - explicit live vs fallback behavior
-  - AI-first product framing
-  - reproducible setup and operational guidance
-
-### Process, Integrity & Disclosure (2 points)
-
-- **AI usage disclosure**: See `AI Tools Usage and Provenance` below (runtime AI features + AI-assisted development process).
-- **Sources/collaborators attribution**:
-  - external APIs/data providers are identified in config/docs (`TheirStack`, `SerpAPI`, `GitHub`, `FRED`, Hugging Face, etc.)
-  - major dependencies are listed in `package.json`
-  - repository history captures incremental contributor work
-- **Decisions and limitations**:
-  - key architectural tradeoffs are documented (live normalized mode vs degraded/demo mode)
-  - known constraints and operational caveats are listed in Troubleshooting and Status sections
-- **Genuine effort over time**:
-  - public commit history shows substantial iterative development rather than one-shot generation
+Known limitations are documented directly in this README (setup, troubleshooting, and status sections), including where data is live, where fallback is expected, and where manual entry remains part of the operating model.
 
 ---
 
