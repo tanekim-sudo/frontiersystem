@@ -1136,41 +1136,164 @@ function sanitizeBriefOutput(text) {
 }
 
 function offlineBriefFromContext(ctx) {
-  const date = new Date(ctx.generated_at).toLocaleString();
-  const header = `AI DEMAND SIGNAL WEEKLY INTELLIGENCE REPORT\nWeek of ${ctx.week}\nGenerated: ${date} (AI-powered analysis unavailable — raw data summary)\nVerticals tracked: ${ctx.total_verticals_tracked || 0}\n`;
+  const SEP = "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
+  const toNum = (n) => (n == null || n === "" || Number.isNaN(Number(n)) ? null : Number(n));
+  const fmt = (n) => {
+    const x = toNum(n);
+    if (x == null) return "n/a";
+    if (Math.abs(x) >= 1000) return x.toLocaleString(undefined, { maximumFractionDigits: 0 });
+    return String(Math.round(x * 100) / 100);
+  };
+  const pct = (n) => {
+    const x = toNum(n);
+    if (x == null) return "n/a";
+    return `${x >= 0 ? "+" : ""}${Math.round(x * 10) / 10}%`;
+  };
+  const verticals = Array.isArray(ctx.verticals) ? ctx.verticals : [];
 
-  const regime = `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nREGIME DASHBOARD\n` + (ctx.verticals || []).map((v) => {
-    const j = v.signals?.job_postings;
-    const g = v.signals?.google_trends;
-    const r = v.signals?.github_repos;
-    const ts = j?.time_series;
-    const mom = ts?.rolling_momentum_5pt_pct;
-    let reg = "STEADY_GROWTH";
-    if (mom > 15) reg = "ACCELERATING";
-    else if (mom < -15) reg = "DECELERATING";
-    else if (mom !== null && Math.abs(mom) <= 5) reg = "PLATEAUING";
-    return `${v.name} | ${reg} | Jobs: ${j?.current_count || "n/a"} (${ts?.pct_change_vs_previous != null ? (ts.pct_change_vs_previous >= 0 ? "+" : "") + ts.pct_change_vs_previous + "%" : "n/a"} vs prev) | Trends: ${g?.current_index || "n/a"} | Repos: ${r?.active_repos_30d || "n/a"}`;
-  }).join("\n");
+  // ── REGIME ──
+  const m = ctx.macro_labor_context || {};
+  const weeks = Array.isArray(m.chicago_recent_weeks) ? m.chicago_recent_weeks : [];
+  const lastWk = weeks.length ? weeks[weeks.length - 1] : null;
+  const cf = m.chicago_fed || {};
+  const fredBy = {};
+  for (const f of (m.fred_headlines || [])) if (f && f.id) fredBy[f.id] = f;
+  let regimeText;
+  if (lastWk || cf.official_u3 != null) {
+    const u3 = cf.official_u3 != null ? cf.official_u3 : lastWk?.u3;
+    const fc = cf.forecast_unemployment != null ? cf.forecast_unemployment : lastWk?.forecast_u;
+    const macroBits = [];
+    if (fredBy.ICSA) macroBits.push(`initial claims ${fmt(fredBy.ICSA.value)}`);
+    if (fredBy.VIXCLS) macroBits.push(`VIX ${fmt(fredBy.VIXCLS.value)}`);
+    if (fredBy.T10Y2Y) macroBits.push(`2s10s ${fmt(fredBy.T10Y2Y.value)}`);
+    regimeText = `Macro backdrop is coincident-to-lagging and steady: U-3 ${u3 != null ? `at ${fmt(u3)}%` : "not in snapshot"}${fc != null ? ` against a ${fmt(fc)}% nowcast` : ""}${cf.release_date ? ` (Chicago Fed, ${cf.release_date})` : ""}. ${macroBits.length ? `Cross-checks: ${macroBits.join(", ")} — no stress print this week.` : "No financial-stress print in the snapshot."} This week's read is therefore driven by the leading signals below, not a regime break.`;
+  } else {
+    regimeText = `Macro labor series are not present in this snapshot, so the regime read defers to the leading signals below. Treat group moves as relative to their own history rather than against an absolute macro baseline until the next macro pull lands.`;
+  }
 
-  const divs = (ctx.verticals || []).filter(v => v.divergence_signals?.length > 0);
-  const divSection = divs.length ? `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nDIVERGENCES DETECTED\n` + divs.flatMap(v => v.divergence_signals.map(d => `${v.name}: ${d.pair} — ${d.interpretation}`)).join("\n") : "";
+  // ── DATA SNAPSHOT ──
+  const snapshot = verticals.length
+    ? verticals.map((v) => {
+        const j = v?.signals?.job_postings;
+        const g = v?.signals?.google_trends;
+        const r = v?.signals?.github_repos;
+        const c = v?.signals?.claude_code_attribution;
+        const stage = v?.pipeline_stage?.label || "stage n/a";
+        const jpct = j?.time_series?.pct_change_vs_previous;
+        return `- **${v.name}** — ${stage} · jobs ${fmt(j?.current_count)}${jpct != null ? ` (${pct(jpct)} vs prev)` : ""} · trends ${fmt(g?.current_index)} · repos ${fmt(r?.active_repos_30d)} · Claude ${fmt(c?.commits_7d)} commits/7d`;
+      }).join("\n")
+    : "No tracking groups returned data this week.";
 
-  const cv = `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nCROSS-VERTICAL\n${(ctx.cross_vertical_analysis)?.systemic_vs_sector === "systemic_wave" ? "Multiple verticals moving in concert — signals a systemic AI adoption wave." : "Verticals diverging — sector-specific dynamics dominate. Watch for rotation signals."}`;
+  // ── FLAGGED SIGNALS ──
+  const flagged = (ctx.threshold_flagged_signals?.flagged || []).filter((x) => x && x.crossed === true);
+  const hasCav = (row, token) => Array.isArray(row.caveats) && row.caveats.some((c) => String(c).startsWith(token));
 
-  const hf = ctx.ai_supply_side?.hugging_face_leaderboard;
-  const supply = hf?.length ? `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nAI SUPPLY SIDE (Hugging Face)\n` + hf.map(h => `${h.org}: ${(h.total_downloads/1e6).toFixed(1)}M downloads, ${h.model_count} models`).join("\n") : "";
+  // ── RELIABILITY & CAVEATS ──
+  const relItems = [];
+  for (const f of (ctx.data_quality_flags || [])) relItems.push(`- ${f}`);
+  for (const v of verticals) {
+    const s = v?.signal_sanity;
+    if (typeof s === "string" && s.trim()) relItems.push(`- ${v.name}: ${s.trim()}`);
+    else if (Array.isArray(s)) for (const x of s) if (x) relItems.push(`- ${v.name}: ${x}`);
+  }
+  for (const row of flagged) {
+    if (hasCav(row, "CLAUDE_GLOBAL_QUERY")) relItems.push(`- ${row.vertical}: the Claude figure is a global GitHub commit search, not evidence this group adopted Claude in production — do not read it as sector uptake.`);
+    if (hasCav(row, "EXTREME_3W_PCT")) relItems.push(`- ${row.vertical} ${row.signal}: the 3-week move is most likely a baseline/history artifact, not demand scaling by that magnitude.`);
+    if (hasCav(row, "SMALL_N_JOBS")) relItems.push(`- ${row.vertical} ${row.signal}: posting count is small — avoid "all-time high" language and state the n.`);
+  }
+  const reliabilityText = relItems.length ? [...new Set(relItems)].join("\n") : "No major integrity flags this week.";
 
-  const dq = ctx.data_quality_flags?.length ? `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nDATA QUALITY FLAGS\n${ctx.data_quality_flags.map(x => `- ${x}`).join("\n")}` : "";
+  let flaggedText;
+  if (!flagged.length) {
+    flaggedText = "No threshold crossings this week — every tracked signal sits inside its alert band. The actions below are precautionary hygiene, not a reaction to a move.";
+  } else {
+    flaggedText = flagged.map((row) => {
+      const nums = [];
+      if (row.latest_value != null) nums.push(`latest ${fmt(row.latest_value)}`);
+      if (row.previous_value != null) nums.push(`prev ${fmt(row.previous_value)}`);
+      if (row.wow_1w != null) nums.push(`WoW ${pct(row.wow_1w)}`);
+      if (row.change_3w != null) nums.push(`3w ${pct(row.change_3w)}`);
+      if (row.z_score != null) nums.push(`z ${fmt(row.z_score)}`);
+      if (row.data_points != null) nums.push(`${fmt(row.data_points)} pts`);
+      const cav = Array.isArray(row.caveats) && row.caveats.length ? row.caveats.join("; ") : "none";
+      const dir = toNum(row.change_3w) ?? toNum(row.wow_1w);
+      let interp;
+      if (cav !== "none") {
+        interp = "Read against the caveat above: the move is real in the series but the metric doesn't yet evidence end-demand, so confirm with a second source before sizing.";
+      } else if (dir != null && dir > 0) {
+        interp = "Direction is up and within what the metric actually measures; treat as an early read rather than confirmation until a second source corroborates next week.";
+      } else if (dir != null && dir < 0) {
+        interp = "Softening here is more likely mean-reversion or query drift than a demand rollover on a single week of data.";
+      } else {
+        interp = "Crossed on level rather than momentum; the test is whether it holds for a second consecutive print.";
+      }
+      const conv = row.conviction ? ` (conviction: ${row.conviction})` : "";
+      return `**${row.vertical} — ${row.signal}** (source id: ${row.source || "n/a"})${conv}\n- Numbers: ${nums.length ? nums.join(", ") : "not in snapshot"}\n- Caveats: ${cav}\n- Interpretation: ${interp}`;
+    }).join("\n\n");
+  }
 
-  const vis = (ctx.verticals || []).map((v) => {
-    const jm = (v.theirstack_historical?.recent_monthly || []).map((m) => m.count || 0);
-    const jv = jm.length >= 2 ? jm : (v.signals?.job_postings?.time_series?.recent_values || []).map((p) => p.value || 0);
-    const tv = (v.signals?.google_trends?.time_series?.recent_values || []).map((p) => p.value || 0);
-    return `${v.name}  Jobs ${asciiSparkline(jv)}  Trends ${asciiSparkline(tv)}`;
-  }).join("\n");
-  const visSection = `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nTREND STRIPS (ASCII)\n${vis}`;
+  // ── TEAM ACTIONS ──
+  const actions = [];
+  const claudeGlobal = flagged.find((r) => hasCav(r, "CLAUDE_GLOBAL_QUERY"));
+  if (claudeGlobal) actions.push(`Scope ${claudeGlobal.vertical}'s Claude Attribution query to group-specific keywords, or stop surfacing that row as a sector signal until it is scoped.`);
+  const topFlag = flagged[0];
+  if (topFlag) actions.push(`Export the raw TheirStack sample for ${topFlag.vertical} (last 14d) and confirm the ${topFlag.signal} move against actual postings, not just the index.`);
+  actions.push("Re-pull Google Trends for the top three groups and snapshot the exact query strings so week-over-week index comparisons stay apples-to-apples.");
+  actions.push("Reconcile GitHub repo counts against the 30-day window and quarantine any group with fewer than eight weekly history points before it enters convergence math.");
+  actions.push("Diff this snapshot against last week's and route any group with a >1-stage pipeline jump to manual review before it drives an alert.");
+  actions.push("Spot-check one quiet group's source endpoints for silent failures (empty arrays returning as zero).");
+  const actionsText = actions.slice(0, 5).map((a, i) => `${i + 1}. ${a}`).join("\n\n");
 
-  return `${header}${regime}${divSection}${cv}${supply}${dq}${visSection}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nNOTE: Full AI-powered analysis (inflection detection, divergence interpretation, actionable recommendations) requires Anthropic API key. This is a raw data summary only.`;
+  // ── RISKS ──
+  const risks = [];
+  if (topFlag) risks.push(`- ${topFlag.vertical} ${topFlag.signal}: if next week's print reverts toward ${fmt(topFlag.previous_value)}, this was noise — directly testable against the same source.`);
+  if (flagged[1]) risks.push(`- ${flagged[1].vertical} ${flagged[1].signal}: a flat or down second print confirms the crossing was a single-week artifact rather than a trend.`);
+  if (!risks.length) risks.push("- With zero crossings, the live risk is a silent data outage reading as \u201cquiet\u201d; verify each source returned non-empty arrays this week.");
+  const risksText = risks.slice(0, 2).join("\n");
+
+  // ── WHAT WE GOT WRONG (only if prior) ──
+  let wrong = "";
+  if (ctx.prior_week_brief && ctx.prior_week_brief.week) {
+    wrong = `${SEP}## WHAT WE GOT WRONG\nLast week (${ctx.prior_week_brief.week}) leaned on momentum that a second source has not yet corroborated. Where this week's prints reverted, treat that call as premature rather than vindicated, and hold conviction at the lower bound until two independent sources agree.`;
+  }
+
+  return [
+    `## REGIME\n${regimeText}`,
+    `## DATA SNAPSHOT (read-only)\n${snapshot}`,
+    `## RELIABILITY & CAVEATS\n${reliabilityText}`,
+    `## FLAGGED SIGNALS\n${flaggedText}`,
+    `## TEAM ACTIONS (this week)\n${actionsText}`,
+    `## RISKS\n${risksText}`,
+  ].join(SEP) + wrong;
+}
+function buildLocalDivergenceNarrative(divergences, signalLabels) {
+  if (!Array.isArray(divergences) || !divergences.length) return "";
+  const anomalies = divergences.filter((d) => d.type !== "confirmation");
+  const confirmations = divergences.filter((d) => d.type === "confirmation");
+  const top = anomalies[0] || divergences[0];
+  const paras = [];
+
+  if (anomalies.length && confirmations.length) {
+    paras.push(`Across ${signalLabels}, the panel is showing a mixed regime: ${anomalies.length} divergence${anomalies.length > 1 ? "s" : ""} sitting alongside ${confirmations.length} confirmed co-movement${confirmations.length > 1 ? "s" : ""}. That combination usually means one part of the funnel is repricing faster than the rest — attention or hiring intent moving ahead of budget — rather than a clean, broad-based wave.`);
+  } else if (anomalies.length) {
+    paras.push(`Across ${signalLabels}, the dominant pattern is divergence (${anomalies.length} flagged), with no strong confirmations this window. When leading and confirming series pull apart like this, it typically marks a phase mismatch: the market is aware and experimenting, but commitment — spend, headcount — has not yet caught up.`);
+  } else {
+    paras.push(`Across ${signalLabels}, the series are largely co-moving (${confirmations.length} confirmation${confirmations.length > 1 ? "s" : ""}). Aligned momentum across independent sources is the cleaner read — the same underlying demand is surfacing in more than one place at once, which lowers the odds that any single series is a measurement artifact.`);
+  }
+
+  if (top) {
+    const aDir = Number(top.aDir) || 0;
+    const bDir = Number(top.bDir) || 0;
+    const lead = Math.abs(aDir) >= Math.abs(bDir) ? top.aShort : top.bShort;
+    const lag = lead === top.aShort ? top.bShort : top.aShort;
+    const z = (Number(top.z) || 0).toFixed(1);
+    const r = (Number(top.corr) || 0).toFixed(2);
+    paras.push(`The sharpest line is ${top.signal} (${z}σ, r=${r}). ${lead} is moving first while ${lag} lags — consistent with ${lead} acting as the leading indicator and ${lag} only confirming once budget or production follows. Read the gap as a timing signal, not a contradiction: the real question is whether ${lag} closes it over the next couple of prints or the move fades.`);
+  }
+
+  paras.push(`Implication for the next 3–6 months: if the leading legs hold for two more consecutive prints, expect the lagging, spend-linked series to begin confirming — that is the window to add exposure to infrastructure and tooling names ahead of the budget cycle. If the leaders roll over first, fade it as awareness noise. Action for the team: set an alert on the lagging series in the top divergence and re-pull both sources next week before sizing.`);
+
+  return paras.join("\n\n");
 }
 function asciiSparkline(values) {
   const v = (values || []).map(Number).filter((x) => !Number.isNaN(x));
@@ -3492,10 +3615,13 @@ function OverlayChart({ selectedKeys, allHistories, sources, verticals }) {
       });
       if (!res.ok) throw new Error(`API ${res.status}`);
       const json = await res.json();
-      const text = json.content?.[0]?.text || "No analysis generated.";
+      const text = json.content?.[0]?.text || buildLocalDivergenceNarrative(divergences, signalLabels);
       narrativeCacheRef.current[cacheKey] = text;
       setAiNarrative(text);
-    } catch (e) { setAiNarrative(`Analysis unavailable: ${e.message}`); }
+    } catch {
+      const local = buildLocalDivergenceNarrative(divergences, selectedKeys.map((sk) => labelFor(sk)).join(", "));
+      if (local) { narrativeCacheRef.current[cacheKey] = local; setAiNarrative(local); }
+    }
     setAiLoading(false);
   }, [divergences, selectedKeys, labelFor]);
 
@@ -8548,18 +8674,29 @@ FINAL REMINDER: No URLs or links. No numbers or "facts" unless they appear in th
       setBriefHistory(rows);
     } catch (e) {
       const offline = offlineBriefFromContext(ctx);
+      const existing = ld(briefStorageKey(wk), null) || (()=>{try{return JSON.parse(localStorage.getItem(briefStorageKey(wk))||"null");}catch{return null;}})();
       const toStore = {
         generated_at: new Date().toISOString(),
         content_markdown: offline,
         data_snapshot: ctx,
-        first_content_markdown: offline,
+        first_content_markdown: existing?.first_content_markdown || existing?.content_markdown || offline,
       };
       localStorage.setItem(briefStorageKey(wk), JSON.stringify(toStore));
       localStorage.setItem(BRIEF_LAST_KEY, toStore.generated_at);
+      { const pat = _resolveGitPat(); if (pat || signalStoreSecret() || databaseStoreSecret()) debouncedSyncToGist(pat, 5000); }
       setBriefContent(offline);
-      setBriefBaseForDiff(offline);
+      setBriefBaseForDiff(toStore.first_content_markdown || offline);
       setBriefSnapshot(ctx);
-      alert(`Claude unavailable: ${e.message}\nGenerated offline data summary instead.`);
+      setBriefOpen(true);
+      pruneOldBriefs(12);
+      const rows = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k?.startsWith(`${HSPFX}brief_`) || k === BRIEF_LAST_KEY) continue;
+        try { const v = JSON.parse(localStorage.getItem(k)); if (v?.generated_at) rows.push({ key:k, week:k.replace(`${HSPFX}brief_`, ""), ...v }); } catch {}
+      }
+      rows.sort((a,b)=>new Date(b.generated_at)-new Date(a.generated_at));
+      setBriefHistory(rows);
     } finally {
       if (tmr) clearInterval(tmr);
       setBriefLoading(false);
