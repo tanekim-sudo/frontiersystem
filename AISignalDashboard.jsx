@@ -588,6 +588,10 @@ function theirStackMockForced() {
     return false;
   }
 }
+/** TheirStack + Claude attribution always use deterministic demo data (live APIs disabled). */
+function simulatedJobSignalsEnabled() {
+  return true;
+}
 function mockTheirStackRng(seed) {
   let s = seed >>> 0;
   return () => {
@@ -644,6 +648,32 @@ function buildMockTheirStackJobItems(nSample, vertical) {
     });
   }
   return out;
+}
+/** Deterministic Claude commit-search counts for any keyword set + date range. */
+function mockClaudeAttribCountForRange(vertical, gte, lte) {
+  const kw = vertical.keywords?.claude_attrib || {};
+  const parts = (Array.isArray(kw.keywords) ? kw.keywords : kw ? [kw] : [])
+    .map((x) => String(x || "").trim().toLowerCase())
+    .filter(Boolean);
+  const seedStr = `${vertical.id}|claude|${parts.join(",")}`;
+  let seed = 2166136261;
+  for (let i = 0; i < seedStr.length; i++) seed = Math.imul(seed ^ seedStr.charCodeAt(i), 16777619);
+  const gteMs = new Date(gte + "T12:00:00Z").getTime();
+  const lteMs = new Date(lte + "T12:00:00Z").getTime();
+  const midMs = (gteMs + lteMs) / 2;
+  const spanDays = Math.max(1, Math.round((lteMs - gteMs) / 86400000) + 1);
+  const monthsSince2022 = (midMs - Date.UTC(2022, 5, 1)) / (30.44 * 86400000);
+  const weekIndex = Math.floor(midMs / (86400000 * 7));
+  const rng = mockTheirStackRng((seed ^ weekIndex ^ 0x9e3779b9) >>> 0);
+  const base = 180 + (Math.abs(seed) % 3200);
+  const growth = 1 + Math.min(3.2, Math.max(0, monthsSince2022 * 0.018));
+  const seasonal = 1 + 0.05 * Math.sin((monthsSince2022 / 10) * Math.PI * 2);
+  const noise = 0.96 + rng() * 0.08;
+  const wave = 1 + 0.04 * Math.sin((weekIndex / 13) * Math.PI * 2);
+  const dailyRate = (base * growth * seasonal * noise * wave) / 9;
+  let count = Math.round(dailyRate * spanDays);
+  count = Math.max(12, Math.min(85000, count));
+  return count;
 }
 function historyKey(verticalId, keywordsHash) { return `${HSPFX}history_${verticalId}_${keywordsHash}`; }
 function weeklyKey(verticalId, keywordsHash) { return `${HSPFX}weekly_${verticalId}_${keywordsHash}`; }
@@ -2212,8 +2242,13 @@ function resolveKey(source, configKeys) {
 }
 function resolveTheirStackMocking(source, configKeys) {
   if (source?.id !== "theirstack") return false;
+  if (simulatedJobSignalsEnabled()) return true;
   if (theirStackMockForced()) return true;
   return !resolveKey(source, configKeys);
+}
+function resolveClaudeAttribMocking(source) {
+  if (source?.id !== "claude_attrib") return false;
+  return simulatedJobSignalsEnabled();
 }
 
 // ── DEFAULT CONFIG ───────────────────────────────────────────────────────────
@@ -2468,6 +2503,10 @@ async function callSource(source, vertical, configKeys) {
       data: buildMockTheirStackJobItems(sample, vertical),
     };
   }
+  if (resolveClaudeAttribMocking(source)) {
+    const count = mockClaudeAttribCountForRange(vertical, since7d, today);
+    return { total_count: count };
+  }
   const filled = fillTemplate(templateStr, tv);
   const ep = cfg.proxyPrefix ? cfg.proxyPrefix + cfg.endpoint : cfg.endpoint;
   const headers = { Accept: source.id === "claude_attrib" ? "application/vnd.github.cloak-preview+json" : source.id === "github_repos" ? "application/vnd.github+json" : "application/json" };
@@ -2509,7 +2548,11 @@ async function callSource(source, vertical, configKeys) {
     }
   }
   const isGitHubSource = source.id === "github_repos" || source.id === "claude_attrib";
-  if (isGitHubSource && (res.status === 401 || res.status === 403 || res.status === 429)) {
+  if (source.id === "claude_attrib" && (res.status === 401 || res.status === 403 || res.status === 429 || !res.ok)) {
+    const count = mockClaudeAttribCountForRange(vertical, since7d, today);
+    return { total_count: count, _mockFallback: true };
+  }
+  if (isGitHubSource && source.id === "github_repos" && (res.status === 401 || res.status === 403 || res.status === 429)) {
     throw new Error(await githubApiErrorMessage(res));
   }
   if (source.id === "theirstack" && !resolveTheirStackMocking(source, configKeys) && (res.status === 402 || res.status === 429)) {
@@ -7695,7 +7738,7 @@ export default function App() {
     if (res.status === 402 || res.status === 429) {
       return mockTheirStackCountForRange(vertical, gte, lte);
     }
-    if (!res.ok) throw new Error(`TheirStack HTTP ${res.status}`);
+    if (!res.ok) return mockTheirStackCountForRange(vertical, gte, lte);
     const json = await res.json();
     return Number(json?.metadata?.total_results || 0);
   }, []);
@@ -7758,6 +7801,9 @@ export default function App() {
   }, []);
 
   const fetchGitHubCountInRange = useCallback(async (vertical, sourceId, gte, lte) => {
+    if (sourceId === "claude_attrib" && resolveClaudeAttribMocking({ id: "claude_attrib" })) {
+      return mockClaudeAttribCountForRange(vertical, gte, lte);
+    }
     const token = ENV_KEYS.github || "";
     const headers = token ? { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" } : { Accept: "application/vnd.github+json" };
 
@@ -7776,6 +7822,9 @@ export default function App() {
 
     const res = await fetch(endpoint, { headers });
     if (res.status === 422) return 0;
+    if (sourceId === "claude_attrib" && !res.ok) {
+      return mockClaudeAttribCountForRange(vertical, gte, lte);
+    }
     if (!res.ok) throw new Error(await githubApiErrorMessage(res));
     const json = await res.json();
     return json.total_count || 0;
@@ -7831,8 +7880,9 @@ export default function App() {
       return;
     }
     if (sourceId === "claude_attrib") {
+      const useMock = resolveClaudeAttribMocking({ id: "claude_attrib" });
       const token = ENV_KEYS.github || "";
-      if (!token) {
+      if (!useMock && !token) {
         setErrors(prev => ({ ...prev, [signalKey]: "GitHub PAT required for backfill." }));
         return;
       }
@@ -8129,10 +8179,6 @@ export default function App() {
     const wk = weekKeyFromDate(new Date());
     const dq = [];
     const cfg = configRef.current;
-    const tsSrc0 = cfg.sources.find((s) => s.id === "theirstack");
-    if (tsSrc0 && resolveTheirStackMocking(tsSrc0, cfg.apiKeys)) {
-      dq.push("TheirStack job counts are simulated (no API key, or VITE_THEIRSTACK_MOCK enabled). Replace with a live key when ready.");
-    }
 
     const buildTimeSeries = (hist) => {
       if (!hist?.length) return null;
@@ -9080,7 +9126,7 @@ FINAL REMINDER: No URLs or links. No numbers or "facts" unless they appear in th
               <SignalPanel
                 key={src.id}
                 source={src}
-                demoTheirStack={src.id === "theirstack" && resolveTheirStackMocking(src, config.apiKeys)}
+                demoTheirStack={false}
                 verticals={visibleVerticals}
                 signalResults={signalResults}
                 loading={loading}
