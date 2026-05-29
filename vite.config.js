@@ -1,6 +1,21 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
+/**
+ * Restore previously-captured env values. Crucially, when a captured value was
+ * `undefined`, we DELETE the key rather than assigning it — otherwise Node
+ * coerces `process.env.X = undefined` to the string "undefined", which then
+ * leaks back through Vite's loadEnv('', ...) and corrupts later requests
+ * (e.g. DATABASE_URL becoming a bogus host). Keeps dev API behavior identical
+ * to production serverless functions.
+ */
+function restoreEnv(prev) {
+  for (const [k, v] of Object.entries(prev)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+}
+
 /** Serves /api/labor/* during `vite` dev (same handlers as Vercel serverless). */
 function laborApiDevPlugin() {
   return {
@@ -169,10 +184,7 @@ function signalStoreApiDevPlugin() {
             res.end(JSON.stringify({ error: e.message || String(e) }));
           }
         } finally {
-          process.env.SIGNAL_STORE_SECRET = prev.SIGNAL_STORE_SECRET;
-          process.env.SIGNAL_DATA_GITHUB_PAT = prev.SIGNAL_DATA_GITHUB_PAT;
-          process.env.GITHUB_TOKEN = prev.GITHUB_TOKEN;
-          process.env.SIGNAL_DATA_GIST_ID = prev.SIGNAL_DATA_GIST_ID;
+          restoreEnv(prev);
         }
       });
     },
@@ -275,10 +287,7 @@ function dashboardStateApiDevPlugin() {
             res.end(JSON.stringify({ error: e.message || String(e) }));
           }
         } finally {
-          process.env.DATABASE_URL = prev.DATABASE_URL;
-          process.env.DASHBOARD_STORE_SECRET = prev.DASHBOARD_STORE_SECRET;
-          process.env.SUPABASE_URL = prev.SUPABASE_URL;
-          process.env.SUPABASE_SERVICE_ROLE_KEY = prev.SUPABASE_SERVICE_ROLE_KEY;
+          restoreEnv(prev);
         }
       });
     },
@@ -419,7 +428,7 @@ function dashboardHealthApiDevPlugin() {
         const mockReq = { method: 'GET', headers: req.headers };
         const mockRes = { statusCode: 200, status(c) { this.statusCode = c; return this; }, json(obj) { if (!res.headersSent) { res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Content-Type', 'application/json'); res.statusCode = this.statusCode; res.end(JSON.stringify(obj)); } }, end(c) { if (!res.headersSent) { res.statusCode = this.statusCode; res.end(c ?? ''); } } };
         try { const { default: handler } = await import('./api/dashboard-health.js'); await handler(mockReq, mockRes); } catch (e) { if (!res.headersSent) { res.statusCode = 500; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ error: e.message })); } }
-        finally { Object.assign(process.env, prev); }
+        finally { restoreEnv(prev); }
       });
     },
   };
@@ -553,8 +562,7 @@ function liveApiDevPlugin() {
             res.end(JSON.stringify({ error: e.message || String(e) }));
           }
         } finally {
-          process.env.DATABASE_URL = prev.DATABASE_URL;
-          process.env.DASHBOARD_STORE_SECRET = prev.DASHBOARD_STORE_SECRET;
+          restoreEnv(prev);
         }
       });
     },

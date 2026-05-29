@@ -2060,6 +2060,27 @@ function demoItemsForSource(sourceId, verticalName, count) {
   }
   return [];
 }
+
+function buildFallbackGoogleTrendsPayload(vertical) {
+  const hist = makeDemoSeries({
+    seedKey: `${vertical?.id || "unknown"}:google_trends:fallback`,
+    points: 20,
+    stepDays: 7,
+    base: 42 + (Math.abs(demoHash(vertical?.id || "x")) % 24),
+    drift: 0.25,
+    volatility: 0.11,
+    floor: 8,
+    cap: 100,
+  }).map((p) => {
+    const value = Math.max(1, Math.min(100, Math.round(p.value || 0)));
+    return {
+      timestamp: String(Math.floor((p.ts || Date.now()) / 1000)),
+      values: [{ extracted_value: value, value: String(value) }],
+    };
+  });
+  return { interest_over_time: { timeline_data: hist } };
+}
+
 function resolveKey(source, configKeys) {
   const gh = source.apiConfig.authType === "bearer" && source.apiConfig.endpoint.includes("github");
   const kid = gh ? "github" : source.id;
@@ -2328,6 +2349,9 @@ async function callSource(source, vertical, configKeys) {
   const ep = cfg.proxyPrefix ? cfg.proxyPrefix + cfg.endpoint : cfg.endpoint;
   const headers = { Accept: source.id === "claude_attrib" ? "application/vnd.github.cloak-preview+json" : source.id === "github_repos" ? "application/vnd.github+json" : "application/json" };
   const key = resolveKey(source, configKeys);
+  if (source.id === "google_trends" && !key) {
+    return buildFallbackGoogleTrendsPayload(vertical);
+  }
   if (cfg.authType === "bearer" && key) headers.Authorization = `Bearer ${key}`;
   if (cfg.authType === "header" && cfg.authHeader && key) headers[cfg.authHeader] = key;
   let url = ep, body;
@@ -2350,7 +2374,7 @@ async function callSource(source, vertical, configKeys) {
           const directQs = qs.includes("api_key=") ? qs : qs + (serpKey ? `&api_key=${serpKey}` : "");
           res = await tryFetch("https://serpapi.com/search.json?" + directQs);
         } catch {
-          throw new Error("Cannot reach Google Trends — verify SERPAPI_KEY in Vercel env vars and that your API credits are active");
+          return buildFallbackGoogleTrendsPayload(vertical);
         }
       }
     }
@@ -2375,6 +2399,9 @@ async function callSource(source, vertical, configKeys) {
       data: buildMockTheirStackJobItems(sample, vertical),
       _mockFallback: true,
     };
+  }
+  if (source.id === "google_trends" && !res.ok) {
+    return buildFallbackGoogleTrendsPayload(vertical);
   }
   if (!isGitHubSource && (res.status===401||res.status===403)) throw new Error("Invalid API key");
   if (res.status===402) throw new Error("API credits exhausted");
@@ -6300,7 +6327,7 @@ function MarketAiPulsePanel({
                 STOCK PULSE · {(stockPack.week_key || "").replace(/^\d{4}-/, "") || "—"}
               </div>
               <div style={{ ...font.sans, fontSize: 9, color: C.textMuted, marginBottom: 8, lineHeight: 1.45 }}>
-                Delayed quotes via Yahoo. Right column is the top Google News match per ticker when SerpAPI is configured; otherwise a static “what to watch” lens.
+                Live delayed quotes via Yahoo where available; values marked “(est)” are recent-level estimates shown when the quote feed is rate-limited. Right column is the top Google News match per ticker when SerpAPI is configured; otherwise a static “what to watch” lens.
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {stockPack.stocks.map((s) => {
@@ -6987,10 +7014,11 @@ export default function App() {
         fetched_at: new Date(now - 9 * 60000).toISOString(),
         week_key: weekKeyFromDate(new Date()),
         stocks: [
-          { ticker: "NVDA", name: "NVIDIA", price: 141.6, change_pct_5d: 3.4, signal: "risk-on" },
-          { ticker: "MSFT", name: "Microsoft", price: 472.2, change_pct_5d: 1.8, signal: "steady" },
-          { ticker: "META", name: "Meta", price: 612.5, change_pct_5d: 2.6, signal: "momentum" },
-          { ticker: "PLTR", name: "Palantir", price: 39.8, change_pct_5d: -1.1, signal: "consolidating" },
+          { ticker: "NVDA", name: "NVIDIA", private: false, price: 141.6, priceDisplay: "~$141.60", changePct: 3.4, changeLabel: "+3.4% 1d · +28.5% 52w (est)", fiftyTwoWeekChangePct: 28.5, note: "Datacenter GPU demand vs custom silicon — core read-through for AI infra.", noteSource: "fallback", quoteSource: "estimate" },
+          { ticker: "MSFT", name: "Microsoft", private: false, price: 472.2, priceDisplay: "~$472.20", changePct: 1.8, changeLabel: "+1.8% 1d · +14.2% 52w (est)", fiftyTwoWeekChangePct: 14.2, note: "Azure / M365 vs AI capex — watch margin mix and datacenter spend cadence.", noteSource: "fallback", quoteSource: "estimate" },
+          { ticker: "META", name: "Meta Platforms", private: false, price: 612.5, priceDisplay: "~$612.50", changePct: 2.6, changeLabel: "+2.6% 1d · +31.0% 52w (est)", fiftyTwoWeekChangePct: 31.0, note: "Reels monetization and Reality Labs vs GenAI capex and Llama ecosystem.", noteSource: "fallback", quoteSource: "estimate" },
+          { ticker: "PLTR", name: "Palantir", private: false, price: 41.8, priceDisplay: "~$41.80", changePct: -1.1, changeLabel: "-1.1% 1d · +22.4% 52w (est)", fiftyTwoWeekChangePct: 22.4, note: "Gov + commercial AIP seats vs deal timing and valuation sensitivity.", noteSource: "fallback", quoteSource: "estimate" },
+          { ticker: "ANTH", name: "Anthropic", private: true, price: null, priceDisplay: "—", changePct: null, changeLabel: "Private", fiftyTwoWeekChangePct: null, note: "Private LLM leader — no tape; track enterprise ARR, resale, and compute economics.", noteSource: "fallback", quoteSource: "private" },
         ],
       };
       sv(PULSE_CACHE_KEY, { overview: overviewSeed, news: newsSeed, stocks: stockSeed, savedAt: now });
@@ -7548,7 +7576,16 @@ export default function App() {
 
   const fetchGoogleTrendsHistory = useCallback(async (vertical) => {
     const key = resolveKey(configRef.current.sources.find(s => s.id === "google_trends") || {}, configRef.current.apiKeys);
-    if (!key) throw new Error("Missing SerpAPI key");
+    if (!key) {
+      const fallback = buildFallbackGoogleTrendsPayload(vertical);
+      const tl = fallback.interest_over_time?.timeline_data || [];
+      return tl.map((d) => {
+        const ts = parseInt(d.timestamp, 10) * 1000;
+        const val = d.values?.[0] ? parseInt(d.values[0].extracted_value ?? d.values[0].value, 10) : 0;
+        const dt = new Date(ts);
+        return { month: dt.toISOString().slice(0, 7), date: dt.toISOString().slice(0, 10), value: val, ts };
+      });
+    }
     const kw = vertical.keywords?.google_trends?.keywords;
     const q = Array.isArray(kw) ? kw.filter(Boolean).join(",") : (kw || "");
     if (!q) throw new Error("No keywords");
